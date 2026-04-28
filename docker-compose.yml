@@ -1,0 +1,25 @@
+services:
+  # 1. 数据库：你的核心存储
+  db:
+    image: postgres:15-alpine
+    container_name: ipra-db
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: ipradb
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+
+  # 2. GUI 管理界面：强烈建议加上，浏览器访问 8081 就能看表数据
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: ipra-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "8081:80"
+    depends_on:
+      - db
