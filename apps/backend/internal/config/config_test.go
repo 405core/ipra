@@ -16,6 +16,7 @@ var envKeys = []string{
 	"DB_PASSWORD",
 	"DB_NAME",
 	"DB_SSLMODE",
+	"JWT_SECRET",
 }
 
 func TestLoadUsesEnvFilesAndLocalOverrides(t *testing.T) {

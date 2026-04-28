@@ -10,6 +10,7 @@ type Config struct {
 	AppEnv   string
 	Port     string
 	Database DatabaseConfig
+	Auth     AuthConfig
 }
 
 type DatabaseConfig struct {
@@ -20,6 +21,10 @@ type DatabaseConfig struct {
 	Password string
 	Name     string
 	SSLMode  string
+}
+
+type AuthConfig struct {
+	JWTSecret string
 }
 
 func Load() (Config, error) {
@@ -41,6 +46,9 @@ func Load() (Config, error) {
 			Password: os.Getenv("DB_PASSWORD"),
 			Name:     os.Getenv("DB_NAME"),
 			SSLMode:  firstNonEmpty(os.Getenv("DB_SSLMODE"), "disable"),
+		},
+		Auth: AuthConfig{
+			JWTSecret: firstNonEmpty(os.Getenv("JWT_SECRET"), "ipra-local-secret"),
 		},
 	}
 
