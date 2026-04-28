@@ -3,10 +3,12 @@ package main
 import (
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"ipra/backend/internal/auth"
 	"ipra/backend/internal/config"
 )
 
@@ -16,12 +18,22 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
-	_, err = gorm.Open(postgres.Open(cfg.Database.DSN()), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(cfg.Database.DSN()), &gorm.Config{})
 	if err != nil {
 		log.Fatalf("connect database: %v", err)
 	}
 
-	r := newRouter()
+	if err := auth.AutoMigrate(db); err != nil {
+		log.Fatalf("migrate auth tables: %v", err)
+	}
+	if err := auth.SeedUsers(db); err != nil {
+		log.Fatalf("seed auth users: %v", err)
+	}
+
+	tokenManager := auth.NewTokenManager(cfg.Auth.JWTSecret, 24*time.Hour)
+	authHandler := auth.NewHandler(db, tokenManager)
+
+	r := newRouter(authHandler)
 
 	addr := ":" + cfg.Port
 	log.Printf("backend listening on %s (%s)", addr, cfg.AppEnv)
@@ -30,7 +42,7 @@ func main() {
 	}
 }
 
-func newRouter() *gin.Engine {
+func newRouter(authHandler *auth.Handler) *gin.Engine {
 	r := gin.Default()
 
 	r.GET("/api/ping", func(c *gin.Context) {
@@ -39,6 +51,10 @@ func newRouter() *gin.Engine {
 			"status":  "Go 后端已就绪",
 		})
 	})
+
+	if authHandler != nil {
+		authHandler.Register(r)
+	}
 
 	return r
 }

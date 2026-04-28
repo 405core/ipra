@@ -1,5 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import { useRouter } from 'vue-router';
+import {
+  loginWithCredentials,
+  resolveRoleHome,
+  saveAuthSession,
+} from '../auth';
 
 type FieldKey = 'badge' | 'password';
 type FeedbackTone = 'neutral' | 'error' | 'success';
@@ -10,6 +16,8 @@ const activeField = ref<FieldKey>('badge');
 const capsEnabled = ref(false);
 const feedback = ref('请选择输入框后使用触控键盘，或直接键入。');
 const feedbackTone = ref<FeedbackTone>('neutral');
+const isSubmitting = ref(false);
+const router = useRouter();
 
 const numberKeys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
 const topLetterKeys = ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'];
@@ -70,13 +78,34 @@ function insertSpace() {
   updateActiveField((currentValue) => currentValue + ' ');
 }
 
-function submitLogin() {
+async function submitLogin() {
   if (!badgeNumber.value.trim() || !password.value.trim()) {
     setFeedback('请输入完整的警号和密码。', 'error');
     return;
   }
 
-  setFeedback('登录接口尚未接入，表单与触控键盘已完成 Vue 化。', 'success');
+  isSubmitting.value = true;
+
+  try {
+    const session = await loginWithCredentials(
+      badgeNumber.value.trim(),
+      password.value
+    );
+
+    saveAuthSession(session);
+    setFeedback(
+      `${session.user.role === 'admin' ? '管理员' : '普通员工'}登录成功，正在跳转。`,
+      'success'
+    );
+    await router.push(resolveRoleHome(session.user.role));
+  } catch (error) {
+    setFeedback(
+      error instanceof Error ? error.message : '登录失败，请稍后再试',
+      'error'
+    );
+  } finally {
+    isSubmitting.value = false;
+  }
 }
 </script>
 
@@ -224,7 +253,13 @@ function submitLogin() {
               <button class="key key--space" type="button" @click="insertSpace">
                 SPACE
               </button>
-              <button class="key key--action key--submit" type="submit">登录</button>
+              <button
+                class="key key--action key--submit"
+                type="submit"
+                :disabled="isSubmitting"
+              >
+                {{ isSubmitting ? '登录中...' : '登录' }}
+              </button>
             </div>
           </div>
 
@@ -597,6 +632,12 @@ function submitLogin() {
 
 .key:active {
   transform: translateY(0);
+}
+
+.key:disabled {
+  cursor: wait;
+  opacity: 0.72;
+  transform: none;
 }
 
 .key--wide {

@@ -1,0 +1,164 @@
+package auth
+
+import (
+	"errors"
+	"net/http"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
+)
+
+const authClaimsContextKey = "authClaims"
+
+type Handler struct {
+	db           *gorm.DB
+	tokenManager *TokenManager
+}
+
+type loginRequest struct {
+	BadgeNumber string `json:"badgeNumber"`
+	Password    string `json:"password"`
+}
+
+type userResponse struct {
+	ID          uint   `json:"id"`
+	BadgeNumber string `json:"badgeNumber"`
+	DisplayName string `json:"displayName"`
+	Role        string `json:"role"`
+}
+
+func NewHandler(db *gorm.DB, tokenManager *TokenManager) *Handler {
+	return &Handler{
+		db:           db,
+		tokenManager: tokenManager,
+	}
+}
+
+func (h *Handler) Register(r gin.IRouter) {
+	r.POST("/api/login", h.handleLogin)
+
+	authGroup := r.Group("/api/auth")
+	authGroup.Use(h.requireAuth())
+	authGroup.GET("/me", h.handleCurrentUser)
+}
+
+func (h *Handler) handleLogin(c *gin.Context) {
+	var req loginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "请求参数无效"})
+		return
+	}
+
+	badgeNumber := NormalizeBadgeNumber(req.BadgeNumber)
+	password := strings.TrimSpace(req.Password)
+	if badgeNumber == "" || password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "警号和密码不能为空"})
+		return
+	}
+
+	var user User
+	if err := h.db.Where("badge_number = ?", badgeNumber).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusUnauthorized, gin.H{"message": "警号或密码错误"})
+			return
+		}
+
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "查询用户失败"})
+		return
+	}
+
+	if err := VerifyPassword(user.PasswordHash, password); err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "警号或密码错误"})
+		return
+	}
+
+	token, err := h.tokenManager.Sign(user)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "生成 token 失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"token": token,
+		"user":  toUserResponse(user),
+	})
+}
+
+func (h *Handler) handleCurrentUser(c *gin.Context) {
+	claims, ok := claimsFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "未授权"})
+		return
+	}
+
+	var user User
+	if err := h.db.First(&user, claims.UserID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusUnauthorized, gin.H{"message": "用户不存在"})
+			return
+		}
+
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "查询当前用户失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"user": toUserResponse(user),
+	})
+}
+
+func (h *Handler) requireAuth() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		token, ok := parseBearerToken(c.GetHeader("Authorization"))
+		if !ok {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"message": "缺少认证 token"})
+			return
+		}
+
+		claims, err := h.tokenManager.Parse(token)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"message": "token 无效或已过期"})
+			return
+		}
+
+		c.Set(authClaimsContextKey, claims)
+		c.Next()
+	}
+}
+
+func claimsFromContext(c *gin.Context) (Claims, bool) {
+	value, ok := c.Get(authClaimsContextKey)
+	if !ok {
+		return Claims{}, false
+	}
+
+	claims, ok := value.(Claims)
+	if !ok {
+		return Claims{}, false
+	}
+
+	return claims, true
+}
+
+func parseBearerToken(header string) (string, bool) {
+	if header == "" || !strings.HasPrefix(header, "Bearer ") {
+		return "", false
+	}
+
+	token := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
+	if token == "" {
+		return "", false
+	}
+
+	return token, true
+}
+
+func toUserResponse(user User) userResponse {
+	return userResponse{
+		ID:          user.ID,
+		BadgeNumber: user.BadgeNumber,
+		DisplayName: user.DisplayName,
+		Role:        user.Role,
+	}
+}

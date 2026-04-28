@@ -1,0 +1,124 @@
+export type UserRole = 'admin' | 'employee';
+
+export interface AuthUser {
+  id: number;
+  badgeNumber: string;
+  displayName: string;
+  role: UserRole;
+}
+
+export interface AuthSession {
+  token: string;
+  user: AuthUser;
+}
+
+interface LoginResponse {
+  token: string;
+  user: AuthUser;
+}
+
+interface CurrentUserResponse {
+  user: AuthUser;
+}
+
+const AUTH_STORAGE_KEY = 'ipra.auth.session';
+
+export function loadAuthSession(): AuthSession | null {
+  const serialized = localStorage.getItem(AUTH_STORAGE_KEY);
+  if (!serialized) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(serialized) as Partial<AuthSession>;
+    if (
+      typeof parsed.token !== 'string' ||
+      !parsed.user ||
+      typeof parsed.user.badgeNumber !== 'string' ||
+      typeof parsed.user.role !== 'string'
+    ) {
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+      return null;
+    }
+
+    return parsed as AuthSession;
+  } catch {
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+    return null;
+  }
+}
+
+export function saveAuthSession(session: AuthSession) {
+  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
+}
+
+export function clearAuthSession() {
+  localStorage.removeItem(AUTH_STORAGE_KEY);
+}
+
+export function resolveRoleHome(role: UserRole) {
+  return role === 'admin' ? '/management' : '/system';
+}
+
+export async function loginWithCredentials(
+  badgeNumber: string,
+  password: string
+): Promise<AuthSession> {
+  const response = await fetch('/api/login', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      badgeNumber,
+      password,
+    }),
+  });
+
+  const payload = (await response.json().catch(() => null)) as
+    | LoginResponse
+    | { message?: string }
+    | null;
+
+  if (!response.ok) {
+    throw new Error(payload?.message || '登录失败，请稍后再试');
+  }
+
+  return payload as LoginResponse;
+}
+
+export async function validateAuthSession(): Promise<AuthSession | null> {
+  const session = loadAuthSession();
+  if (!session?.token) {
+    return null;
+  }
+
+  try {
+    const response = await fetch('/api/auth/me', {
+      headers: {
+        Authorization: `Bearer ${session.token}`,
+      },
+    });
+
+    const payload = (await response.json().catch(() => null)) as
+      | CurrentUserResponse
+      | { message?: string }
+      | null;
+
+    if (!response.ok || !payload || !('user' in payload)) {
+      clearAuthSession();
+      return null;
+    }
+
+    const nextSession = {
+      token: session.token,
+      user: payload.user,
+    };
+    saveAuthSession(nextSession);
+
+    return nextSession;
+  } catch {
+    clearAuthSession();
+    return null;
+  }
+}
