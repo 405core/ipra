@@ -45,6 +45,8 @@ Thumbs.db
 
 vite.config.*.timestamp*
 
+docs/.vitepress/cache/
+docs/.vitepress/dist/
 # environment files
 **/.env.local
 **/.env.prod
