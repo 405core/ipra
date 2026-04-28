@@ -1,0 +1,7 @@
+{
+  "version": 3,
+  "sources": ["../../../../node_modules/.pnpm/mermaid@11.14.0/node_modules/mermaid/dist/chunks/mermaid.esm.min/chunk-TBF5ZNIQ.mjs"],
+  "sourcesContent": ["import{h as o}from\"./chunk-MGPAVIPZ.mjs\";import{a as s}from\"./chunk-VELTKBKT.mjs\";var m=s((t,n)=>{let e;return n===\"sandbox\"&&(e=o(\"#i\"+t)),(n===\"sandbox\"?o(e.nodes()[0].contentDocument.body):o(\"body\")).select(`[id=\"${t}\"]`)},\"getDiagramElement\");export{m as a};\n"],
+  "mappings": ";;;;;;;;AAAkF,IAAIA,KAAE,EAAE,CAAC,GAAE,MAAI;AAAC,MAAI;AAAE,SAAO,MAAI,cAAY,IAAE,GAAE,OAAK,CAAC,KAAI,MAAI,YAAU,GAAE,EAAE,MAAM,EAAE,CAAC,EAAE,gBAAgB,IAAI,IAAE,GAAE,MAAM,GAAG,OAAO,QAAQ,CAAC,IAAI;AAAC,GAAE,mBAAmB;",
+  "names": ["m"]
+}

@@ -52,6 +52,26 @@ export default defineConfig({
     ['meta', { name: 'theme-color', content: '#f3f0e7' }],
     ['meta', { name: 'apple-mobile-web-app-title', content: 'IPRA 知识库' }],
   ],
+  markdown: {
+    config(markdownIt) {
+      const originalFence = markdownIt.renderer.rules.fence?.bind(markdownIt.renderer.rules);
+
+      markdownIt.renderer.rules.fence = (tokens, index, options, env, self) => {
+        const token = tokens[index];
+        const language = token.info.trim();
+
+        if (language === 'mermaid' || language === 'mmd') {
+          return `<MermaidBlock id="mermaid-${index}" graph="${encodeURIComponent(token.content)}" />`;
+        }
+
+        if (originalFence) {
+          return originalFence(tokens, index, options, env, self);
+        }
+
+        return self.renderToken(tokens, index, options);
+      };
+    },
+  },
   themeConfig: {
     logo: {
       src: '/ipra-mark.svg',
