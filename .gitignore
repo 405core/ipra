@@ -44,3 +44,6 @@ Thumbs.db
 .claude/settings.local.json
 
 vite.config.*.timestamp*
+
+docs/.vitepress/cache/
+docs/.vitepress/dist/

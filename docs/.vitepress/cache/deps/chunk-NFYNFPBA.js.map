@@ -1,7 +1,0 @@
-{
-  "version": 3,
-  "sources": ["../../../../node_modules/.pnpm/mermaid@11.14.0/node_modules/mermaid/dist/chunks/mermaid.esm.min/chunk-KSICW3F5.mjs"],
-  "sourcesContent": ["import{a as e}from\"./chunk-VELTKBKT.mjs\";var o=e(()=>`\n  /* Font Awesome icon styling - consolidated */\n  .label-icon {\n    display: inline-block;\n    height: 1em;\n    overflow: visible;\n    vertical-align: -0.125em;\n  }\n  \n  .node .label-icon path {\n    fill: currentColor;\n    stroke: revert;\n    stroke-width: revert;\n  }\n`,\"getIconStyles\");export{o as a};\n"],
-  "mappings": ";;;;;AAAyC,IAAI,IAAE,EAAE,MAAI;AAAA;AAAA;AAAA;AAAA;AAAA;AAAA;AAAA;AAAA;AAAA;AAAA;AAAA;AAAA;AAAA;AAAA,GAcnD,eAAe;",
-  "names": []
-}
