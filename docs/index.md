@@ -3,7 +3,7 @@ layout: home
 
 hero:
   name: IPRA
-  text: 项目知识库
+  text: 项目知识库系统
   tagline: 围绕采购需求与协作文档维护，把关键资料沉淀成一个可浏览、可搜索、可持续维护的知识入口。
   image:
     src: /editorial-grid.svg
