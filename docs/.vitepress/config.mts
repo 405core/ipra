@@ -33,6 +33,7 @@ type SectionNode = {
 
 const docsRoot = fileURLToPath(new URL('../', import.meta.url));
 const ignoredDirectories = new Set(['.vitepress', '.git', 'node_modules', 'public']);
+const siteBase = process.env.DOCS_BASE ?? '/';
 
 const rootSection = buildContentTree(collectMarkdownPages(docsRoot));
 const nav = buildNav(rootSection);
@@ -42,6 +43,7 @@ export default defineConfig({
   title: 'IPRA 知识库',
   description: '项目文档、协作规范与实施知识的可视化入口。',
   lang: 'zh-CN',
+  base: siteBase,
   srcDir: '.',
   cleanUrls: true,
   lastUpdated: true,
