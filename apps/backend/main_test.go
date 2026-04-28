@@ -1,12 +1,19 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
-func TestHello(t *testing.T) {
-	result := Hello("world")
-	if result != "Hello world" {
-		t.Error("Expected Hello to append 'world'")
+func TestPingRoute(t *testing.T) {
+	router := newRouter()
+	req := httptest.NewRequest(http.MethodGet, "/api/ping", nil)
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
 	}
 }

@@ -44,3 +44,8 @@ Thumbs.db
 .claude/settings.local.json
 
 vite.config.*.timestamp*
+
+# environment files
+**/.env.local
+**/.env.prod
+!**/.env.example

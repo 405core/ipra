@@ -1,25 +1,38 @@
 package main
 
 import (
+	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"ipra/backend/internal/config"
 )
 
 func main() {
-	// 1. 数据库 DSN (对应你 docker ps 里的配置)
-	dsn := "host=localhost user=user password=password dbname=ipradb port=5432 sslmode=disable"
-	_, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	cfg, err := config.Load()
 	if err != nil {
-		println("数据库连接失败，请检查 Docker 是否运行:", err.Error())
+		log.Fatalf("load config: %v", err)
 	}
 
-	// 2. 初始化 Gin
+	_, err = gorm.Open(postgres.Open(cfg.Database.DSN()), &gorm.Config{})
+	if err != nil {
+		log.Fatalf("connect database: %v", err)
+	}
+
+	r := newRouter()
+
+	addr := ":" + cfg.Port
+	log.Printf("backend listening on %s (%s)", addr, cfg.AppEnv)
+	if err := r.Run(addr); err != nil {
+		log.Fatalf("start server: %v", err)
+	}
+}
+
+func newRouter() *gin.Engine {
 	r := gin.Default()
 
-	// 3. 定义一个测试接口 (对应前端的 /api 代理)
 	r.GET("/api/ping", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"message": "pong",
@@ -27,6 +40,5 @@ func main() {
 		})
 	})
 
-	// 4. 启动监听 8080 端口
-	r.Run(":8080")
+	return r
 }
