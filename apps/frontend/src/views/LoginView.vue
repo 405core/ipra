@@ -85,7 +85,7 @@ function submitLogin() {
     <div class="login-view__pattern" aria-hidden="true"></div>
     <div class="login-view__glow" aria-hidden="true"></div>
 
-    <main class="login-card">
+    <form class="login-card" @submit.prevent="submitLogin">
       <aside class="brand-panel">
         <div class="brand-lockup">
           <div class="brand-mark">RA</div>
@@ -95,11 +95,44 @@ function submitLogin() {
           </div>
         </div>
 
+        <div class="field-grid field-grid--sidebar">
+          <label class="field-card" :class="{ 'is-active': activeField === 'badge' }">
+            <span class="field-card__label">警号 Badge Number</span>
+            <div class="field-card__input-wrap">
+              <span class="field-card__icon">ID</span>
+              <input
+                v-model="badgeNumber"
+                type="text"
+                inputmode="numeric"
+                autocomplete="username"
+                placeholder="输入员工警号"
+                @focus="focusField('badge')"
+              />
+            </div>
+          </label>
+
+          <label
+            class="field-card"
+            :class="{ 'is-active': activeField === 'password' }"
+          >
+            <span class="field-card__label">密码 Password</span>
+            <div class="field-card__input-wrap">
+              <span class="field-card__icon">PW</span>
+              <input
+                v-model="password"
+                type="password"
+                autocomplete="current-password"
+                placeholder="输入通行密码"
+                @focus="focusField('password')"
+              />
+            </div>
+          </label>
+        </div>
+
         <div class="brand-copy">
           <h1>智能旅客风险评估系统</h1>
           <p>
-            高精度的数据分析引擎。请验证您的身份以进入安全评估终端，所有
-            操作均通过加密链路审计。
+            高精度的数据分析引擎。请验证您的身份以进入安全评估终端，所有操作均通过加密链路审计。
           </p>
         </div>
 
@@ -112,41 +145,7 @@ function submitLogin() {
       </aside>
 
       <section class="form-panel">
-        <form class="login-form" @submit.prevent="submitLogin">
-          <div class="field-grid">
-            <label class="field-card" :class="{ 'is-active': activeField === 'badge' }">
-              <span class="field-card__label">警号 Badge Number</span>
-              <div class="field-card__input-wrap">
-                <span class="field-card__icon">ID</span>
-                <input
-                  v-model="badgeNumber"
-                  type="text"
-                  inputmode="numeric"
-                  autocomplete="username"
-                  placeholder="输入员工警号"
-                  @focus="focusField('badge')"
-                />
-              </div>
-            </label>
-
-            <label
-              class="field-card"
-              :class="{ 'is-active': activeField === 'password' }"
-            >
-              <span class="field-card__label">密码 Password</span>
-              <div class="field-card__input-wrap">
-                <span class="field-card__icon">PW</span>
-                <input
-                  v-model="password"
-                  type="password"
-                  autocomplete="current-password"
-                  placeholder="输入通行密码"
-                  @focus="focusField('password')"
-                />
-              </div>
-            </label>
-          </div>
-
+        <div class="form-panel__body">
           <div class="keyboard-header">
             <div class="keyboard-header__line"></div>
             <span class="keyboard-header__title">触控键盘输入区</span>
@@ -232,9 +231,9 @@ function submitLogin() {
           <p class="form-feedback" :class="`is-${feedbackTone}`">
             {{ feedback }}
           </p>
-        </form>
+        </div>
       </section>
-    </main>
+    </form>
   </section>
 </template>
 
@@ -313,7 +312,7 @@ function submitLogin() {
 .brand-panel {
   display: flex;
   flex-direction: column;
-  gap: 40px;
+  gap: 28px;
   padding: 48px;
   background:
     linear-gradient(160deg, rgba(255, 255, 255, 0.7), rgba(216, 241, 248, 0.9)),
@@ -418,7 +417,7 @@ function submitLogin() {
   background: rgba(255, 255, 255, 0.9);
 }
 
-.login-form {
+.form-panel__body {
   width: min(820px, 100%);
   margin: 0 auto;
 }
@@ -427,6 +426,11 @@ function submitLogin() {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 18px;
+}
+
+.field-grid--sidebar {
+  grid-template-columns: 1fr;
+  gap: 14px;
 }
 
 .field-card {
@@ -492,11 +496,17 @@ function submitLogin() {
   color: rgba(82, 101, 109, 0.72);
 }
 
+.field-grid--sidebar .field-card__input-wrap {
+  min-height: 72px;
+  background: rgba(255, 255, 255, 0.88);
+  border-color: rgba(191, 208, 216, 0.92);
+}
+
 .keyboard-header {
   display: flex;
   align-items: center;
   gap: 16px;
-  margin: 30px 0 14px;
+  margin: 0 0 14px;
 }
 
 .keyboard-header__line {
@@ -560,14 +570,14 @@ function submitLogin() {
 }
 
 .key {
-  min-height: 58px;
+  min-height: 66px;
   padding: 0 12px;
   border-radius: 18px;
   border: 1px solid rgba(191, 208, 216, 0.8);
   background: var(--color-panel-muted);
   color: var(--color-text);
   font-family: 'Manrope', sans-serif;
-  font-size: 1rem;
+  font-size: 1.06rem;
   font-weight: 700;
   letter-spacing: 0.03em;
   cursor: pointer;
@@ -606,7 +616,7 @@ function submitLogin() {
 
 .key--action,
 .key--space {
-  min-height: 64px;
+  min-height: 74px;
 }
 
 .key--clear {
@@ -679,13 +689,13 @@ function submitLogin() {
   }
 
   .key {
-    min-height: 52px;
-    font-size: 0.92rem;
+    min-height: 58px;
+    font-size: 0.96rem;
   }
 
   .key--action,
   .key--space {
-    min-height: 58px;
+    min-height: 64px;
   }
 }
 </style>
