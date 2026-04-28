@@ -1,0 +1,7 @@
+{
+  "version": 3,
+  "sources": ["../../../../node_modules/.pnpm/mermaid@11.14.0/node_modules/mermaid/dist/chunks/mermaid.esm.min/chunk-A34GCYZU.mjs"],
+  "sourcesContent": ["import{a as o,b as n,c as a,d as u,e as p,f as e,g as d,i as G,r as l,s}from\"./chunk-FXACKDTF.mjs\";import{a as t}from\"./chunk-VELTKBKT.mjs\";var m=class extends s{static{t(this,\"GitGraphTokenBuilder\")}static{e(this,\"GitGraphTokenBuilder\")}constructor(){super([\"gitGraph\"])}},h={parser:{TokenBuilder:e(()=>new m,\"TokenBuilder\"),ValueConverter:e(()=>new l,\"ValueConverter\")}};function v(c=u){let r=a(n(c),d),i=a(o({shared:r}),G,h);return r.ServiceRegistry.register(i),{shared:r,GitGraph:i}}t(v,\"createGitGraphServices\");e(v,\"createGitGraphServices\");export{h as a,v as b};\n"],
+  "mappings": ";;;;;;;;;;;;;;;;AAAA;AAA4I,IAAIA,MAAE,mBAAc,GAAC;AAAA,EAA6E,cAAa;AAAC,UAAM,CAAC,UAAU,CAAC;AAAA,EAAC;AAAC,GAAvG,EAAE,IAAK,sBAAsB,GAAS,EAAE,IAAK,sBAAsB,GAA1F;AAAN,IAAsI,IAAE,EAAC,QAAO,EAAC,cAAa,EAAE,MAAI,IAAIA,MAAE,cAAc,GAAE,gBAAe,EAAE,MAAI,IAAI,MAAE,gBAAgB,EAAC,EAAC;AAAE,SAAS,EAAE,IAAE,IAAE;AAAC,MAAI,IAAE,GAAE,GAAE,CAAC,GAAE,EAAC,GAAE,IAAE,GAAE,GAAE,EAAC,QAAO,EAAC,CAAC,GAAE,IAAE,CAAC;AAAE,SAAO,EAAE,gBAAgB,SAAS,CAAC,GAAE,EAAC,QAAO,GAAE,UAAS,EAAC;AAAC;AAAC,EAAE,GAAE,wBAAwB;AAAE,EAAE,GAAE,wBAAwB;",
+  "names": ["m"]
+}

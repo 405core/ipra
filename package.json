@@ -19,6 +19,7 @@
     "@vue/test-utils": "^2.4.6",
     "jiti": "2.4.2",
     "jsdom": "~22.1.0",
+    "mermaid": "^11.14.0",
     "nx": "22.7.0",
     "prettier": "~3.6.2",
     "sass": "^1.70.0",
@@ -26,6 +27,7 @@
     "typescript": "~5.9.2",
     "vite": "^8.0.0",
     "vitepress": "^1.6.4",
+    "vitepress-plugin-mermaid": "^2.0.17",
     "vitest": "~4.1.0",
     "vue-tsc": "^2.2.8"
   },
