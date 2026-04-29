@@ -58,7 +58,7 @@ export function clearAuthSession() {
 }
 
 export function resolveRoleHome(role: UserRole) {
-  return role === 'admin' ? '/management' : '/system';
+  return role === 'admin' ? '/management' : '/home/data';
 }
 
 export async function loginWithCredentials(
