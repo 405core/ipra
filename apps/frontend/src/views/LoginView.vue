@@ -1,18 +1,14 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import {
-  loginWithCredentials,
-  resolveRoleHome,
-  saveAuthSession,
-} from '../auth';
+import { loginWithCredentials, resolveRoleHome, saveAuthSession } from '../auth';
 
-type FieldKey = 'badge' | 'password';
+type FieldKey = 'workId' | 'password';
 type FeedbackTone = 'neutral' | 'error' | 'success';
 
-const badgeNumber = ref('');
+const workId = ref('');
 const password = ref('');
-const activeField = ref<FieldKey>('badge');
+const activeField = ref<FieldKey>('workId');
 const capsEnabled = ref(false);
 const feedback = ref('请选择输入框后使用触控键盘，或直接键入。');
 const feedbackTone = ref<FeedbackTone>('neutral');
@@ -25,7 +21,7 @@ const middleLetterKeys = ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'];
 const bottomLetterKeys = ['Z', 'X', 'C', 'V', 'B', 'N', 'M'];
 
 const activeFieldLabel = computed(() =>
-  activeField.value === 'badge' ? '警号' : '密码'
+  activeField.value === 'workId' ? '工号' : '密码'
 );
 
 function setFeedback(message: string, tone: FeedbackTone = 'neutral') {
@@ -35,15 +31,15 @@ function setFeedback(message: string, tone: FeedbackTone = 'neutral') {
 
 function focusField(field: FieldKey) {
   activeField.value = field;
-  setFeedback(`当前输入目标：${field === 'badge' ? '警号' : '密码'}。`);
+  setFeedback(`当前输入目标：${field === 'workId' ? '工号' : '密码'}。`);
 }
 
 function updateActiveField(
   updater: (currentValue: string) => string,
   tone: FeedbackTone = 'neutral'
 ) {
-  if (activeField.value === 'badge') {
-    badgeNumber.value = updater(badgeNumber.value);
+  if (activeField.value === 'workId') {
+    workId.value = updater(workId.value);
   } else {
     password.value = updater(password.value);
   }
@@ -79,18 +75,15 @@ function insertSpace() {
 }
 
 async function submitLogin() {
-  if (!badgeNumber.value.trim() || !password.value.trim()) {
-    setFeedback('请输入完整的警号和密码。', 'error');
+  if (!workId.value.trim() || !password.value.trim()) {
+    setFeedback('请输入完整的工号和密码。', 'error');
     return;
   }
 
   isSubmitting.value = true;
 
   try {
-    const session = await loginWithCredentials(
-      badgeNumber.value.trim(),
-      password.value
-    );
+    const session = await loginWithCredentials(workId.value.trim(), password.value);
 
     saveAuthSession(session);
     setFeedback(
@@ -125,17 +118,17 @@ async function submitLogin() {
         </div>
 
         <div class="field-grid field-grid--sidebar">
-          <label class="field-card" :class="{ 'is-active': activeField === 'badge' }">
-            <span class="field-card__label">警号 Badge Number</span>
+          <label class="field-card" :class="{ 'is-active': activeField === 'workId' }">
+            <span class="field-card__label">工号 Work ID</span>
             <div class="field-card__input-wrap">
               <span class="field-card__icon">ID</span>
               <input
-                v-model="badgeNumber"
+                v-model="workId"
                 type="text"
-                inputmode="numeric"
+                inputmode="text"
                 autocomplete="username"
-                placeholder="输入员工警号"
-                @focus="focusField('badge')"
+                placeholder="输入员工工号"
+                @focus="focusField('workId')"
               />
             </div>
           </label>

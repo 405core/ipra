@@ -17,15 +17,15 @@ type Handler struct {
 }
 
 type loginRequest struct {
-	BadgeNumber string `json:"badgeNumber"`
-	Password    string `json:"password"`
+	WorkID   string `json:"workId"`
+	Password string `json:"password"`
 }
 
 type userResponse struct {
-	ID          uint   `json:"id"`
-	BadgeNumber string `json:"badgeNumber"`
-	DisplayName string `json:"displayName"`
-	Role        string `json:"role"`
+	ID     uint   `json:"id"`
+	WorkID string `json:"workId"`
+	Name   string `json:"name"`
+	Role   string `json:"role"`
 }
 
 func NewHandler(db *gorm.DB, tokenManager *TokenManager) *Handler {
@@ -50,17 +50,17 @@ func (h *Handler) handleLogin(c *gin.Context) {
 		return
 	}
 
-	badgeNumber := NormalizeBadgeNumber(req.BadgeNumber)
+	workID := NormalizeWorkID(req.WorkID)
 	password := strings.TrimSpace(req.Password)
-	if badgeNumber == "" || password == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"message": "警号和密码不能为空"})
+	if workID == "" || password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "工号和密码不能为空"})
 		return
 	}
 
 	var user User
-	if err := h.db.Where("badge_number = ?", badgeNumber).First(&user).Error; err != nil {
+	if err := h.db.Where("work_id = ?", workID).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			c.JSON(http.StatusUnauthorized, gin.H{"message": "警号或密码错误"})
+			c.JSON(http.StatusUnauthorized, gin.H{"message": "工号或密码错误"})
 			return
 		}
 
@@ -69,7 +69,7 @@ func (h *Handler) handleLogin(c *gin.Context) {
 	}
 
 	if err := VerifyPassword(user.PasswordHash, password); err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"message": "警号或密码错误"})
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "工号或密码错误"})
 		return
 	}
 
@@ -156,9 +156,9 @@ func parseBearerToken(header string) (string, bool) {
 
 func toUserResponse(user User) userResponse {
 	return userResponse{
-		ID:          user.ID,
-		BadgeNumber: user.BadgeNumber,
-		DisplayName: user.DisplayName,
-		Role:        user.Role,
+		ID:     user.ID,
+		WorkID: user.WorkID,
+		Name:   user.Name,
+		Role:   user.Role,
 	}
 }
