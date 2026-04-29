@@ -2,7 +2,11 @@
   "name": "@ipra/source",
   "version": "0.0.0",
   "license": "MIT",
-  "scripts": {},
+  "scripts": {
+    "dev": "nx run-many -t serve --projects=frontend,backend --parallel=2 --outputStyle=stream",
+    "dev:frontend": "nx serve frontend",
+    "dev:backend": "nx serve backend"
+  },
   "private": true,
   "devDependencies": {
     "@nx-go/nx-go": "^4.0.0",
