@@ -2,8 +2,8 @@ export type UserRole = 'admin' | 'employee';
 
 export interface AuthUser {
   id: number;
-  badgeNumber: string;
-  displayName: string;
+  workId: string;
+  name: string;
   role: UserRole;
 }
 
@@ -34,7 +34,8 @@ export function loadAuthSession(): AuthSession | null {
     if (
       typeof parsed.token !== 'string' ||
       !parsed.user ||
-      typeof parsed.user.badgeNumber !== 'string' ||
+      typeof parsed.user.workId !== 'string' ||
+      typeof parsed.user.name !== 'string' ||
       typeof parsed.user.role !== 'string'
     ) {
       localStorage.removeItem(AUTH_STORAGE_KEY);
@@ -61,7 +62,7 @@ export function resolveRoleHome(role: UserRole) {
 }
 
 export async function loginWithCredentials(
-  badgeNumber: string,
+  workId: string,
   password: string
 ): Promise<AuthSession> {
   const response = await fetch('/api/login', {
@@ -70,7 +71,7 @@ export async function loginWithCredentials(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      badgeNumber,
+      workId,
       password,
     }),
   });
@@ -81,7 +82,11 @@ export async function loginWithCredentials(
     | null;
 
   if (!response.ok) {
-    throw new Error(payload?.message || '登录失败，请稍后再试');
+    const message =
+      payload && 'message' in payload && typeof payload.message === 'string'
+        ? payload.message
+        : '登录失败，请稍后再试';
+    throw new Error(message);
   }
 
   return payload as LoginResponse;

@@ -6,8 +6,8 @@ import { clearAuthSession, loadAuthSession } from '../auth';
 const router = useRouter();
 const session = loadAuthSession();
 
-const displayName = computed(() => session?.user.displayName || '普通员工');
-const badgeNumber = computed(() => session?.user.badgeNumber || '-');
+const name = computed(() => session?.user.name || '普通员工');
+const workId = computed(() => session?.user.workId || '-');
 
 async function logout() {
   clearAuthSession();
@@ -25,8 +25,8 @@ async function logout() {
       </p>
       <div class="placeholder-meta">
         <span>身份：普通员工</span>
-        <span>姓名：{{ displayName }}</span>
-        <span>警号：{{ badgeNumber }}</span>
+        <span>姓名：{{ name }}</span>
+        <span>工号：{{ workId }}</span>
       </div>
       <button class="placeholder-action" type="button" @click="logout">
         退出登录
