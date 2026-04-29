@@ -10,7 +10,7 @@ func TestTokenManagerSignAndParse(t *testing.T) {
 
 	token, err := manager.Sign(User{
 		ID:          7,
-		BadgeNumber: "staff001",
+		BadgeNumber: "user",
 		DisplayName: "普通员工",
 		Role:        RoleEmployee,
 	})
@@ -29,8 +29,8 @@ func TestTokenManagerSignAndParse(t *testing.T) {
 	if claims.Role != RoleEmployee {
 		t.Fatalf("Role = %q, want %q", claims.Role, RoleEmployee)
 	}
-	if claims.BadgeNumber != "staff001" {
-		t.Fatalf("BadgeNumber = %q, want %q", claims.BadgeNumber, "staff001")
+	if claims.BadgeNumber != "user" {
+		t.Fatalf("BadgeNumber = %q, want %q", claims.BadgeNumber, "user")
 	}
 }
 
@@ -39,7 +39,7 @@ func TestTokenManagerRejectsExpiredTokens(t *testing.T) {
 
 	token, err := manager.Sign(User{
 		ID:          1,
-		BadgeNumber: "admin001",
+		BadgeNumber: "admin",
 		DisplayName: "系统管理员",
 		Role:        RoleAdmin,
 	})

@@ -31,15 +31,15 @@ type seedUser struct {
 
 var defaultSeedUsers = []seedUser{
 	{
-		BadgeNumber: "admin001",
+		BadgeNumber: "admin",
 		DisplayName: "系统管理员",
-		Password:    "Admin123!",
+		Password:    "123",
 		Role:        RoleAdmin,
 	},
 	{
-		BadgeNumber: "staff001",
+		BadgeNumber: "user",
 		DisplayName: "普通员工",
-		Password:    "Staff123!",
+		Password:    "123",
 		Role:        RoleEmployee,
 	},
 }
