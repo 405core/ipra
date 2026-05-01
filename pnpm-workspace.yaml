@@ -1,1 +1,5 @@
+allowBuilds:
+  '@parcel/watcher': true
+  '@swc/core': true
+  nx: true
 autoInstallPeers: true
