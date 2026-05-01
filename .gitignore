@@ -48,6 +48,13 @@ vite.config.*.timestamp*
 docs/.vitepress/cache/
 docs/.vitepress/dist/
 # environment files
-**/.env.local
-**/.env.prod
-!**/.env.example
+.env
+.env.local
+
+# local AI/runtime artifacts
+.codex-temp/
+models/
+apps/ai-service/.venv/
+apps/ai-service/test-runs/
+apps/ai-service/**/__pycache__/
+apps/ai-service/**/*.pyc

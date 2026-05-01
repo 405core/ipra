@@ -1,0 +1,30 @@
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+# Runtime. The official HumanOmni requirements are Linux/CUDA oriented and
+# include training-only packages such as deepspeed and bitsandbytes. This file
+# keeps the inference path leaner for the Windows development workstation.
+torch
+torchvision
+accelerate>=0.30.1
+transformers==4.45.0
+tokenizers>=0.20,<0.21
+huggingface_hub>=0.24.5
+safetensors>=0.4.5
+
+# Multimodal preprocessing.
+numpy>=1.26
+pillow>=10
+opencv-python>=4.9
+imageio>=2.34
+imageio-ffmpeg>=0.6
+moviepy==1.0.3
+scenedetect>=0.6.3
+einops>=0.6.1
+timm>=1.0.3
+h5py>=3.11
+ipdb>=0.13
+
+# Service wrapper for the next development step.
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.7
