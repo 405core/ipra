@@ -53,8 +53,8 @@ flowchart TB
 
     subgraph AIService["AI-Service · Python"]
         asr["ASR 转写"]
-        humanomni["HumanOmni0.5 片段分析"]
-        visual["视觉事件检测"]
+        humanomni["HumanOmni0.5 片段整体分析"]
+        visual["MediaPipe 视觉事件检测"]
         fusion["多模态融合层"]
         llm["业务 LLM 追问生成"]
     end
@@ -112,15 +112,22 @@ flowchart TB
 ```text
 apps/ai-service/
   app/
-    check_env.py              # 环境、模型、CUDA、依赖检查
-    download_deps.py          # 下载 SigLIP、Whisper、BERT 等依赖模型
-    infer_once.py             # 单个音视频文件 HumanOmni 推理
-    run_sample_tests.py       # 批量测试 samples 中的视频
+    config.py                 # 路径、模型缓存、离线模式和运行时配置
     service.py                # FastAPI 服务骨架
+    video_observation.py      # 纯视频视觉事件提取逻辑
+    startup/
+      check_env.py            # 统一环境、模型、CUDA、依赖检查
     compat/
       decord/                 # Windows 下的 decord 兼容层
+  scripts/
+    humanomni_infer_once.py   # HumanOmni 单个窗口/文件推理
+    mediapipe_analyze_once.py # MediaPipe 单个窗口/文件观察入口
+    analyze_window_once.py    # 同一时间窗口内统一调用 HumanOmni 和 MediaPipe
   samples/                    # 测试视频和说明
-  test-runs/                  # 批量测试输出结果
+  test-runs/                  # HumanOmni 批量测试输出结果，当前可按需保留或清理
+  observations-runs/          # MediaPipe 单独观察输出结果
+  window-runs/                # HumanOmni + MediaPipe 统一窗口输出结果
+  asr-runs/                   # 后续 ASR 单独转写输出结果
   vendor/
     HumanOmni-official/       # 官方 HumanOmni 源码归档
   .env.example
@@ -170,7 +177,18 @@ humanomni_test_06_followup_context_video_ad.mp4
 
 根据项目真实场景，问询通常存在语音环境，因此后续重点测试对象应优先选择 `_ad.mp4` 样本。
 
-## 7. HumanOmni 推理测试命令
+## 7. 统一环境和测试命令
+
+为了便于部署，当前 AI-Service 统一使用 Python 3.12 的 `apps/ai-service/.venv`。HumanOmni、MediaPipe 和后续 ASR 默认都在这个环境中运行，不再拆成 `.venv` 与 `.venv-vision` 两套环境。
+
+如果当前 `.venv` 是 Python 3.13，建议重建为 Python 3.12 后再安装依赖：
+
+```powershell
+cd D:\405project\ipra
+py -3.12 -m venv apps\ai-service\.venv
+& "D:\405project\ipra\apps\ai-service\.venv\Scripts\python.exe" -m pip install --upgrade pip
+& "D:\405project\ipra\apps\ai-service\.venv\Scripts\python.exe" -m pip install --proxy http://127.0.0.1:7897 -r apps\ai-service\requirements.txt
+```
 
 ### 7.1 环境检查
 
@@ -178,7 +196,7 @@ humanomni_test_06_followup_context_video_ad.mp4
 
 ```powershell
 cd D:\405project\ipra
-& "D:\405project\ipra\apps\ai-service\.venv\Scripts\python.exe" apps\ai-service\app\check_env.py
+& "D:\405project\ipra\apps\ai-service\.venv\Scripts\python.exe" apps\ai-service\app\startup\check_env.py
 ```
 
 ### 7.2 单个带音频视频测试
@@ -189,31 +207,102 @@ $env:HF_HOME="D:\405project\ipra\models\humanomni0.5\huggingface"
 $env:TRANSFORMERS_CACHE="D:\405project\ipra\models\humanomni0.5\huggingface\hub"
 $env:TRANSFORMERS_OFFLINE="1"
 
-& "D:\405project\ipra\apps\ai-service\.venv\Scripts\python.exe" apps\ai-service\app\infer_once.py `
+& "D:\405project\ipra\apps\ai-service\.venv\Scripts\python.exe" apps\ai-service\scripts\humanomni_infer_once.py `
   --modal video_audio `
   --video-path apps\ai-service\samples\humanomni_test_02_funding_stress_video_ad.mp4 `
   --instruct "Describe the person in the video. What is the person saying, and what visible emotional changes can you observe?" `
   --max-new-tokens 128
 ```
 
-### 7.3 批量测试所有带音频样本
+### 7.3 当前主测试入口
+
+当前阶段不再把 HumanOmni 批量测试作为主流程，优先使用 7.4 的同一窗口统一分析脚本。单独的 HumanOmni 或 MediaPipe 脚本仅用于定位某一侧模型是否可用。
+
+### 7.4 同一窗口统一分析测试
+
+当前阶段推荐优先跑通“同一窗口下 HumanOmni + MediaPipe 的统一分析输出”。该命令会对同一个 `start-seconds` 和 `duration-seconds` 片段分别执行：
+
+- HumanOmni：生成窗口级整体观察摘要。
+- MediaPipe：生成带时间点的视线、头部、手部、姿态、面部候选事件。
+- 统一输出层：把两者合并为一个 JSON，供后续 ASR、业务 LLM 和前端展示继续使用。
+
+统一脚本默认使用当前启动它的 Python 解释器继续调度 HumanOmni 和 MediaPipe 子流程，因此需要保证 `apps/ai-service/.venv` 中已经同时安装 HumanOmni 依赖和 `mediapipe==0.10.21`。
+
+在仓库根目录执行：
 
 ```powershell
 cd D:\405project\ipra
-$env:HF_HOME="D:\405project\ipra\models\humanomni0.5\huggingface"
-$env:TRANSFORMERS_CACHE="D:\405project\ipra\models\humanomni0.5\huggingface\hub"
-$env:TRANSFORMERS_OFFLINE="1"
-
-& "D:\405project\ipra\apps\ai-service\.venv\Scripts\python.exe" apps\ai-service\app\run_sample_tests.py `
-  --pattern "*_ad.mp4" `
-  --modal video_audio `
-  --max-new-tokens 128
+& "D:\405project\ipra\apps\ai-service\.venv\Scripts\python.exe" apps\ai-service\scripts\analyze_window_once.py `
+  --video-path apps\ai-service\samples\humanomni_test_03_gaze_avoidance_video.mp4 `
+  --modal video `
+  --start-seconds 4 `
+  --duration-seconds 2 `
+  --humanomni-num-frames 32 `
+  --mediapipe-sample-fps 12
 ```
 
-批量测试结果会输出到：
+输出文件会写入：
 
 ```text
-apps/ai-service/test-runs/
+apps/ai-service/window-runs/
+```
+
+默认情况下，`analyze_window_once.py` 只会在 `window-runs` 中保留一个最终统一 JSON。MediaPipe 子流程产生的中间 JSON 会写入临时文件，合并完成后删除；它的 `timelineEvents`、`summary` 和窗口信息已经合并进最终 JSON。
+
+如果以后需要调试 MediaPipe 原始输出，可以手动追加 `--keep-mediapipe-report`，此时会额外保留一个 `.mediapipe.json`：
+
+```powershell
+& "D:\405project\ipra\apps\ai-service\.venv\Scripts\python.exe" apps\ai-service\scripts\analyze_window_once.py `
+  --video-path apps\ai-service\samples\humanomni_test_03_gaze_avoidance_video.mp4 `
+  --modal video `
+  --start-seconds 4 `
+  --duration-seconds 2 `
+  --humanomni-num-frames 32 `
+  --mediapipe-sample-fps 12 `
+  --keep-mediapipe-report
+```
+
+统一 JSON 中的核心字段包括：
+
+- `window`：本次分析的开始时间、持续时间和结束时间。
+- `humanOmni.summary`：HumanOmni 对同一片段的整体描述。
+- `visualObservation.timelineEvents`：MediaPipe 输出的候选视觉事件时间线。
+- `asr`：ASR 预留字段，当前未接入时为 `status: not_connected`。
+- `fusion.summary`：把 HumanOmni 摘要和 MediaPipe 候选事件合并后的窗口级观察摘要。
+- `fusion.limitations`：当前阶段限制，尤其是未提供 ASR JSON 时，不能直接做语义一致性判断。
+
+后续 ASR 接入时，可以先生成同一窗口的 ASR JSON，再通过 `--asr-json` 合并进统一分析结果：
+
+```powershell
+& "D:\405project\ipra\apps\ai-service\.venv\Scripts\python.exe" apps\ai-service\scripts\analyze_window_once.py `
+  --video-path apps\ai-service\samples\humanomni_test_02_funding_stress_video_ad.mp4 `
+  --modal video_audio `
+  --start-seconds 0 `
+  --duration-seconds 5 `
+  --humanomni-num-frames 32 `
+  --mediapipe-sample-fps 12 `
+  --asr-json apps\ai-service\asr-runs\example-window-asr.json
+```
+
+预留 ASR JSON 推荐结构：
+
+```json
+{
+  "ok": true,
+  "status": "provided",
+  "provider": "reserved-asr-provider",
+  "model": "reserved-asr-model",
+  "language": "zh",
+  "text": "旅客在该窗口内的回答文本",
+  "segments": [
+    {
+      "startSeconds": 0.0,
+      "endSeconds": 2.4,
+      "text": "分段文本"
+    }
+  ],
+  "words": []
+}
 ```
 
 ## 8. 多模态融合输出示例

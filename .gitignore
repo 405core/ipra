@@ -55,6 +55,10 @@ docs/.vitepress/dist/
 .codex-temp/
 models/
 apps/ai-service/.venv/
+apps/ai-service/.venv-vision/
 apps/ai-service/test-runs/
+apps/ai-service/observations-runs/
+apps/ai-service/window-runs/
+apps/ai-service/asr-runs/
 apps/ai-service/**/__pycache__/
 apps/ai-service/**/*.pyc
