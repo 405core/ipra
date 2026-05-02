@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+import logging
 import os
+import sys
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -11,6 +15,7 @@ VENDOR_ROOT = AI_SERVICE_ROOT / "vendor" / "HumanOmni-official" / "HumanOmni-mai
 COMPAT_ROOT = AI_SERVICE_ROOT / "app" / "compat"
 DEFAULT_MODEL_PATH = REPO_ROOT / "models" / "humanomni0.5" / "iic" / "HumanOmni-0___5B"
 DEFAULT_HF_HOME = REPO_ROOT / "models" / "humanomni0.5" / "huggingface"
+TRUE_VALUES = {"1", "ON", "TRUE", "YES"}
 
 
 @dataclass(frozen=True)
@@ -20,6 +25,7 @@ class Settings:
     vendor_root: Path
     compat_root: Path
     cuda_visible_devices: str
+    hf_offline: str
 
 
 def resolve_path(value: str | None, fallback: Path) -> Path:
@@ -32,6 +38,59 @@ def resolve_path(value: str | None, fallback: Path) -> Path:
     return path.resolve()
 
 
+def resolve_hf_offline() -> str:
+    for name in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE"):
+        value = os.getenv(name)
+        if value:
+            return value
+    return "1"
+
+
+def is_truthy(value: str | None) -> bool:
+    return str(value or "").strip().upper() in TRUE_VALUES
+
+
+def configure_warning_output() -> None:
+    if is_truthy(os.getenv("AI_SERVICE_VERBOSE_WARNINGS")):
+        return
+
+    os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+    os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+    os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
+    logging.getLogger("transformers").setLevel(logging.ERROR)
+    logging.getLogger("transformers.modeling_utils").setLevel(logging.ERROR)
+    logging.getLogger("transformers.generation.utils").setLevel(logging.ERROR)
+    warnings.filterwarnings(
+        "ignore",
+        message=r"Importing from timm\.models\.layers is deprecated.*",
+        category=FutureWarning,
+    )
+
+
+@contextmanager
+def suppress_native_stderr():
+    if is_truthy(os.getenv("AI_SERVICE_VERBOSE_WARNINGS")):
+        yield
+        return
+
+    try:
+        stderr_fd = sys.stderr.fileno()
+    except (AttributeError, OSError):
+        yield
+        return
+
+    sys.stderr.flush()
+    saved_fd = os.dup(stderr_fd)
+    try:
+        with open(os.devnull, "w", encoding="utf-8") as devnull:
+            os.dup2(devnull.fileno(), stderr_fd)
+            yield
+    finally:
+        sys.stderr.flush()
+        os.dup2(saved_fd, stderr_fd)
+        os.close(saved_fd)
+
+
 def load_settings() -> Settings:
     return Settings(
         model_path=resolve_path(os.getenv("HUMANOMNI_MODEL_PATH"), DEFAULT_MODEL_PATH),
@@ -39,14 +98,19 @@ def load_settings() -> Settings:
         vendor_root=VENDOR_ROOT,
         compat_root=COMPAT_ROOT,
         cuda_visible_devices=os.getenv("CUDA_VISIBLE_DEVICES", "0"),
+        hf_offline=resolve_hf_offline(),
     )
 
 
 def configure_runtime(settings: Settings | None = None) -> Settings:
     settings = settings or load_settings()
+    configure_warning_output()
     os.environ.setdefault("CUDA_VISIBLE_DEVICES", settings.cuda_visible_devices)
-    os.environ.setdefault("HF_HOME", str(settings.hf_home))
-    os.environ.setdefault("TRANSFORMERS_CACHE", str(settings.hf_home / "hub"))
+    os.environ["HF_HOME"] = str(settings.hf_home)
+    os.environ.setdefault("HF_HUB_OFFLINE", settings.hf_offline)
+    os.environ.setdefault("TRANSFORMERS_OFFLINE", settings.hf_offline)
     os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+    os.environ.setdefault("DO_NOT_TRACK", "1")
+    os.environ.setdefault("GLOG_minloglevel", "2")
     settings.hf_home.mkdir(parents=True, exist_ok=True)
     return settings

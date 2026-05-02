@@ -4,7 +4,11 @@ import argparse
 import sys
 from pathlib import Path
 
-from config import configure_runtime, load_settings
+APP_DIR = Path(__file__).resolve().parents[1] / "app"
+if str(APP_DIR) not in sys.path:
+    sys.path.insert(0, str(APP_DIR))
+
+from config import configure_runtime, is_truthy, load_settings
 
 
 def add_import_paths(settings) -> None:
@@ -27,6 +31,24 @@ def parse_args() -> argparse.Namespace:
         default="Describe the visible person, speech content, and emotional state in this video.",
     )
     parser.add_argument("--max-new-tokens", type=int, default=256)
+    parser.add_argument(
+        "--start-seconds",
+        type=float,
+        default=None,
+        help="Optional start time for clipping the video/audio before inference.",
+    )
+    parser.add_argument(
+        "--duration-seconds",
+        type=float,
+        default=None,
+        help="Optional clip duration. Use with --start-seconds for 2s/5s/10s windows.",
+    )
+    parser.add_argument(
+        "--num-frames",
+        type=int,
+        default=None,
+        help="Override HumanOmni video frame sampling count, e.g. 16 or 32.",
+    )
     return parser.parse_args()
 
 
@@ -42,6 +64,16 @@ def main() -> int:
         raise FileNotFoundError(f"Model path does not exist: {model_path}")
     if not video_path.is_file():
         raise FileNotFoundError(f"Video path does not exist: {video_path}")
+    if args.duration_seconds is not None and args.duration_seconds <= 0:
+        raise ValueError("--duration-seconds must be greater than 0")
+    if args.num_frames is not None and args.num_frames <= 0:
+        raise ValueError("--num-frames must be greater than 0")
+
+    clip_start = args.start_seconds
+    clip_end = None
+    if args.duration_seconds is not None:
+        clip_start = 0.0 if clip_start is None else clip_start
+        clip_end = clip_start + args.duration_seconds
 
     import torch
     from transformers import BertTokenizer
@@ -53,14 +85,26 @@ def main() -> int:
 
     print(f"Loading HumanOmni model from {model_path}")
     disable_torch_init()
-    bert_tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
+    bert_tokenizer = BertTokenizer.from_pretrained(
+        "bert-base-uncased",
+        local_files_only=is_truthy(settings.hf_offline),
+    )
     model, processor, tokenizer = model_init(str(model_path))
 
     print(f"Preprocessing {args.modal} input from {video_path}")
-    video_tensor = processor["video"](str(video_path))
+    video_kwargs = {}
+    if clip_start is not None and clip_end is not None:
+        video_kwargs.update({"s": clip_start, "e": clip_end})
+    if args.num_frames is not None:
+        video_kwargs["num_frames"] = args.num_frames
+
+    video_tensor = processor["video"](str(video_path), **video_kwargs)
     audio = None
     if args.modal in {"video_audio", "audio"}:
-        audio = processor["audio"](str(video_path))[0]
+        audio_kwargs = {}
+        if clip_start is not None and clip_end is not None:
+            audio_kwargs.update({"s": clip_start, "e": clip_end})
+        audio = processor["audio"](str(video_path), **audio_kwargs)[0]
 
     print("Running inference ...")
     output = mm_infer(
