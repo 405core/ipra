@@ -1,9 +1,24 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
 import {
+  requestFirstRoundStrategy,
+  requestFollowupGuidance,
+  uploadHumanOmniWindow,
+  type ActionObservationPayload,
+  type AsrPayload,
+  type FollowupGuidanceResponse,
+  type HumanOmniWindowSummaryPayload,
+  type MultimodalAssessmentPayload,
+  type PassengerProfilePayload,
+  type QuestionAnswerPayload,
+  type RiskAssessmentPayload,
+  type TripProfilePayload,
+} from '../app/ai-service';
+import {
   createIdleRealtimeDetectionState,
   createRealtimeDetectionController,
   type RealtimeDetectionController,
+  type RealtimeEvent,
   type RealtimeDetectionState,
 } from '../app/realtime-mediapipe';
 import { loadAuthSession } from '../auth';
@@ -12,6 +27,7 @@ type WorkflowStage = 'strategy' | 'interview' | 'judgement';
 type RiskLevel = 'high' | 'medium';
 type TranscriptRole = 'system' | 'interviewer' | 'subject';
 type SamplingPhase = 'idle' | 'active' | 'ended' | 'error';
+type RoundUploadState = 'idle' | 'uploading' | 'uploaded' | 'error';
 type FinalJudgement = 'concealment' | 'falseStatement' | 'clear';
 
 interface MockPassengerProfile {
@@ -64,6 +80,12 @@ interface InterviewRound {
   completed: boolean;
   durationSeconds: number;
   summary: string;
+  uploadState: RoundUploadState;
+  uploadErrorMessage: string;
+  humanOmniWindow: HumanOmniWindowSummaryPayload | null;
+  actionObservations: ActionObservationPayload[];
+  recordedFileName: string;
+  asrText: string;
 }
 
 interface SamplingState {
@@ -94,9 +116,37 @@ interface WindowWithWebkitAudioContext extends Window {
   webkitAudioContext?: typeof AudioContext;
 }
 
+interface MockPassengerSupplement {
+  passengerId: string;
+  age: number;
+  gender: string;
+  nationality: string;
+  occupation: string;
+  monthlyIncome: string;
+  travelHistory: string[];
+  documents: Record<string, unknown>;
+}
+
+interface MockTripSupplement {
+  purposeDeclared: string;
+  stayDays: number;
+  ticketType: string;
+  returnTicketStatus: string;
+  companions: string[];
+  accommodation: string;
+  fundingSource: string;
+}
+
+interface JudgementBriefing {
+  multimodalAssessment: MultimodalAssessmentPayload;
+  operatorNote: string;
+  warnings: string[];
+  generatedAt: string;
+}
+
 const session = loadAuthSession();
-const inspectorName = session?.user.name || '普通员工';
-const inspectorWorkId = session?.user.workId || 'EMP-0000';
+const inspectorName = session?.user.realName || '普通员工';
+const inspectorWorkId = session?.user.badgeNumber || 'EMP-0000';
 
 const passengerProfile: MockPassengerProfile = {
   name: 'ZHANG WEI',
@@ -112,6 +162,31 @@ const passengerProfile: MockPassengerProfile = {
     '最近 3 个月内存在异常行程组合，且与重点名单出现高重合度，需要通过多轮问询核验时间线与设备空窗。',
   observation: '10:45 至 10:50 出现终端记录空窗，且现场监控存在约 5 分钟断点。',
   tags: ['异常行程', '设备空窗', '名单重合', '需人工复核'],
+};
+
+const mockedPassengerSupplement: MockPassengerSupplement = {
+  passengerId: 'pax-e92834102',
+  age: 34,
+  gender: 'male',
+  nationality: '中国',
+  occupation: '仓储调度员',
+  monthlyIncome: '12000-18000 CNY',
+  travelHistory: ['2026-01 深圳-香港当日往返', '2026-03 香港-洛杉矶公务行'],
+  documents: {
+    documentType: 'passport',
+    visaStatus: 'B1/B2 valid',
+    issuingCountry: 'CN',
+  },
+};
+
+const mockedTripSupplement: MockTripSupplement = {
+  purposeDeclared: '商务随行与设备交接',
+  stayDays: 7,
+  ticketType: '单程',
+  returnTicketStatus: '未见返程票',
+  companions: ['同行联系人待核验'],
+  accommodation: 'LAX Transit Hotel (mock)',
+  fundingSource: '本人承担',
 };
 
 const workflowStages: StageItem[] = [
@@ -379,13 +454,23 @@ const followUpThemes: FollowUpTheme[] = [
 ];
 
 const currentStage = ref<WorkflowStage>('strategy');
+const sessionId = ref(createSessionId());
 const strategySummary = ref('');
 const generatedQuestions = ref<StrategyQuestion[]>([]);
+const strategyFocusAreas = ref<string[]>([]);
+const strategyOperatorNote = ref('');
+const strategyRiskAssessment = ref<RiskAssessmentPayload | null>(null);
 const strategyGenerationCount = ref(0);
+const isGeneratingStrategy = ref(false);
+const isEndingSampling = ref(false);
+const isRequestingGuidance = ref(false);
+const strategyRequestError = ref('');
+const roundServiceError = ref('');
 const rounds = ref<InterviewRound[]>([]);
 const currentRoundId = ref<string | null>(null);
 const selectedJudgement = ref<FinalJudgement | null>(null);
 const judgementReason = ref('');
+const judgementBriefing = ref<JudgementBriefing | null>(null);
 const isArchived = ref(false);
 const archivedAt = ref('');
 const archiveCode = ref('IPRA-ASK-20260503-014');
@@ -404,6 +489,16 @@ let elapsedIntervalId: number | null = null;
 let transcriptTimeoutIds: number[] = [];
 let samplingStartedAt = 0;
 let realtimeDetectionController: RealtimeDetectionController | null = null;
+let mediaRecorder: MediaRecorder | null = null;
+let recordedChunks: Blob[] = [];
+let recordingMimeType = '';
+const MP4_H264_MIME_TYPES = [
+  'video/mp4;codecs=avc1.64001F,mp4a.40.2',
+  'video/mp4;codecs=avc1.4D401F,mp4a.40.2',
+  'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+  'video/mp4;codecs=h264,aac',
+  'video/mp4',
+] as const;
 
 const currentRound = computed(() => {
   if (!currentRoundId.value) {
@@ -437,19 +532,33 @@ const totalSampleDuration = computed(() =>
 );
 
 const strategyGenerated = computed(() => generatedQuestions.value.length > 0);
-const canEnterInterview = computed(() => strategyGenerated.value);
-const canStartSampling = computed(() => samplingState.value.phase !== 'active');
+const canEnterInterview = computed(
+  () => strategyGenerated.value && !isGeneratingStrategy.value
+);
+const canStartSampling = computed(
+  () =>
+    samplingState.value.phase !== 'active' &&
+    !isEndingSampling.value &&
+    !isRequestingGuidance.value &&
+    !isArchived.value
+);
 const canAdvanceRound = computed(
   () =>
     Boolean(currentRound.value?.completed) &&
+    currentRound.value?.uploadState === 'uploaded' &&
     samplingState.value.phase !== 'active' &&
-    !isArchived.value
+    !isArchived.value &&
+    !isEndingSampling.value &&
+    !isRequestingGuidance.value
 );
 const canEnterJudgement = computed(
   () =>
     rounds.value.length > 1 &&
     Boolean(currentRound.value?.completed) &&
-    samplingState.value.phase !== 'active'
+    currentRound.value?.uploadState === 'uploaded' &&
+    samplingState.value.phase !== 'active' &&
+    !isEndingSampling.value &&
+    !isRequestingGuidance.value
 );
 const canArchive = computed(
   () =>
@@ -515,6 +624,11 @@ const faceCueItems = computed(() => [
 ]);
 
 const keyEvidenceTags = computed(() => {
+  const riskHints = judgementBriefing.value?.multimodalAssessment.riskHints || [];
+  if (riskHints.length) {
+    return riskHints.slice(0, 4);
+  }
+
   const tags = completedRounds.value.flatMap((round) => [round.focus, round.signal]);
   return tags.slice(0, 4);
 });
@@ -613,16 +727,167 @@ function createQuestionId(prefix: string, index: number) {
   return `${prefix}-question-${index + 1}`;
 }
 
-function generateStrategy() {
-  const variantIndex = strategyGenerationCount.value % strategyBlueprints.length;
-  const blueprint = strategyBlueprints[variantIndex];
+function createSessionId() {
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/[-:TZ.]/g, '')
+    .slice(0, 14);
+  const random = Math.random().toString(36).slice(2, 8);
+  return `inq-${timestamp}-${random}`;
+}
 
-  strategySummary.value = blueprint.summary;
-  generatedQuestions.value = blueprint.questions.map((question, index) => ({
-    id: createQuestionId(`strategy-${variantIndex}`, index),
-    ...question,
-  }));
-  strategyGenerationCount.value += 1;
+function createWindowId(round: InterviewRound) {
+  return `${sessionId.value}-${round.id}-${Date.now().toString(36)}`;
+}
+
+function truncateText(text: string, maxLength: number) {
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  return `${text.slice(0, maxLength)}…`;
+}
+
+function normalizeErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  if (typeof error === 'string' && error) {
+    return error;
+  }
+
+  return fallback;
+}
+
+function deriveDestination() {
+  const match = passengerProfile.route.match(/->\s*([A-Z]{3})/);
+  if (match?.[1]) {
+    return `美国洛杉矶 ${match[1]}`;
+  }
+
+  return passengerProfile.route;
+}
+
+function buildPassengerPayload(): PassengerProfilePayload {
+  return {
+    passengerId: mockedPassengerSupplement.passengerId,
+    name: passengerProfile.alias,
+    age: mockedPassengerSupplement.age,
+    gender: mockedPassengerSupplement.gender,
+    nationality: mockedPassengerSupplement.nationality,
+    occupation: mockedPassengerSupplement.occupation,
+    monthlyIncome: mockedPassengerSupplement.monthlyIncome,
+    travelHistory: [...mockedPassengerSupplement.travelHistory],
+    documents: {
+      ...mockedPassengerSupplement.documents,
+      documentNumber: passengerProfile.documentId,
+      pnr: passengerProfile.pnr,
+      seat: passengerProfile.seat,
+    },
+  };
+}
+
+function buildTripPayload(): TripProfilePayload {
+  return {
+    destination: deriveDestination(),
+    purposeDeclared: mockedTripSupplement.purposeDeclared,
+    stayDays: mockedTripSupplement.stayDays,
+    ticketType: mockedTripSupplement.ticketType,
+    returnTicketStatus: mockedTripSupplement.returnTicketStatus,
+    companions: [...mockedTripSupplement.companions],
+    accommodation: mockedTripSupplement.accommodation,
+    fundingSource: mockedTripSupplement.fundingSource,
+  };
+}
+
+function buildKnownFacts() {
+  return [
+    passengerProfile.summary,
+    passengerProfile.observation,
+    ...passengerProfile.tags.map((tag) => `风险标签：${tag}`),
+  ];
+}
+
+function buildOutputConstraints(questionCount: number) {
+  return {
+    questionCount,
+    tone: '中性、专业、非指控',
+    language: 'zh-CN',
+  };
+}
+
+function createStrategyQuestion(
+  prompt: string,
+  objective: string,
+  index: number,
+  prefix: string,
+  title?: string
+) {
+  return {
+    id: createQuestionId(prefix, index),
+    title: title || `问题 ${String(index + 1).padStart(2, '0')}`,
+    prompt,
+    objective,
+  } satisfies StrategyQuestion;
+}
+
+function createStrategyQuestionFromApi(
+  question: {
+    questionId: string;
+    question: string;
+    purpose: string;
+  },
+  index: number
+) {
+  return {
+    id: question.questionId || createQuestionId('strategy-api', index),
+    title: `问题 ${String(index + 1).padStart(2, '0')}`,
+    prompt: question.question,
+    objective: question.purpose || '核验叙述与证据的一致性。',
+  } satisfies StrategyQuestion;
+}
+
+function createOpeningTranscriptScript(questions: StrategyQuestion[]) {
+  const primaryPrompt =
+    questions[0]?.prompt || '请先按时间顺序复述 10:40 到 10:50 之间您在西区仓库的具体动作。';
+  const secondaryPrompt =
+    questions[1]?.prompt || '那为什么 10:45 到 10:50 之间没有任何终端操作记录？';
+
+  return [
+    {
+      speaker: '系统',
+      role: 'system',
+      text: '首轮采样已启动，视频流与话筒输入正在同步记录，并等待 HumanOmni 窗口摘要。',
+      delayMs: 700,
+    },
+    {
+      speaker: '问询员',
+      role: 'interviewer',
+      text: primaryPrompt,
+      delayMs: 1800,
+    },
+    {
+      speaker: passengerProfile.alias,
+      role: 'subject',
+      text:
+        '10:40 左右我在西区货架做常规清点，后面终端突然像卡住了一样，我就停了一下。',
+      delayMs: 4000,
+    },
+    {
+      speaker: '问询员',
+      role: 'interviewer',
+      text: secondaryPrompt,
+      delayMs: 6300,
+    },
+    {
+      speaker: passengerProfile.alias,
+      role: 'subject',
+      text:
+        '我记得灯闪了一下，可能顺手去看了下附近情况，但我当时没觉得这是严重异常。',
+      delayMs: 9000,
+    },
+  ] satisfies TranscriptSeed[];
 }
 
 function buildOpeningRound() {
@@ -630,50 +895,28 @@ function buildOpeningRound() {
     id: 'round-1',
     roundNumber: 1,
     title: '第 1 轮 · 首轮策略执行',
-    focus: '首轮关注：时间线与终端空窗',
+    focus: strategyFocusAreas.value.length
+      ? strategyFocusAreas.value.join(' / ')
+      : '首轮关注：时间线与终端空窗',
     strategyNote:
+      strategyOperatorNote.value ||
       strategySummary.value ||
       '系统默认围绕时间线断点、设备空窗与照明波动启动首轮问询。',
-    signal: '对象需先对 10:45 至 10:50 的时间线和设备空窗给出稳定说明。',
+    signal:
+      strategyRiskAssessment.value?.summary ||
+      '对象需先对 10:45 至 10:50 的时间线和设备空窗给出稳定说明。',
     questions: generatedQuestions.value.map((question) => ({ ...question })),
-    transcriptScript: [
-      {
-        speaker: '系统',
-        role: 'system',
-        text: '首轮采样已启动，视频流与话筒输入正在同步记录。',
-        delayMs: 700,
-      },
-      {
-        speaker: '问询员',
-        role: 'interviewer',
-        text: '请先按时间顺序复述 10:40 到 10:50 之间您在西区仓库的具体动作。',
-        delayMs: 1800,
-      },
-      {
-        speaker: '张伟',
-        role: 'subject',
-        text:
-          '10:40 左右我在西区货架做常规清点，后面终端突然像卡住了一样，我就停了一下。',
-        delayMs: 4000,
-      },
-      {
-        speaker: '问询员',
-        role: 'interviewer',
-        text: '那为什么 10:45 到 10:50 之间没有任何终端操作记录？',
-        delayMs: 6300,
-      },
-      {
-        speaker: '张伟',
-        role: 'subject',
-        text:
-          '我记得灯闪了一下，可能顺手去看了下附近情况，但我当时没觉得这是严重异常。',
-        delayMs: 9000,
-      },
-    ],
+    transcriptScript: createOpeningTranscriptScript(generatedQuestions.value),
     transcripts: [],
     completed: false,
     durationSeconds: 0,
     summary: '',
+    uploadState: 'idle',
+    uploadErrorMessage: '',
+    humanOmniWindow: null,
+    actionObservations: [],
+    recordedFileName: '',
+    asrText: '',
   } satisfies InterviewRound;
 }
 
@@ -694,27 +937,99 @@ function getRoundCue(round?: InterviewRound | null) {
   return round.questions[0]?.title || round.focus;
 }
 
-function buildFollowUpRound(roundNumber: number, previousRound: InterviewRound) {
+function createFollowupTranscriptScript(
+  roundNumber: number,
+  focus: string,
+  questions: StrategyQuestion[],
+  previousRound: InterviewRound,
+  operatorNote: string
+) {
   const cue = getRoundCue(previousRound);
-  const theme = followUpThemes[(roundNumber - 2) % followUpThemes.length];
-  const rawQuestions = theme.questions(cue, roundNumber);
+  const primaryPrompt = questions[0]?.prompt || `请继续说明 ${focus}。`;
+  const secondaryPrompt = questions[1]?.prompt || '请补充上一轮中遗漏的关键时间节点。';
+
+  return [
+    {
+      speaker: '系统',
+      role: 'system',
+      text: `第 ${roundNumber} 轮追问已生成，重点关注 ${focus}。${operatorNote ? ` 提示：${operatorNote}` : ''}`,
+      delayMs: 700,
+    },
+    {
+      speaker: '问询员',
+      role: 'interviewer',
+      text: primaryPrompt,
+      delayMs: 1900,
+    },
+    {
+      speaker: passengerProfile.alias,
+      role: 'subject',
+      text: `关于“${cue}”，我需要补充的是当时情况比上一轮更复杂，我前面漏掉了部分细节。`,
+      delayMs: 4300,
+    },
+    {
+      speaker: '问询员',
+      role: 'interviewer',
+      text: secondaryPrompt,
+      delayMs: 6700,
+    },
+    {
+      speaker: passengerProfile.alias,
+      role: 'subject',
+      text: `我当时主要围绕${focus}处理，相关动作和停留时间可能和我最初描述不完全一致。`,
+      delayMs: 9300,
+    },
+  ] satisfies TranscriptSeed[];
+}
+
+function buildFollowUpRoundFromResponse(
+  response: FollowupGuidanceResponse,
+  roundNumber: number,
+  previousRound: InterviewRound
+) {
+  const questions = response.followupGuidance.map((item, index) =>
+    createStrategyQuestion(
+      item.question,
+      item.reason || item.operatorTip || '继续核验前后轮次叙述是否一致。',
+      index,
+      `round-${roundNumber}`,
+      item.focusArea ? `${item.focusArea} · Q${index + 1}` : `追问 ${index + 1}`
+    )
+  );
+  const focus = response.followupGuidance
+    .map((item) => item.focusArea)
+    .filter(Boolean)
+    .join(' / ') || `第 ${roundNumber} 轮追问`;
 
   return {
     id: `round-${roundNumber}`,
     roundNumber,
-    title: `第 ${roundNumber} 轮 · ${theme.title}`,
-    focus: theme.focus,
-    strategyNote: theme.strategyNote(cue),
-    signal: theme.signal(cue),
-    questions: rawQuestions.map((question, index) => ({
-      id: createQuestionId(`round-${roundNumber}`, index),
-      ...question,
-    })),
-    transcriptScript: theme.transcript(cue, roundNumber),
+    title: `第 ${roundNumber} 轮 · AI 追问引导`,
+    focus,
+    strategyNote:
+      response.operatorNote || response.multimodalAssessment.summary || 'AI-Service 已生成新一轮追问引导。',
+    signal:
+      response.multimodalAssessment.riskHints[0] ||
+      response.warnings[0] ||
+      '继续采样以获取更多线索。',
+    questions,
+    transcriptScript: createFollowupTranscriptScript(
+      roundNumber,
+      focus,
+      questions,
+      previousRound,
+      response.operatorNote
+    ),
     transcripts: [],
     completed: false,
     durationSeconds: 0,
     summary: '',
+    uploadState: 'idle',
+    uploadErrorMessage: '',
+    humanOmniWindow: null,
+    actionObservations: [],
+    recordedFileName: '',
+    asrText: '',
   } satisfies InterviewRound;
 }
 
@@ -724,6 +1039,8 @@ function enterInterviewStage() {
   }
 
   currentStage.value = 'interview';
+  roundServiceError.value = '';
+  judgementBriefing.value = null;
 
   if (!rounds.value.length) {
     const openingRound = buildOpeningRound();
@@ -736,10 +1053,148 @@ function updateCurrentRoundSummary(round: InterviewRound) {
   const subjectStatements = round.transcripts.filter((entry) => entry.role === 'subject');
   const lastSubjectText = subjectStatements[subjectStatements.length - 1]?.text;
   const stableCue = lastSubjectText
-    ? `对象最新补充为“${lastSubjectText.slice(0, 24)}${lastSubjectText.length > 24 ? '…' : ''}”`
+    ? `对象最新补充为“${truncateText(lastSubjectText, 24)}”`
     : '对象已完成本轮说明';
+  const focusText = round.focus.replace('围绕', '').replace('首轮关注：', '');
+  const humanOmniSummary = round.humanOmniWindow?.rawSummary
+    ? `HumanOmni 摘要提示“${truncateText(round.humanOmniWindow.rawSummary, 34)}”`
+    : '';
 
-  round.summary = `${stableCue}，本轮重点仍是 ${round.focus.replace('围绕', '').replace('首轮关注：', '')}。`;
+  round.summary = [stableCue, `本轮重点为 ${focusText}`, humanOmniSummary]
+    .filter(Boolean)
+    .join('，');
+}
+
+function collectSubjectTranscript(round: InterviewRound) {
+  return round.transcripts
+    .filter((entry) => entry.role === 'subject')
+    .map((entry) => entry.text)
+    .join(' ');
+}
+
+function buildQaHistory() {
+  return rounds.value
+    .filter((round) => round.completed && round.uploadState === 'uploaded')
+    .map((round) => {
+      const answerText = collectSubjectTranscript(round);
+      return {
+        questionId: round.questions[0]?.id || null,
+        roundNo: round.roundNumber,
+        question: round.questions[0]?.prompt || round.title,
+        answerText,
+        answerStartSeconds: 0,
+        answerEndSeconds: Math.max(1, round.durationSeconds),
+      } satisfies QuestionAnswerPayload;
+    });
+}
+
+function buildRoundAsrPayload(round: InterviewRound): AsrPayload {
+  const text = collectSubjectTranscript(round);
+  if (!text) {
+    return {
+      status: 'not_connected',
+      provider: 'frontend-mock',
+      model: 'frontend-mock-transcript',
+      language: 'zh-CN',
+      text: '',
+      segments: [],
+      words: [],
+    };
+  }
+
+  return {
+    status: 'provided',
+    provider: 'frontend-mock',
+    model: 'frontend-mock-transcript',
+    language: 'zh-CN',
+    text,
+    segments: [
+      {
+        startSeconds: 0,
+        endSeconds: Math.max(1, round.durationSeconds),
+        text,
+      },
+    ],
+    words: [],
+  };
+}
+
+function deriveObservationConfidence(event: RealtimeEvent) {
+  if (event.tone === 'alert') {
+    return 0.82;
+  }
+
+  if (event.tone === 'warn') {
+    return 0.68;
+  }
+
+  return 0.55;
+}
+
+function buildActionObservations(round: InterviewRound, events: RealtimeEvent[]) {
+  const chronologicalEvents = [...events].reverse();
+
+  return chronologicalEvents.map((event, index) => {
+    const startSeconds = Number(
+      Math.max(0, (event.timestamp - samplingStartedAt) / 1000).toFixed(1)
+    );
+    const endSeconds = Number(
+      Math.min(Math.max(1, round.durationSeconds), startSeconds + 1.4).toFixed(1)
+    );
+
+    return {
+      observationId: `${round.id}-obs-${index + 1}`,
+      type: event.type,
+      label: event.title,
+      description: event.detail,
+      startSeconds,
+      endSeconds,
+      timeRange: `${formatDuration(startSeconds)} - ${formatDuration(endSeconds)}`,
+      confidence: deriveObservationConfidence(event),
+      source: 'frontend-mediapipe',
+      evidence: {
+        displayTime: event.displayTime,
+        tone: event.tone,
+      },
+    } satisfies ActionObservationPayload;
+  });
+}
+
+function buildHumanOmniWindows() {
+  return rounds.value.flatMap((round) =>
+    round.humanOmniWindow ? [round.humanOmniWindow] : []
+  );
+}
+
+function buildActionObservationHistory() {
+  return rounds.value.flatMap((round) => round.actionObservations);
+}
+
+function buildFollowupPayload(roundNumber: number, round: InterviewRound) {
+  return {
+    sessionId: sessionId.value,
+    roundNo: roundNumber,
+    passengerProfile: buildPassengerPayload(),
+    tripProfile: buildTripPayload(),
+    qaHistory: buildQaHistory(),
+    humanOmniWindows: buildHumanOmniWindows(),
+    actionObservations: buildActionObservationHistory(),
+    asr: buildRoundAsrPayload(round),
+    constraints: buildOutputConstraints(3),
+  };
+}
+
+function buildSummarizeWindowFormData(round: InterviewRound, file: File) {
+  const windowId = createWindowId(round);
+  const formData = new FormData();
+  formData.append('file', file, file.name);
+  formData.append('sessionId', sessionId.value);
+  formData.append('questionId', round.questions[0]?.id || round.id);
+  formData.append('windowId', windowId);
+  formData.append('modal', 'video_audio');
+  formData.append('startSeconds', '0');
+  formData.append('endSeconds', String(Math.max(1, round.durationSeconds)));
+  return formData;
 }
 
 function clearTranscriptTimers() {
@@ -761,6 +1216,73 @@ function stopMeterLoop() {
     window.cancelAnimationFrame(meterFrameId);
     meterFrameId = null;
   }
+}
+
+function isMp4H264MimeType(mimeType: string) {
+  const normalized = mimeType.toLowerCase();
+  if (!normalized.startsWith('video/mp4')) {
+    return false;
+  }
+
+  return (
+    !normalized.includes('codecs=') ||
+    normalized.includes('avc1') ||
+    normalized.includes('h264')
+  );
+}
+
+function resolveRecordingMimeType() {
+  if (typeof MediaRecorder === 'undefined' || typeof MediaRecorder.isTypeSupported !== 'function') {
+    return '';
+  }
+
+  return MP4_H264_MIME_TYPES.find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) || '';
+}
+
+function createRecordedClipFile(round: InterviewRound) {
+  if (!recordedChunks.length) {
+    return null;
+  }
+
+  const mimeType = recordingMimeType || recordedChunks[0]?.type || '';
+  if (!isMp4H264MimeType(mimeType)) {
+    throw new Error('当前浏览器未生成 MP4/H.264 片段，无法上传到 AI-Service。');
+  }
+
+  const extension = 'mp4';
+  const blob = new Blob(recordedChunks, {
+    type: mimeType,
+  });
+  const fileName = `${sessionId.value}-${round.id}.${extension}`;
+  round.recordedFileName = fileName;
+
+  return new File([blob], fileName, {
+    type: mimeType,
+  });
+}
+
+function resetRecorderState() {
+  if (mediaRecorder) {
+    mediaRecorder.ondataavailable = null;
+    mediaRecorder.onstop = null;
+    mediaRecorder.onerror = null;
+    mediaRecorder = null;
+  }
+
+  recordedChunks = [];
+  recordingMimeType = '';
+}
+
+function forceStopMediaRecorder() {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    try {
+      mediaRecorder.stop();
+    } catch {
+      // no-op
+    }
+  }
+
+  resetRecorderState();
 }
 
 function releaseMediaStream() {
@@ -789,12 +1311,17 @@ function releaseMediaStream() {
   }
 }
 
-function stopSamplingResources() {
+function stopSamplingRuntime() {
   clearTranscriptTimers();
   stopElapsedTimer();
   stopMeterLoop();
   realtimeDetectionController?.stop();
   releaseMediaStream();
+}
+
+function stopSamplingResources() {
+  stopSamplingRuntime();
+  forceStopMediaRecorder();
 }
 
 function resetSamplingIndicators() {
@@ -818,7 +1345,7 @@ function resolveMediaError(error: unknown) {
     return `设备调用失败：${error.message}`;
   }
 
-  return '设备调用失败，请稍后重试。';
+  return normalizeErrorMessage(error, '设备调用失败，请稍后重试。');
 }
 
 function updateAudioMeter() {
@@ -870,7 +1397,7 @@ async function startRealtimeDetection() {
     realtimeDetection.value = createIdleRealtimeDetectionState({
       phase: 'error',
       statusMessage: '视觉检测启动失败',
-      windowSummary: error instanceof Error ? error.message : '实时视觉检测未能成功启动。',
+      windowSummary: normalizeErrorMessage(error, '实时视觉检测未能成功启动。'),
     });
   }
 }
@@ -893,6 +1420,78 @@ function startElapsedTimer() {
       Math.floor((Date.now() - samplingStartedAt) / 1000)
     );
   }, 1000);
+}
+
+async function startMediaRecorder(stream: MediaStream) {
+  if (typeof MediaRecorder === 'undefined') {
+    throw new Error('当前浏览器不支持 MediaRecorder，无法生成上传片段。');
+  }
+
+  recordedChunks = [];
+  recordingMimeType = resolveRecordingMimeType();
+  if (!recordingMimeType) {
+    throw new Error('当前浏览器不支持 MP4/H.264 录制，无法上传采样片段。');
+  }
+
+  mediaRecorder = new MediaRecorder(stream, {
+    mimeType: recordingMimeType,
+  });
+  recordingMimeType = mediaRecorder.mimeType || recordingMimeType;
+  if (!isMp4H264MimeType(recordingMimeType)) {
+    resetRecorderState();
+    throw new Error('当前浏览器返回的录制编码不是 MP4/H.264，无法继续采样上传。');
+  }
+
+  mediaRecorder.ondataavailable = (event) => {
+    if (event.data?.size) {
+      recordedChunks.push(event.data);
+    }
+  };
+  mediaRecorder.start(500);
+}
+
+function stopMediaRecorder(round: InterviewRound): Promise<File | null> {
+  const recorder = mediaRecorder;
+  if (!recorder) {
+    return Promise.resolve(createRecordedClipFile(round));
+  }
+
+  if (recorder.state === 'inactive') {
+    const file = createRecordedClipFile(round);
+    resetRecorderState();
+    return Promise.resolve(file);
+  }
+
+  return new Promise((resolve, reject) => {
+    const handleStop = () => {
+      try {
+        const file = createRecordedClipFile(round);
+        resetRecorderState();
+        resolve(file);
+      } catch (error) {
+        resetRecorderState();
+        reject(error);
+      }
+    };
+    const handleError = () => {
+      resetRecorderState();
+      reject(new Error('采样录制失败，请重试。'));
+    };
+
+    recorder.addEventListener('stop', handleStop, {
+      once: true,
+    });
+    recorder.addEventListener('error', handleError, {
+      once: true,
+    });
+
+    try {
+      recorder.stop();
+    } catch (error) {
+      resetRecorderState();
+      reject(error);
+    }
+  });
 }
 
 function scheduleMockTranscripts(round: InterviewRound) {
@@ -919,6 +1518,45 @@ function scheduleMockTranscripts(round: InterviewRound) {
   });
 }
 
+async function generateStrategy() {
+  if (isGeneratingStrategy.value) {
+    return;
+  }
+
+  isGeneratingStrategy.value = true;
+  strategyRequestError.value = '';
+
+  try {
+    const response = await requestFirstRoundStrategy({
+      sessionId: sessionId.value,
+      passengerProfile: buildPassengerPayload(),
+      tripProfile: buildTripPayload(),
+      knownFacts: buildKnownFacts(),
+      constraints: buildOutputConstraints(6),
+    });
+
+    if (!response.questions.length) {
+      throw new Error('AI-Service 未返回首轮问题。');
+    }
+
+    strategySummary.value = response.strategy.goal || response.riskAssessment.summary;
+    strategyFocusAreas.value = [...response.strategy.focusAreas];
+    strategyOperatorNote.value = response.operatorNote;
+    strategyRiskAssessment.value = response.riskAssessment;
+    generatedQuestions.value = response.questions.map((question, index) =>
+      createStrategyQuestionFromApi(question, index)
+    );
+    strategyGenerationCount.value += 1;
+  } catch (error) {
+    strategyRequestError.value = normalizeErrorMessage(
+      error,
+      '首轮策略生成失败，请检查 AI-Service 后重试。'
+    );
+  } finally {
+    isGeneratingStrategy.value = false;
+  }
+}
+
 async function startSampling() {
   const round = currentRound.value;
   if (!round || !canStartSampling.value || isArchived.value) {
@@ -937,9 +1575,16 @@ async function startSampling() {
   stopSamplingResources();
   resetSamplingIndicators();
   resetRealtimeDetectionViewState();
+  roundServiceError.value = '';
   round.completed = false;
   round.durationSeconds = 0;
   round.summary = '';
+  round.uploadState = 'idle';
+  round.uploadErrorMessage = '';
+  round.humanOmniWindow = null;
+  round.actionObservations = [];
+  round.recordedFileName = '';
+  round.asrText = '';
 
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -977,6 +1622,7 @@ async function startSampling() {
       startMeterLoop();
     }
 
+    await startMediaRecorder(stream);
     startElapsedTimer();
     scheduleMockTranscripts(round);
     void startRealtimeDetection();
@@ -991,43 +1637,146 @@ async function startSampling() {
   }
 }
 
-function endSampling() {
+async function endSampling() {
   const round = currentRound.value;
-  if (!round || samplingState.value.phase !== 'active') {
+  if (!round || samplingState.value.phase !== 'active' || isEndingSampling.value) {
     return;
   }
+
+  isEndingSampling.value = true;
+  roundServiceError.value = '';
 
   const collectedDuration = Math.max(1, samplingState.value.elapsedSeconds);
+  const capturedEvents = [...realtimeDetection.value.events];
   round.durationSeconds = collectedDuration;
   round.completed = round.transcripts.length > 0;
+  round.asrText = collectSubjectTranscript(round);
+  round.actionObservations = buildActionObservations(round, capturedEvents);
   updateCurrentRoundSummary(round);
 
-  stopSamplingResources();
-  samplingState.value = {
-    ...createIdleSamplingState(),
-    phase: round.completed ? 'ended' : 'idle',
-    permissionGranted: true,
-  };
-}
+  let recordedFile: File | null = null;
+  try {
+    recordedFile = await stopMediaRecorder(round);
+  } catch (error) {
+    round.uploadState = 'error';
+    round.uploadErrorMessage = normalizeErrorMessage(error, '采样录制失败，请重试。');
+  } finally {
+    stopSamplingRuntime();
+    samplingState.value = {
+      ...createIdleSamplingState(),
+      phase: round.completed ? 'ended' : 'idle',
+      permissionGranted: true,
+    };
+  }
 
-function enterNextRound() {
-  if (!canAdvanceRound.value || !currentRound.value) {
+  if (!round.completed) {
+    round.uploadState = 'error';
+    round.uploadErrorMessage = '本轮未采集到可用转写内容，请重新采样。';
+    roundServiceError.value = round.uploadErrorMessage;
+    isEndingSampling.value = false;
     return;
   }
 
-  const nextRound = buildFollowUpRound(rounds.value.length + 1, currentRound.value);
-  rounds.value.push(nextRound);
-  currentRoundId.value = nextRound.id;
-  resetSamplingIndicators();
-  resetRealtimeDetectionViewState();
-}
-
-function enterJudgementStage() {
-  if (currentStage.value === 'interview' && !canEnterJudgement.value) {
+  if (!recordedFile) {
+    round.uploadState = 'error';
+    round.uploadErrorMessage =
+      round.uploadErrorMessage || '未生成可上传的音视频片段，请检查浏览器录制能力后重试。';
+    roundServiceError.value = round.uploadErrorMessage;
+    isEndingSampling.value = false;
     return;
   }
 
-  currentStage.value = 'judgement';
+  round.uploadState = 'uploading';
+  round.uploadErrorMessage = '';
+
+  try {
+    const response = await uploadHumanOmniWindow(buildSummarizeWindowFormData(round, recordedFile));
+    round.humanOmniWindow = response.humanOmniWindow;
+    round.recordedFileName = response.uploadedFile.filename;
+    round.uploadState = 'uploaded';
+    round.uploadErrorMessage = '';
+    updateCurrentRoundSummary(round);
+  } catch (error) {
+    round.uploadState = 'error';
+    round.uploadErrorMessage = normalizeErrorMessage(
+      error,
+      'HumanOmni 窗口摘要上传失败，请检查 AI-Service 后重试。'
+    );
+    roundServiceError.value = round.uploadErrorMessage;
+  } finally {
+    isEndingSampling.value = false;
+  }
+}
+
+async function enterNextRound() {
+  const round = currentRound.value;
+  if (!canAdvanceRound.value || !round || isRequestingGuidance.value) {
+    return;
+  }
+
+  isRequestingGuidance.value = true;
+  roundServiceError.value = '';
+
+  try {
+    const nextRoundNumber = round.roundNumber + 1;
+    const response = await requestFollowupGuidance(
+      buildFollowupPayload(nextRoundNumber, round)
+    );
+
+    if (!response.followupGuidance.length) {
+      throw new Error('AI-Service 未返回下一轮追问建议。');
+    }
+
+    const nextRound = buildFollowUpRoundFromResponse(response, nextRoundNumber, round);
+    rounds.value.push(nextRound);
+    currentRoundId.value = nextRound.id;
+    resetSamplingIndicators();
+    resetRealtimeDetectionViewState();
+  } catch (error) {
+    roundServiceError.value = normalizeErrorMessage(
+      error,
+      '下一轮追问生成失败，请检查 AI-Service 后重试。'
+    );
+  } finally {
+    isRequestingGuidance.value = false;
+  }
+}
+
+async function enterJudgementStage() {
+  const round = currentRound.value;
+  if (currentStage.value === 'interview' && (!canEnterJudgement.value || !round)) {
+    return;
+  }
+
+  if (currentStage.value !== 'interview' || !round) {
+    currentStage.value = 'judgement';
+    return;
+  }
+
+  isRequestingGuidance.value = true;
+  roundServiceError.value = '';
+
+  try {
+    const response = await requestFollowupGuidance(
+      buildFollowupPayload(round.roundNumber + 1, round)
+    );
+    judgementBriefing.value = {
+      multimodalAssessment: response.multimodalAssessment,
+      operatorNote: response.operatorNote,
+      warnings: [...response.warnings],
+      generatedAt: new Date().toLocaleTimeString('zh-CN', {
+        hour12: false,
+      }),
+    };
+    currentStage.value = 'judgement';
+  } catch (error) {
+    roundServiceError.value = normalizeErrorMessage(
+      error,
+      '人工判断前摘要生成失败，请检查 AI-Service 后重试。'
+    );
+  } finally {
+    isRequestingGuidance.value = false;
+  }
 }
 
 function archiveCase() {
@@ -1039,6 +1788,66 @@ function archiveCase() {
     hour12: false,
   });
   isArchived.value = true;
+}
+
+function strategyRiskToneClass(level: RiskAssessmentPayload['level']) {
+  if (level === 'high') {
+    return 'risk-chip--high';
+  }
+
+  if (level === 'medium') {
+    return 'risk-chip--medium';
+  }
+
+  return 'risk-chip--safe';
+}
+
+function strategyRiskLabel(level: RiskAssessmentPayload['level']) {
+  if (level === 'high') {
+    return '高风险';
+  }
+
+  if (level === 'medium') {
+    return '中风险';
+  }
+
+  if (level === 'low') {
+    return '低风险';
+  }
+
+  return '待确认';
+}
+
+function roundUploadStateLabel(state: RoundUploadState) {
+  if (state === 'uploading') {
+    return '窗口上传中';
+  }
+
+  if (state === 'uploaded') {
+    return '窗口摘要已回传';
+  }
+
+  if (state === 'error') {
+    return '窗口摘要失败';
+  }
+
+  return '等待上传';
+}
+
+function roundUploadStateClass(state: RoundUploadState) {
+  if (state === 'uploading') {
+    return 'status-chip--loading';
+  }
+
+  if (state === 'uploaded') {
+    return 'status-chip--ended';
+  }
+
+  if (state === 'error') {
+    return 'status-chip--error';
+  }
+
+  return 'status-chip--idle';
 }
 
 function selectJudgement(value: FinalJudgement) {
@@ -1087,8 +1896,8 @@ onBeforeUnmount(() => {
         <p class="section-eyebrow">Inquiry Flow</p>
         <h2>辅助问询流程控制台</h2>
         <p class="section-copy">
-          使用单一主工作面管理策略生成、多轮采样和人工判定。页面中的问询数据全部为前端
-          mock，但摄像头与话筒采样为真实浏览器调用。
+          使用单一主工作面管理策略生成、多轮采样和人工判定。当前已对接 AI-Service
+          三个接口，摄像头与话筒采样为真实浏览器调用，缺失字段仅在前端做显式 mock 补齐。
         </p>
       </div>
 
@@ -1210,16 +2019,64 @@ onBeforeUnmount(() => {
                 </div>
 
                 <span class="soft-chip">
-                  {{ strategyGenerated ? `${generatedQuestions.length} 个问题已生成` : '等待生成' }}
+                  {{
+                    isGeneratingStrategy
+                      ? 'AI-Service 生成中'
+                      : strategyGenerated
+                        ? `${generatedQuestions.length} 个问题已生成`
+                        : '等待生成'
+                  }}
                 </span>
               </div>
 
               <p class="workspace-summary">
                 {{
                   strategySummary ||
-                  '系统将根据用户画像与风险标签，组合时间线、设备异常和现场旁证相关问题。'
+                  '系统将根据用户画像与风险标签，调用 AI-Service 生成首轮策略与问题包。'
                 }}
               </p>
+
+              <div v-if="strategyRiskAssessment || strategyOperatorNote" class="summary-stack">
+                <div v-if="strategyRiskAssessment" class="summary-item">
+                  <span class="meta-label">风险预评估</span>
+                  <div class="summary-item__inline">
+                    <strong>{{ strategyRiskAssessment.summary }}</strong>
+                    <span
+                      class="risk-chip"
+                      :class="strategyRiskToneClass(strategyRiskAssessment.level)"
+                    >
+                      {{ strategyRiskLabel(strategyRiskAssessment.level) }}
+                    </span>
+                  </div>
+                  <div v-if="strategyRiskAssessment.reasons.length" class="tag-row">
+                    <span
+                      v-for="reason in strategyRiskAssessment.reasons"
+                      :key="reason"
+                      class="tag-chip tag-chip--passive"
+                    >
+                      {{ reason }}
+                    </span>
+                  </div>
+                </div>
+
+                <div v-if="strategyFocusAreas.length" class="summary-item">
+                  <span class="meta-label">关注方向</span>
+                  <div class="tag-row">
+                    <span
+                      v-for="area in strategyFocusAreas"
+                      :key="area"
+                      class="tag-chip tag-chip--passive"
+                    >
+                      {{ area }}
+                    </span>
+                  </div>
+                </div>
+
+                <div v-if="strategyOperatorNote" class="summary-item">
+                  <span class="meta-label">工作人员提示</span>
+                  <p>{{ strategyOperatorNote }}</p>
+                </div>
+              </div>
 
               <div v-if="strategyGenerated" class="question-list">
                 <article
@@ -1237,12 +2094,27 @@ onBeforeUnmount(() => {
 
               <div v-else class="empty-panel">
                 <strong>尚未生成首轮问题</strong>
-                <span>点击下方按钮后，系统会生成 4 个用于首轮核验的策略问题。</span>
+                <span>点击下方按钮后，系统会请求 AI-Service 生成首轮核验问题与问询策略。</span>
+              </div>
+
+              <div v-if="strategyRequestError" class="inline-alert">
+                {{ strategyRequestError }}
               </div>
 
               <div class="action-row">
-                <button class="primary-action" type="button" @click="generateStrategy">
-                  {{ strategyGenerated ? '重新生成策略' : '生成策略' }}
+                <button
+                  class="primary-action"
+                  type="button"
+                  :disabled="isGeneratingStrategy"
+                  @click="generateStrategy"
+                >
+                  {{
+                    isGeneratingStrategy
+                      ? '生成中...'
+                      : strategyGenerated
+                        ? '重新生成策略'
+                        : '生成策略'
+                  }}
                 </button>
                 <button
                   class="secondary-action"
@@ -1263,8 +2135,8 @@ onBeforeUnmount(() => {
               <p class="section-eyebrow">Stage 02</p>
               <h3>智能辅助问询</h3>
               <p class="section-copy">
-                当前阶段支持真实摄像头与话筒采样，语音转文字使用前端 mock
-                脚本流实时注入。需要至少完成一轮进入下一轮后，才会解锁进入人工辅助判断。
+                当前阶段支持真实摄像头与话筒采样，语音转文字仍由前端 mock
+                脚本流实时注入；结束采样后会把本轮真实音视频窗口上传到 AI-Service，并用返回结果驱动下一轮追问和人审前摘要。
               </p>
             </div>
 
@@ -1466,29 +2338,29 @@ onBeforeUnmount(() => {
                   ></span>
                 </div>
                 <p class="audio-meter__copy">
-                  语音转文字为 mock，但麦克风采样、电平反馈与摄像头视频流均为真实浏览器输入。
+                  语音转文字为 mock，但麦克风采样、电平反馈与摄像头视频流均为真实浏览器输入；上传片段强制为 MP4/H.264。
                 </p>
               </div>
 
-              <div class="action-row action-row--split">
-                <button
-                  class="primary-action"
-                  type="button"
-                  :disabled="!canStartSampling"
-                  @click="startSampling"
-                >
-                  开始采样
-                </button>
-                <button
-                  class="secondary-action"
-                  type="button"
-                  :disabled="samplingState.phase !== 'active'"
-                  @click="endSampling"
-                >
-                  结束采样
-                </button>
-              </div>
-            </section>
+                <div class="action-row action-row--split">
+                  <button
+                    class="primary-action"
+                    type="button"
+                    :disabled="!canStartSampling"
+                    @click="startSampling"
+                  >
+                    {{ samplingState.phase === 'active' ? '采样进行中' : '开始采样' }}
+                  </button>
+                  <button
+                    class="secondary-action"
+                    type="button"
+                    :disabled="samplingState.phase !== 'active' || isEndingSampling"
+                    @click="endSampling"
+                  >
+                    {{ isEndingSampling ? '结束采样中...' : '结束采样' }}
+                  </button>
+                </div>
+              </section>
 
             <section class="transcript-panel">
               <div class="transcript-panel__head">
@@ -1537,11 +2409,57 @@ onBeforeUnmount(() => {
                 {{ samplingState.errorMessage }}
               </div>
 
+              <div class="summary-stack summary-stack--compact">
+                <div class="summary-item">
+                  <span class="meta-label">窗口上传</span>
+                  <div class="summary-item__inline">
+                    <strong>{{ roundUploadStateLabel(currentRound.uploadState) }}</strong>
+                    <span
+                      class="status-chip"
+                      :class="roundUploadStateClass(currentRound.uploadState)"
+                    >
+                      {{ roundUploadStateLabel(currentRound.uploadState) }}
+                    </span>
+                  </div>
+                  <p>
+                    {{
+                      currentRound.recordedFileName ||
+                      '结束采样后会生成本轮真实 MP4/H.264 音视频片段并上传至 HumanOmni 摘要接口。'
+                    }}
+                  </p>
+                </div>
+
+                <div class="summary-item">
+                  <span class="meta-label">HumanOmni 摘要</span>
+                  <p>
+                    {{
+                      currentRound.humanOmniWindow?.rawSummary ||
+                      (currentRound.uploadState === 'uploading'
+                        ? '正在等待 AI-Service 返回窗口摘要。'
+                        : '尚未生成窗口摘要。')
+                    }}
+                  </p>
+                </div>
+              </div>
+
+              <div v-if="currentRound.uploadErrorMessage" class="inline-alert">
+                {{ currentRound.uploadErrorMessage }}
+              </div>
+
+              <div v-if="roundServiceError" class="inline-alert">
+                {{ roundServiceError }}
+              </div>
+
               <div class="round-actions">
                 <div class="round-actions__copy">
                   <strong>{{ currentRound.completed ? '本轮已完成' : '本轮未完成' }}</strong>
                   <span>
-                    {{ currentRound.completed ? currentRound.summary : '请先完成采样并结束本轮，才能解锁下一轮或进入人工辅助判断。' }}
+                    {{
+                      currentRound.completed
+                        ? currentRound.summary ||
+                          '本轮已结束，等待窗口摘要上传完成后解锁下一步。'
+                        : '请先完成采样并结束本轮，随后等待窗口摘要上传完成，才能解锁下一轮或进入人工辅助判断。'
+                    }}
                   </span>
                 </div>
 
@@ -1552,7 +2470,7 @@ onBeforeUnmount(() => {
                     :disabled="!canAdvanceRound"
                     @click="enterNextRound"
                   >
-                    进入下一轮
+                    {{ isRequestingGuidance ? '生成下一轮中...' : '进入下一轮' }}
                   </button>
                   <button
                     class="primary-action"
@@ -1560,7 +2478,7 @@ onBeforeUnmount(() => {
                     :disabled="!canEnterJudgement"
                     @click="enterJudgementStage"
                   >
-                    进入人工辅助判断
+                    {{ isRequestingGuidance ? '整理摘要中...' : '进入人工辅助判断' }}
                   </button>
                 </div>
               </div>
@@ -1584,9 +2502,13 @@ onBeforeUnmount(() => {
               >
                 <div class="history-item__meta">
                   <strong>{{ round.title }}</strong>
-                  <span>{{ round.completed ? formatDuration(round.durationSeconds) : '未完成' }}</span>
+                  <span>{{
+                    round.uploadState === 'uploaded'
+                      ? formatDuration(round.durationSeconds)
+                      : roundUploadStateLabel(round.uploadState)
+                  }}</span>
                 </div>
-                <p>{{ round.summary || round.strategyNote }}</p>
+                <p>{{ round.humanOmniWindow?.rawSummary || round.summary || round.strategyNote }}</p>
                 <div class="tag-row">
                   <span class="tag-chip tag-chip--passive">{{ round.focus }}</span>
                   <span class="tag-chip tag-chip--passive">{{ round.signal }}</span>
@@ -1607,7 +2529,8 @@ onBeforeUnmount(() => {
               <p class="section-eyebrow">Stage 03</p>
               <h3>人工辅助判断</h3>
               <p class="section-copy">
-                第二阶段问询达到要求后，最终判定必须由检查员完成。请选择结论，并填写详细理由；理由不足时页面不允许归档。
+                第二阶段问询达到要求后，最终判定必须由检查员完成。页面会展示 AI-Service
+                汇总的多模态摘要作为辅助线索，但最终结论仍需由检查员负责。
               </p>
             </div>
 
@@ -1671,37 +2594,75 @@ onBeforeUnmount(() => {
             <section class="profile-panel">
               <div class="workspace-panel__head">
                 <div>
-                  <p class="section-eyebrow">Case Digest</p>
+                  <p class="section-eyebrow">AI-Service Digest</p>
                   <h4>归档前摘要</h4>
                 </div>
-                <span class="soft-chip">{{ passengerProfile.alias }}</span>
+                <span class="soft-chip">{{
+                  judgementBriefing?.generatedAt || passengerProfile.alias
+                }}</span>
               </div>
 
-              <div class="summary-stack">
+              <div v-if="judgementBriefing" class="summary-stack">
                 <div class="summary-item">
                   <span class="meta-label">对象</span>
                   <strong>{{ passengerProfile.name }} / {{ passengerProfile.documentId }}</strong>
                 </div>
                 <div class="summary-item">
                   <span class="meta-label">已完成轮次</span>
-                  <strong>{{ completedRounds.length }} 轮</strong>
+                  <strong>{{ completedRounds.length }} 轮 · {{ formatDuration(totalSampleDuration) }}</strong>
                 </div>
                 <div class="summary-item">
-                  <span class="meta-label">关键依据</span>
-                  <p>
-                    模型已标记时间线修正、设备异常未上报、旁证信息后置出现三类信号，请在理由中明确引用。
-                  </p>
+                  <span class="meta-label">AI 综合摘要</span>
+                  <p>{{ judgementBriefing.multimodalAssessment.summary }}</p>
+                </div>
+                <div class="summary-item">
+                  <span class="meta-label">风险提示</span>
+                  <div class="tag-row">
+                    <span
+                      v-for="hint in judgementBriefing.multimodalAssessment.riskHints"
+                      :key="hint"
+                      class="tag-chip tag-chip--passive"
+                    >
+                      {{ hint }}
+                    </span>
+                  </div>
+                </div>
+                <div class="summary-item">
+                  <span class="meta-label">证据摘要</span>
+                  <div class="evidence-list">
+                    <article
+                      v-for="evidence in judgementBriefing.multimodalAssessment.evidence"
+                      :key="evidence"
+                      class="evidence-item"
+                    >
+                      {{ evidence }}
+                    </article>
+                  </div>
+                </div>
+                <div class="summary-item">
+                  <span class="meta-label">工作人员提示</span>
+                  <p>{{ judgementBriefing.operatorNote }}</p>
+                </div>
+                <div
+                  v-if="judgementBriefing.warnings.length"
+                  class="summary-item summary-item--warning"
+                >
+                  <span class="meta-label">注意事项</span>
+                  <div class="warning-list">
+                    <article
+                      v-for="warning in judgementBriefing.warnings"
+                      :key="warning"
+                      class="warning-item"
+                    >
+                      {{ warning }}
+                    </article>
+                  </div>
                 </div>
               </div>
 
-              <div class="tag-row">
-                <span
-                  v-for="tag in keyEvidenceTags"
-                  :key="tag"
-                  class="tag-chip tag-chip--passive"
-                >
-                  {{ tag }}
-                </span>
+              <div v-else class="empty-panel empty-panel--compact">
+                <strong>尚未生成 AI-Service 摘要</strong>
+                <span>请返回第二阶段完成采样与摘要整理后，再进入人工辅助判断。</span>
               </div>
             </section>
           </div>
@@ -1961,7 +2922,7 @@ onBeforeUnmount(() => {
 
 .progress-track {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
   margin-top: 18px;
 }
@@ -2152,6 +3113,14 @@ onBeforeUnmount(() => {
   color: var(--text-main);
 }
 
+.summary-item__inline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .profile-summary {
   margin-top: 18px;
 }
@@ -2167,6 +3136,10 @@ onBeforeUnmount(() => {
 .summary-stack {
   display: grid;
   gap: 14px;
+}
+
+.summary-stack--compact {
+  margin-top: 14px;
 }
 
 .question-item,
@@ -2260,6 +3233,11 @@ onBeforeUnmount(() => {
 .risk-chip--medium {
   background: rgba(192, 123, 25, 0.14);
   color: var(--warn);
+}
+
+.risk-chip--safe {
+  background: rgba(35, 125, 77, 0.12);
+  color: var(--safe);
 }
 
 .tag-chip {
@@ -2849,6 +3827,32 @@ onBeforeUnmount(() => {
 
 .reason-meta {
   margin-top: 12px;
+}
+
+.evidence-list,
+.warning-list {
+  display: grid;
+  gap: 10px;
+}
+
+.evidence-item,
+.warning-item {
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: #ffffff;
+  border: 1px solid rgba(157, 189, 202, 0.22);
+}
+
+.summary-item--warning {
+  padding: 14px 16px;
+  border-radius: 20px;
+  background: rgba(255, 247, 233, 0.92);
+  border: 1px solid rgba(192, 123, 25, 0.22);
+}
+
+.warning-item {
+  background: rgba(255, 243, 239, 0.92);
+  border-color: rgba(182, 78, 61, 0.18);
 }
 
 .completion-layout {
