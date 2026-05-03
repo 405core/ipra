@@ -34,11 +34,13 @@ def main() -> int:
 
     required = ["multimodalAssessment", "followupGuidance", "warnings"]
     missing = [key for key in required if key not in result]
-    ok = not missing and bool(result.get("followupGuidance"))
+    expected_count = int(payload.get("constraints", {}).get("questionCount", 3))
+    actual_count = len(result.get("followupGuidance", []))
+    ok = not missing and actual_count == expected_count
 
     print("=== Followup Guidance Smoke Test ===")
     print(f"Status: {'ok' if ok else 'failed'}")
-    print(f"Followup count: {len(result.get('followupGuidance', []))}")
+    print(f"Followup count: {actual_count} / expected {expected_count}")
     print("Required fields:", "ok" if not missing else f"missing {missing}")
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if ok else 2
@@ -141,4 +143,3 @@ def post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

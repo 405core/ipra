@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from config import get_cors_origins
 from schemas.humanomni import HumanOmniSummarizeWindowResponse
 from schemas.inquiry import (
     FirstRoundStrategyRequest,
@@ -21,6 +23,13 @@ class HealthResponse(BaseModel):
 
 
 app = FastAPI(title="IPRA AI Service", version="0.2.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=get_cors_origins(),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/health", response_model=HealthResponse)
