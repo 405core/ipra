@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -26,6 +27,10 @@ REQUIRED_PACKAGES = [
     "timm",
     "h5py",
     "ipdb",
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    "multipart",
 ]
 
 MODEL_FILES = [
@@ -49,26 +54,6 @@ def print_item(label: str, ok: bool, detail: str = "") -> None:
     print(f"[{status}] {label}{suffix}")
 
 
-def check_mediapipe() -> bool:
-    if not has_module("mediapipe"):
-        print_item("python package mediapipe==0.10.21", False, "same-env pure-video observation")
-        return False
-
-    try:
-        mediapipe = importlib.import_module("mediapipe")
-        version = getattr(mediapipe, "__version__", "unknown")
-        has_solutions = hasattr(mediapipe, "solutions")
-        print_item(
-            "python package mediapipe legacy solutions",
-            has_solutions,
-            f"version={version}; expected 0.10.21 or another build exposing mp.solutions",
-        )
-        return bool(has_solutions)
-    except Exception as exc:
-        print_item("python package mediapipe legacy solutions", False, str(exc))
-        return False
-
-
 def check_numpy() -> bool:
     if not has_module("numpy"):
         print_item("python package numpy >=1.26,<2", False)
@@ -88,17 +73,18 @@ def check_numpy() -> bool:
 def main() -> int:
     settings = configure_runtime(load_settings())
 
-    print("IPRA HumanOmni environment check")
+    print("IPRA AI-Service environment check")
     print(f"python: {sys.version.split()[0]} ({sys.executable})")
     print(f"model:  {settings.model_path}")
     print(f"vendor: {settings.vendor_root}")
     print(f"HF_HOME:{settings.hf_home}")
     print(f"HF offline mode: {settings.hf_offline}")
+    print(f"business LLM provider: {os.getenv('BUSINESS_LLM_PROVIDER', 'mock') or 'mock'}")
     print()
 
     ok = True
     python_ok = sys.version_info[:2] == (3, 12)
-    print_item("Python 3.12", python_ok, "统一 HumanOmni、MediaPipe 和后续 ASR 的部署环境")
+    print_item("Python 3.12", python_ok, "HumanOmni inference runtime")
     ok = ok and python_ok
 
     vendor_ok = (settings.vendor_root / "humanomni").is_dir() and (
@@ -120,12 +106,11 @@ def main() -> int:
         config_path = settings.model_path / "config.json"
         try:
             config = json.loads(config_path.read_text(encoding="utf-8"))
-            print_item(
-                "architecture HumanOmniQwen2ForCausalLM",
-                "HumanOmniQwen2ForCausalLM" in config.get("architectures", []),
-            )
+            architecture_ok = "HumanOmniQwen2ForCausalLM" in config.get("architectures", [])
+            print_item("architecture HumanOmniQwen2ForCausalLM", architecture_ok)
             print(f"vision tower: {config.get('mm_vision_tower')}")
             print(f"audio tower:  {config.get('mm_audio_tower')}")
+            ok = ok and architecture_ok
         except Exception as exc:
             print_item("read model config", False, str(exc))
             ok = False
@@ -135,11 +120,7 @@ def main() -> int:
         print_item(f"python package {package}", present)
         ok = ok and present
 
-    numpy_ok = check_numpy()
-    ok = ok and numpy_ok
-
-    mediapipe_ok = check_mediapipe()
-    ok = ok and mediapipe_ok
+    ok = ok and check_numpy()
 
     if has_module("torch"):
         import torch
@@ -152,7 +133,7 @@ def main() -> int:
 
     print()
     if ok:
-        print("Environment looks ready for same-env HumanOmni + MediaPipe inference.")
+        print("Environment looks ready for HumanOmni inference and business LLM API smoke tests.")
         return 0
 
     print("Environment is not ready yet. Use Python 3.12, install requirements, and download dependency models before inference.")
