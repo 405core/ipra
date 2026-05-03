@@ -41,7 +41,7 @@ POST /v1/humanomni/summarize-window
 Content-Type: multipart/form-data
 ```
 
-该接口用于后续轮次分析。前端上传已经截取好的回答片段，AI-Service 保存文件后同步调用 HumanOmni，返回窗口摘要。该接口不识别动作、微表情、视线和手部动作，这些结构化数据由前端或其他模块生成后传入后续追问接口。
+该接口用于后续轮次分析。前端上传已经截取好的回答片段，AI-Service 保存文件后同步调用 HumanOmni，返回窗口摘要。该接口不识别动作、微表情、视线和手部动作，这些结构化数据由前端或其他模块生成后传入后续追问接口。建议前端上传已经转码好的标准 `mp4/h264/aac` 片段，避免浏览器原始 `webm` 因缺少有效时长索引导致 HumanOmni 读取不到帧数。
 
 表单字段：
 
@@ -236,7 +236,29 @@ POST /v1/inquiry/followup-guidance
     "evidence": [],
     "limitations": []
   },
-  "followupGuidance": [],
+  "followupGuidance": [
+    {
+      "priority": 1,
+      "question": "请您进一步说明这次出境的具体行程安排，包括主要地点和时间顺序。",
+      "reason": "补充行程细节，核验申报目的与实际安排是否一致。",
+      "operatorTip": "保持中性核验，鼓励旅客按时间顺序说明。",
+      "focusArea": "行程细节"
+    },
+    {
+      "priority": 2,
+      "question": "请问这次行程费用的具体来源和支付方式是什么？",
+      "reason": "核验资金来源、支付方式与旅客基础画像是否匹配。",
+      "operatorTip": "围绕事实核验，不直接质疑资金真实性。",
+      "focusArea": "资金来源"
+    },
+    {
+      "priority": 3,
+      "question": "您到达后住宿和联系人是否已经确定，是否方便说明具体安排？",
+      "reason": "核验住宿安排、境外联系人和停留计划是否清晰。",
+      "operatorTip": "如旅客回答不确定，可继续追问预订凭证或联系人关系。",
+      "focusArea": "住宿与联系人"
+    }
+  ],
   "operatorNote": "建议优先围绕画像与答复中缺失或不一致的事实点继续追问。",
   "warnings": [
     "多模态观察结果不单独构成风险结论。"

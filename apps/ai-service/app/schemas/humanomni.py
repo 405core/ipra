@@ -32,4 +32,3 @@ class HumanOmniSummarizeWindowResponse(ApiModel):
     uploaded_file: UploadedWindowFile = Field(alias="uploadedFile")
     humanomni: HumanOmniSummaryResult = Field(alias="humanOmni")
     humanomni_window: HumanOmniWindowSummary = Field(alias="humanOmniWindow")
-

@@ -11,7 +11,7 @@ APP_DIR = Path(__file__).resolve().parents[1]
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
-from config import configure_runtime, load_settings
+from config import REPO_ROOT, configure_runtime, load_settings, resolve_path
 
 
 REQUIRED_PACKAGES = [
@@ -41,6 +41,14 @@ MODEL_FILES = [
     "tokenizer_config.json",
     "vocab.json",
     "merges.txt",
+]
+
+BUSINESS_LLM_FILES = [
+    "config.json",
+    "generation_config.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "model.safetensors.index.json",
 ]
 
 
@@ -79,7 +87,8 @@ def main() -> int:
     print(f"vendor: {settings.vendor_root}")
     print(f"HF_HOME:{settings.hf_home}")
     print(f"HF offline mode: {settings.hf_offline}")
-    print(f"business LLM provider: {os.getenv('BUSINESS_LLM_PROVIDER', 'mock') or 'mock'}")
+    business_provider = os.getenv("BUSINESS_LLM_PROVIDER", "mock") or "mock"
+    print(f"business LLM provider: {business_provider}")
     print()
 
     ok = True
@@ -114,6 +123,23 @@ def main() -> int:
         except Exception as exc:
             print_item("read model config", False, str(exc))
             ok = False
+
+    if business_provider == "transformers_local":
+        business_model_path = resolve_path(
+            os.getenv("BUSINESS_LLM_MODEL_PATH"),
+            REPO_ROOT / "models" / "business-llm" / "modelscope" / "Qwen2.5-3B-Instruct",
+        )
+        business_model_ok = business_model_path.is_dir()
+        print_item("business LLM checkpoint directory", business_model_ok, str(business_model_path))
+        ok = ok and business_model_ok
+        if business_model_ok:
+            for file_name in BUSINESS_LLM_FILES:
+                exists = (business_model_path / file_name).is_file()
+                print_item(f"business LLM file {file_name}", exists)
+                ok = ok and exists
+            safetensors_count = len(list(business_model_path.glob("*.safetensors")))
+            print_item("business LLM safetensors shards", safetensors_count > 0, str(safetensors_count))
+            ok = ok and safetensors_count > 0
 
     for package in REQUIRED_PACKAGES:
         present = has_module(package)
