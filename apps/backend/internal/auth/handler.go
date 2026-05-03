@@ -46,6 +46,10 @@ func (h *Handler) Register(r gin.IRouter) {
 	authGroup.GET("/me", h.handleCurrentUser)
 }
 
+func (h *Handler) AuthMiddleware() gin.HandlerFunc {
+	return h.requireAuth()
+}
+
 func (h *Handler) handleLogin(c *gin.Context) {
 	var req loginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -152,6 +156,10 @@ func claimsFromContext(c *gin.Context) (Claims, bool) {
 	}
 
 	return claims, true
+}
+
+func ClaimsFromContext(c *gin.Context) (Claims, bool) {
+	return claimsFromContext(c)
 }
 
 func parseBearerToken(header string) (string, bool) {
