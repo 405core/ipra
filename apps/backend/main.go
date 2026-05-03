@@ -23,13 +23,6 @@ func main() {
 		log.Fatalf("connect database: %v", err)
 	}
 
-	if err := auth.AutoMigrate(db); err != nil {
-		log.Fatalf("migrate auth tables: %v", err)
-	}
-	if err := auth.SeedUsers(db); err != nil {
-		log.Fatalf("seed auth users: %v", err)
-	}
-
 	tokenManager := auth.NewTokenManager(cfg.Auth.JWTSecret, 24*time.Hour)
 	authHandler := auth.NewHandler(db, tokenManager)
 
