@@ -31,17 +31,17 @@ const navigationItems: NavigationItem[] = [
 const isDesktop = ref(false);
 const isSidebarVisible = ref(false);
 
-const userName = computed(() => session?.user.name || '风险分析员');
-const workId = computed(() => session?.user.workId || 'EMP-0000');
+const userName = computed(() => session?.user.realName || '风险检查员');
+const badgeNumber = computed(() => session?.user.badgeNumber || '100002');
 const roleLabel = computed(() =>
-  session?.user.role === 'admin' ? '管理员' : '普通员工'
+  session?.user.roleCode === 'admin' ? '管理员' : '检查员'
 );
 const userBadge = computed(() => {
   const source = userName.value.trim();
   return source.length > 2 ? source.slice(-2) : source || 'RA';
 });
 const currentTitle = computed(() =>
-  typeof route.meta.title === 'string' ? route.meta.title : '员工工作台'
+  typeof route.meta.title === 'string' ? route.meta.title : '检查员工作台'
 );
 
 function syncLayout(force = false) {
@@ -130,7 +130,7 @@ onBeforeUnmount(() => {
           <div class="session-chip__avatar">{{ userBadge }}</div>
           <div>
             <strong>{{ userName }}</strong>
-            <span>{{ roleLabel }} · {{ workId }}</span>
+            <span>{{ roleLabel }} · {{ badgeNumber }}</span>
           </div>
         </div>
 
@@ -154,11 +154,11 @@ onBeforeUnmount(() => {
       <div class="sidebar__head">
         <div>
           <p class="sidebar__eyebrow">Navigation</p>
-          <h2>Employee Workspace</h2>
+          <h2>Inspector Workspace</h2>
         </div>
       </div>
 
-      <nav class="sidebar__nav" aria-label="员工工作台导航">
+      <nav class="sidebar__nav" aria-label="检查员工作台导航">
         <RouterLink
           v-for="item in navigationItems"
           :key="item.routeName"

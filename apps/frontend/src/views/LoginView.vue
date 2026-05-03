@@ -3,12 +3,12 @@ import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { loginWithCredentials, resolveRoleHome, saveAuthSession } from '../auth';
 
-type FieldKey = 'workId' | 'password';
+type FieldKey = 'username' | 'password';
 type FeedbackTone = 'neutral' | 'error' | 'success';
 
-const workId = ref('');
+const username = ref('');
 const password = ref('');
-const activeField = ref<FieldKey>('workId');
+const activeField = ref<FieldKey>('username');
 const capsEnabled = ref(false);
 const feedback = ref('请选择输入框后使用触控键盘，或直接键入。');
 const feedbackTone = ref<FeedbackTone>('neutral');
@@ -21,7 +21,7 @@ const middleLetterKeys = ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'];
 const bottomLetterKeys = ['Z', 'X', 'C', 'V', 'B', 'N', 'M'];
 
 const activeFieldLabel = computed(() =>
-  activeField.value === 'workId' ? '工号' : '密码'
+  activeField.value === 'username' ? '账号' : '密码'
 );
 
 function setFeedback(message: string, tone: FeedbackTone = 'neutral') {
@@ -31,15 +31,15 @@ function setFeedback(message: string, tone: FeedbackTone = 'neutral') {
 
 function focusField(field: FieldKey) {
   activeField.value = field;
-  setFeedback(`当前输入目标：${field === 'workId' ? '工号' : '密码'}。`);
+  setFeedback(`当前输入目标：${field === 'username' ? '账号' : '密码'}。`);
 }
 
 function updateActiveField(
   updater: (currentValue: string) => string,
   tone: FeedbackTone = 'neutral'
 ) {
-  if (activeField.value === 'workId') {
-    workId.value = updater(workId.value);
+  if (activeField.value === 'username') {
+    username.value = updater(username.value);
   } else {
     password.value = updater(password.value);
   }
@@ -75,22 +75,25 @@ function insertSpace() {
 }
 
 async function submitLogin() {
-  if (!workId.value.trim() || !password.value.trim()) {
-    setFeedback('请输入完整的工号和密码。', 'error');
+  if (!username.value.trim() || !password.value.trim()) {
+    setFeedback('请输入完整的账号和密码。', 'error');
     return;
   }
 
   isSubmitting.value = true;
 
   try {
-    const session = await loginWithCredentials(workId.value.trim(), password.value);
+    const session = await loginWithCredentials(
+      username.value.trim(),
+      password.value
+    );
 
     saveAuthSession(session);
     setFeedback(
-      `${session.user.role === 'admin' ? '管理员' : '普通员工'}登录成功，正在跳转。`,
+      `${session.user.roleCode === 'admin' ? '管理员' : '检查员'}登录成功，正在跳转。`,
       'success'
     );
-    await router.push(resolveRoleHome(session.user.role));
+    await router.push(resolveRoleHome(session.user.roleCode));
   } catch (error) {
     setFeedback(
       error instanceof Error ? error.message : '登录失败，请稍后再试',
@@ -118,17 +121,17 @@ async function submitLogin() {
         </div>
 
         <div class="field-grid field-grid--sidebar">
-          <label class="field-card" :class="{ 'is-active': activeField === 'workId' }">
-            <span class="field-card__label">工号 Work ID</span>
+          <label class="field-card" :class="{ 'is-active': activeField === 'username' }">
+            <span class="field-card__label">账号 Username</span>
             <div class="field-card__input-wrap">
-              <span class="field-card__icon">ID</span>
+              <span class="field-card__icon">AC</span>
               <input
-                v-model="workId"
+                v-model="username"
                 type="text"
                 inputmode="text"
                 autocomplete="username"
-                placeholder="输入员工工号"
-                @focus="focusField('workId')"
+                placeholder="输入登录账号"
+                @focus="focusField('username')"
               />
             </div>
           </label>

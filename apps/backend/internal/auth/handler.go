@@ -17,15 +17,17 @@ type Handler struct {
 }
 
 type loginRequest struct {
-	WorkID   string `json:"workId"`
+	Username string `json:"username"`
 	Password string `json:"password"`
 }
 
 type userResponse struct {
-	ID     uint   `json:"id"`
-	WorkID string `json:"workId"`
-	Name   string `json:"name"`
-	Role   string `json:"role"`
+	ID          uint64 `json:"id"`
+	Username    string `json:"username"`
+	RealName    string `json:"realName"`
+	BadgeNumber string `json:"badgeNumber"`
+	RoleCode    string `json:"roleCode"`
+	Status      int16  `json:"status"`
 }
 
 func NewHandler(db *gorm.DB, tokenManager *TokenManager) *Handler {
@@ -50,17 +52,17 @@ func (h *Handler) handleLogin(c *gin.Context) {
 		return
 	}
 
-	workID := NormalizeWorkID(req.WorkID)
+	username := NormalizeUsername(req.Username)
 	password := strings.TrimSpace(req.Password)
-	if workID == "" || password == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"message": "工号和密码不能为空"})
+	if username == "" || password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "账号和密码不能为空"})
 		return
 	}
 
-	var user User
-	if err := h.db.Where("work_id = ?", workID).First(&user).Error; err != nil {
+	var user SystemUser
+	if err := h.db.Where("username = ?", username).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			c.JSON(http.StatusUnauthorized, gin.H{"message": "工号或密码错误"})
+			c.JSON(http.StatusUnauthorized, gin.H{"message": "账号或密码错误"})
 			return
 		}
 
@@ -69,7 +71,12 @@ func (h *Handler) handleLogin(c *gin.Context) {
 	}
 
 	if err := VerifyPassword(user.PasswordHash, password); err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"message": "工号或密码错误"})
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "账号或密码错误"})
+		return
+	}
+
+	if user.Status != StatusActive {
+		c.JSON(http.StatusForbidden, gin.H{"message": "账号已停用"})
 		return
 	}
 
@@ -92,7 +99,7 @@ func (h *Handler) handleCurrentUser(c *gin.Context) {
 		return
 	}
 
-	var user User
+	var user SystemUser
 	if err := h.db.First(&user, claims.UserID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusUnauthorized, gin.H{"message": "用户不存在"})
@@ -100,6 +107,11 @@ func (h *Handler) handleCurrentUser(c *gin.Context) {
 		}
 
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "查询当前用户失败"})
+		return
+	}
+
+	if user.Status != StatusActive {
+		c.JSON(http.StatusForbidden, gin.H{"message": "账号已停用"})
 		return
 	}
 
@@ -154,11 +166,13 @@ func parseBearerToken(header string) (string, bool) {
 	return token, true
 }
 
-func toUserResponse(user User) userResponse {
+func toUserResponse(user SystemUser) userResponse {
 	return userResponse{
-		ID:     user.ID,
-		WorkID: user.WorkID,
-		Name:   user.Name,
-		Role:   user.Role,
+		ID:          user.ID,
+		Username:    user.Username,
+		RealName:    user.RealName,
+		BadgeNumber: user.BadgeNumber,
+		RoleCode:    user.RoleCode,
+		Status:      user.Status,
 	}
 }

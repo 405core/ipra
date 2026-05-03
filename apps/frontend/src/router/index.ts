@@ -32,7 +32,7 @@ const router = createRouter({
       redirect: { name: 'home-data' },
       meta: {
         requiresAuth: true,
-        roles: ['employee'] satisfies UserRole[],
+        roles: ['inspector'] satisfies UserRole[],
       },
       children: [
         {
@@ -86,7 +86,7 @@ const router = createRouter({
       path: '/:pathMatch(.*)*',
       redirect: () => {
         const session = loadAuthSession();
-        return session ? resolveRoleHome(session.user.role) : '/login';
+        return session ? resolveRoleHome(session.user.roleCode) : '/login';
       },
     },
   ],
@@ -102,7 +102,7 @@ router.beforeEach(async (to) => {
       : loadAuthSession();
 
   if (guestOnly && session) {
-    return resolveRoleHome(session.user.role);
+    return resolveRoleHome(session.user.roleCode);
   }
 
   if (requiresAuth && !session) {
@@ -110,8 +110,8 @@ router.beforeEach(async (to) => {
   }
 
   const allowedRoles = to.meta.roles as UserRole[] | undefined;
-  if (allowedRoles && session && !allowedRoles.includes(session.user.role)) {
-    return resolveRoleHome(session.user.role);
+  if (allowedRoles && session && !allowedRoles.includes(session.user.roleCode)) {
+    return resolveRoleHome(session.user.roleCode);
   }
 
   return true;

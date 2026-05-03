@@ -15,11 +15,13 @@ import (
 var ErrInvalidToken = errors.New("invalid token")
 
 type Claims struct {
-	UserID    uint   `json:"sub"`
-	WorkID    string `json:"workId"`
-	Name      string `json:"name"`
-	Role      string `json:"role"`
-	ExpiresAt int64  `json:"exp"`
+	UserID      uint64 `json:"sub"`
+	Username    string `json:"username"`
+	RealName    string `json:"realName"`
+	BadgeNumber string `json:"badgeNumber"`
+	RoleCode    string `json:"roleCode"`
+	Status      int16  `json:"status"`
+	ExpiresAt   int64  `json:"exp"`
 }
 
 type TokenManager struct {
@@ -39,17 +41,19 @@ func NewTokenManager(secret string, ttl time.Duration) *TokenManager {
 	}
 }
 
-func (m *TokenManager) Sign(user User) (string, error) {
+func (m *TokenManager) Sign(user SystemUser) (string, error) {
 	header := tokenHeader{
 		Algorithm: "HS256",
 		Type:      "JWT",
 	}
 	claims := Claims{
-		UserID:    user.ID,
-		WorkID:    user.WorkID,
-		Name:      user.Name,
-		Role:      user.Role,
-		ExpiresAt: time.Now().Add(m.ttl).Unix(),
+		UserID:      user.ID,
+		Username:    user.Username,
+		RealName:    user.RealName,
+		BadgeNumber: user.BadgeNumber,
+		RoleCode:    user.RoleCode,
+		Status:      user.Status,
+		ExpiresAt:   time.Now().Add(m.ttl).Unix(),
 	}
 
 	headerSegment, err := marshalTokenSegment(header)
