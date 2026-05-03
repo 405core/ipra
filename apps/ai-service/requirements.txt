@@ -1,7 +1,7 @@
 --extra-index-url https://download.pytorch.org/whl/cu128
 
-# Use Python 3.12 for the unified AI-Service environment. HumanOmni,
-# MediaPipe, and the reserved ASR integration should run in this same venv.
+# Use Python 3.12 for the AI-Service environment. HumanOmni inference and the
+# mock business LLM API smoke tests run in this same venv.
 
 # Runtime. The official HumanOmni requirements are Linux/CUDA oriented and
 # include training-only packages such as deepspeed and bitsandbytes. This file
@@ -27,11 +27,8 @@ timm>=1.0.3
 h5py>=3.11
 ipdb>=0.13
 
-# Fine-grained pure-video observation. Version 0.10.21 keeps the legacy
-# mp.solutions API and avoids the MediaPipe Tasks Clearcut telemetry uploader.
-mediapipe==0.10.21
-
-# Service wrapper for the next development step.
+# Service wrapper for inquiry strategy and followup guidance APIs.
 fastapi>=0.115
 uvicorn[standard]>=0.30
 pydantic>=2.7
+python-multipart>=0.0.9

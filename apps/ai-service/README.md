@@ -1,32 +1,44 @@
 # IPRA AI-Service
 
-本目录用于实现 D.LLM 模块中的本地 AI 能力，当前重点是同一时间窗口下的 HumanOmni0.5 整体观察、MediaPipe 细粒度视觉事件提取，以及为后续 ASR 接入预留统一 JSON 结构。
+本目录用于实现 D.LLM 模块中的 Python AI 服务能力。当前主线已经调整为：
+
+```text
+旅客基础画像 -> 业务 LLM -> 首轮问询问题清单
+画像/答复/HumanOmni 摘要/前端动作 JSON -> 业务 LLM -> 后续追问指引
+```
+
+HumanOmni0.5 只负责对音视频窗口生成摘要，不再要求它输出微表情、视线、手部动作等结构化 JSON。动作采样 JSON 由前端或其他同学实现后传入本服务。
 
 ## 目录结构
 
 ```text
 apps/ai-service/
-  app/                         # 可复用服务代码
-    config.py                  # 路径、模型缓存、离线模式和运行时配置
-    service.py                 # FastAPI 服务骨架
-    video_observation.py       # MediaPipe 纯视频观察逻辑
-    startup/check_env.py       # 统一环境检查
-    compat/decord/             # Windows decord 兼容层
-  scripts/                     # 本地测试和调试入口
-    humanomni_infer_once.py    # HumanOmni 单个窗口/文件推理
-    humanomni_run_samples.py   # HumanOmni 样本批量测试
-    mediapipe_analyze_once.py  # MediaPipe 单个窗口/文件观察
-    analyze_window_once.py     # HumanOmni + MediaPipe 同窗口统一输出
-  samples/                     # 测试视频
-  test-runs/                   # HumanOmni 批量测试输出
-  observations-runs/           # MediaPipe 单独观察输出
-  window-runs/                 # 同窗口统一分析输出
-  asr-runs/                    # 后续 ASR 单独转写输出
+  app/
+    service.py                    # FastAPI 服务入口
+    config.py                     # HumanOmni 路径、HF 缓存和运行时配置
+    schemas/                      # 两个业务接口的 Pydantic 请求/响应结构
+    services/                     # Mock 业务 LLM 和问询生成逻辑
+    prompts/                      # 业务 LLM prompt 模板
+    startup/check_env.py          # HumanOmni 和 API 运行环境检查
+    compat/decord/                # Windows decord 兼容层
+    video_observation.py          # 历史视觉观察逻辑，当前主流程不再使用
+  scripts/
+    humanomni_infer_once.py       # HumanOmni 单次推理验证
+    smoke_first_round_strategy.py # 首轮策略接口 smoke test
+    smoke_followup_guidance.py    # 后续追问接口 smoke test
+    mediapipe_analyze_once.py     # 历史调试脚本，当前主流程不再使用
+    analyze_window_once.py        # 历史合并测试脚本，当前主流程不再使用
+  samples/                        # 本地测试视频
+  test-runs/                      # 测试输出
+  window-runs/                    # 历史窗口分析输出
+  vendor/HumanOmni-official/      # 官方 HumanOmni 源码归档
+  .env.example
+  requirements.txt
 ```
 
-## 统一环境
+## 环境
 
-为了便于部署，HumanOmni、MediaPipe 以及后续 ASR 默认使用同一个 Python 3.12 虚拟环境：`apps/ai-service/.venv`。不再把 HumanOmni 和 MediaPipe 分别放到两个环境中运行。
+建议使用 Python 3.12 虚拟环境：
 
 ```powershell
 cd D:\405project\ipra
@@ -41,96 +53,100 @@ py -3.12 -m venv apps\ai-service\.venv
 & ".\apps\ai-service\.venv\Scripts\python.exe" apps\ai-service\app\startup\check_env.py
 ```
 
-环境检查会要求 Python 3.12、CUDA、HumanOmni 依赖、MediaPipe legacy `mp.solutions` 和本地模型文件都可用。
-
-如果只想快速确认“统一环境是否达标”和“统一 JSON 是否包含 ASR 字段”，可以先跑轻量 smoke test。它不会加载 HumanOmni 大模型，也不会执行 MediaPipe 视频分析，只生成一份结构测试 JSON：
-
-```powershell
-& ".\apps\ai-service\.venv\Scripts\python.exe" apps\ai-service\scripts\check_runtime_and_schema.py
-```
-
-成功时会输出 `Environment: ok`、`ASR field present: True`，并在 `apps/ai-service/window-runs/` 下生成 `schema-smoke-runtime-asr-*.json`。
-
-## 同窗口统一分析
-
-推荐优先使用这个入口测试当前主流程。脚本会在同一个时间窗口内调用 HumanOmni 和 MediaPipe，并输出一个统一 JSON。
-
-```powershell
-& ".\apps\ai-service\.venv\Scripts\python.exe" apps\ai-service\scripts\analyze_window_once.py `
-  --video-path apps\ai-service\samples\humanomni_test_03_gaze_avoidance_video.mp4 `
-  --modal video `
-  --start-seconds 4 `
-  --duration-seconds 2 `
-  --humanomni-num-frames 32 `
-  --mediapipe-sample-fps 12
-```
-
-输出位置：
+业务 LLM 当前默认使用 mock 模式，不依赖 CUDA，也不加载 HumanOmni。真实模型地址后续通过 `.env` 中的以下字段接入：
 
 ```text
-apps/ai-service/window-runs/
+BUSINESS_LLM_PROVIDER=mock
+BUSINESS_LLM_BASE_URL=
+BUSINESS_LLM_API_KEY=
+BUSINESS_LLM_MODEL=mock-business-llm
 ```
 
-统一 JSON 已预留 `asr` 字段。当前未接入 ASR 时，该字段会显示 `status: not_connected`；以后其他同学接入 ASR 后，可以通过 `--asr-json` 把同一窗口的语音转写结果合并进去。
+## 启动服务
 
 ```powershell
-& ".\apps\ai-service\.venv\Scripts\python.exe" apps\ai-service\scripts\analyze_window_once.py `
-  --video-path apps\ai-service\samples\humanomni_test_02_funding_stress_video_ad.mp4 `
-  --modal video_audio `
-  --start-seconds 0 `
-  --duration-seconds 5 `
-  --asr-json apps\ai-service\asr-runs\example-window-asr.json
+cd D:\405project\ipra
+& ".\apps\ai-service\.venv\Scripts\python.exe" -m uvicorn service:app --app-dir apps\ai-service\app --host 127.0.0.1 --port 9000
 ```
 
-预期 ASR JSON 结构：
+健康检查：
 
-```json
-{
-  "ok": true,
-  "status": "provided",
-  "provider": "reserved-asr-provider",
-  "model": "reserved-asr-model",
-  "language": "zh",
-  "text": "旅客在该窗口内的回答文本",
-  "segments": [
-    {
-      "startSeconds": 0.0,
-      "endSeconds": 2.4,
-      "text": "分段文本"
-    }
-  ],
-  "words": []
-}
+```http
+GET /health
 ```
 
-## 单项测试入口
+## 接口
 
-HumanOmni 单次推理：
+### 0. HumanOmni 窗口摘要
+
+```http
+POST /v1/humanomni/summarize-window
+Content-Type: multipart/form-data
+```
+
+用于接收前端截取好的 5-10 秒音视频片段，保存到本地上传目录，并同步调用 HumanOmni0.5 生成窗口摘要。该接口不做动作识别，动作、微表情、视线和手部动作仍由前端或其他模块以结构化 JSON 传入后续追问接口。
+
+表单字段：
+
+- `file`：必填，上传视频或音频片段，建议 mp4。
+- `sessionId`：必填，会话 ID。
+- `questionId`：可选，当前问题 ID。
+- `windowId`：可选，不传则服务端生成。
+- `modal`：可选，默认 `video_audio`。
+- `startSeconds` / `endSeconds`：可选，原始问询时间线中的窗口时间。
+- `maxNewTokens` / `numFrames` / `instruct`：可选，HumanOmni 推理参数。
+
+响应中的 `humanOmniWindow` 可直接放入 `/v1/inquiry/followup-guidance` 的 `humanOmniWindows` 数组。
+
+### 1. 首轮问询策略生成
+
+```http
+POST /v1/inquiry/first-round-strategy
+```
+
+用于在获取旅客基础画像后生成首轮问询问题清单。输出包含风险摘要、问询目标、问题清单、每题目的和工作人员提示。
+
+本地 smoke test：
+
+```powershell
+& ".\apps\ai-service\.venv\Scripts\python.exe" apps\ai-service\scripts\smoke_first_round_strategy.py
+```
+
+如果服务已经启动，也可以通过 HTTP 测试：
+
+```powershell
+& ".\apps\ai-service\.venv\Scripts\python.exe" apps\ai-service\scripts\smoke_first_round_strategy.py --base-url http://127.0.0.1:9000
+```
+
+### 2. 后续追问指引生成
+
+```http
+POST /v1/inquiry/followup-guidance
+```
+
+用于接收旅客画像、问答历史、HumanOmni 摘要、前端动作采样 JSON 和可选 ASR 字段，生成后续轮次追问建议。
+
+本地 smoke test：
+
+```powershell
+& ".\apps\ai-service\.venv\Scripts\python.exe" apps\ai-service\scripts\smoke_followup_guidance.py
+```
+
+如果服务已经启动，也可以通过 HTTP 测试：
+
+```powershell
+& ".\apps\ai-service\.venv\Scripts\python.exe" apps\ai-service\scripts\smoke_followup_guidance.py --base-url http://127.0.0.1:9000
+```
+
+## HumanOmni 单次推理
+
+HumanOmni 仍保留单次推理入口，用于验证模型是否可用：
 
 ```powershell
 & ".\apps\ai-service\.venv\Scripts\python.exe" apps\ai-service\scripts\humanomni_infer_once.py `
-  --modal video `
-  --video-path apps\ai-service\samples\humanomni_test_03_gaze_avoidance_video.mp4 `
-  --start-seconds 4 `
-  --duration-seconds 2 `
-  --num-frames 32
-```
-
-MediaPipe 单次观察：
-
-```powershell
-& ".\apps\ai-service\.venv\Scripts\python.exe" apps\ai-service\scripts\mediapipe_analyze_once.py `
-  --video-path apps\ai-service\samples\humanomni_test_03_gaze_avoidance_video.mp4 `
-  --start-seconds 4 `
-  --duration-seconds 2 `
-  --sample-fps 12
-```
-
-HumanOmni 样本批量测试：
-
-```powershell
-& ".\apps\ai-service\.venv\Scripts\python.exe" apps\ai-service\scripts\humanomni_run_samples.py `
-  --pattern "*_ad.mp4" `
   --modal video_audio `
+  --video-path apps\ai-service\samples\humanomni_test_02_funding_stress_video_ad.mp4 `
   --max-new-tokens 128
 ```
+
+该能力只作为音视频摘要来源，业务判断由后续业务 LLM 接口完成。
