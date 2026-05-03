@@ -4,211 +4,180 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
 const (
-	RoleAdmin    = "admin"
-	RoleEmployee = "employee"
+	RoleAdmin     = "admin"
+	RoleInspector = "inspector"
+
+	StatusDisabled int16 = 0
+	StatusActive   int16 = 1
 )
 
-type User struct {
-	ID           uint   `gorm:"primaryKey"`
-	WorkID       string `gorm:"column:work_id;size:64;uniqueIndex;not null"`
-	Name         string `gorm:"column:name;size:128;not null"`
-	Role         string `gorm:"size:32;not null"`
-	PasswordHash string `gorm:"size:255;not null"`
+type SystemUser struct {
+	ID           uint64    `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键"`
+	Username     string    `gorm:"column:username;type:varchar(64);uniqueIndex:uk_system_user_username;not null;comment:登录账号"`
+	PasswordHash string    `gorm:"column:password_hash;type:varchar(255);not null;comment:Bcrypt加密后的密码"`
+	RealName     string    `gorm:"column:real_name;type:varchar(64);not null;comment:操作员真实姓名"`
+	BadgeNumber  string    `gorm:"column:badge_number;type:varchar(64);uniqueIndex:uk_system_user_badge_number;not null;comment:警号/工号，用于前端和视频回放生成防泄密数字水印"`
+	RoleCode     string    `gorm:"column:role_code;type:varchar(32);not null;comment:角色代码，用于基础权限控制"`
+	Status       int16     `gorm:"column:status;type:smallint;not null;default:1;comment:账号状态（1:启用, 0:停用），不使用物理删除以保障历史审计链路完整"`
+	CreatedAt    time.Time `gorm:"column:created_at;type:timestamp;not null;autoCreateTime;comment:账号创建时间"`
+	UpdatedAt    time.Time `gorm:"column:updated_at;type:timestamp;not null;autoUpdateTime;comment:账号最后更新时间"`
 }
 
-func (User) TableName() string {
-	return "user"
+func (SystemUser) TableName() string {
+	return "system_user"
 }
 
-type seedUser struct {
-	WorkID   string
-	Name     string
-	Password string
-	Role     string
+type seedSystemUser struct {
+	Username    string
+	Password    string
+	RealName    string
+	BadgeNumber string
+	RoleCode    string
+	Status      int16
 }
 
-var defaultSeedUsers = []seedUser{
+var defaultSeedUsers = []seedSystemUser{
 	{
-		WorkID:   "admin",
-		Name:     "系统管理员",
-		Password: "123",
-		Role:     RoleAdmin,
+		Username:    "admin",
+		Password:    "123",
+		RealName:    "系统管理员",
+		BadgeNumber: "100001",
+		RoleCode:    RoleAdmin,
+		Status:      StatusActive,
 	},
 	{
-		WorkID:   "user",
-		Name:     "普通员工",
-		Password: "123",
-		Role:     RoleEmployee,
+		Username:    "user",
+		Password:    "123",
+		RealName:    "现场检查员",
+		BadgeNumber: "100002",
+		RoleCode:    RoleInspector,
+		Status:      StatusActive,
 	},
 }
 
 func AutoMigrate(db *gorm.DB) error {
-	if err := migrateUserTable(db); err != nil {
+	if err := dropLegacyUserTables(db); err != nil {
 		return err
 	}
-	return db.AutoMigrate(&User{})
+	if err := db.AutoMigrate(&SystemUser{}); err != nil {
+		return fmt.Errorf("auto migrate system_user: %w", err)
+	}
+	if err := applySystemUserComments(db); err != nil {
+		return err
+	}
+	return nil
 }
 
 func SeedUsers(db *gorm.DB) error {
 	for _, seed := range defaultSeedUsers {
-		var existing User
-		err := db.Where("work_id = ?", seed.WorkID).First(&existing).Error
-		if err == nil {
-			continue
-		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("find seed user %s: %w", seed.WorkID, err)
-		}
-
-		passwordHash, err := HashPassword(seed.Password)
-		if err != nil {
-			return fmt.Errorf("hash password for %s: %w", seed.WorkID, err)
-		}
-
-		if err := db.Create(&User{
-			WorkID:       seed.WorkID,
-			Name:         seed.Name,
-			Role:         seed.Role,
-			PasswordHash: passwordHash,
-		}).Error; err != nil {
-			return fmt.Errorf("create seed user %s: %w", seed.WorkID, err)
+		if err := upsertSeedUser(db, seed); err != nil {
+			return err
 		}
 	}
 
 	return nil
 }
 
-func migrateUserTable(db *gorm.DB) error {
-	hasUsers, err := hasTable(db, "users")
+func upsertSeedUser(db *gorm.DB, seed seedSystemUser) error {
+	passwordHash, err := HashPassword(seed.Password)
 	if err != nil {
-		return fmt.Errorf("check users table: %w", err)
+		return fmt.Errorf("hash password for %s: %w", seed.Username, err)
 	}
 
-	hasUser, err := hasTable(db, "user")
-	if err != nil {
-		return fmt.Errorf("check user table: %w", err)
+	normalizedUsername := NormalizeUsername(seed.Username)
+
+	var existing SystemUser
+	err = db.Where("username = ?", normalizedUsername).First(&existing).Error
+	if err == nil {
+		existing.Username = normalizedUsername
+		existing.PasswordHash = passwordHash
+		existing.RealName = seed.RealName
+		existing.BadgeNumber = seed.BadgeNumber
+		existing.RoleCode = seed.RoleCode
+		existing.Status = seed.Status
+
+		if err := db.Save(&existing).Error; err != nil {
+			return fmt.Errorf("update seed user %s: %w", normalizedUsername, err)
+		}
+
+		return nil
 	}
 
-	if hasUsers && !hasUser {
-		if err := db.Exec(`ALTER TABLE users RENAME TO "user"`).Error; err != nil {
-			return fmt.Errorf(`rename table users to "user": %w`, err)
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("find seed user %s: %w", normalizedUsername, err)
+	}
+
+	if err := db.Create(&SystemUser{
+		Username:     normalizedUsername,
+		PasswordHash: passwordHash,
+		RealName:     seed.RealName,
+		BadgeNumber:  seed.BadgeNumber,
+		RoleCode:     seed.RoleCode,
+		Status:       seed.Status,
+	}).Error; err != nil {
+		return fmt.Errorf("create seed user %s: %w", normalizedUsername, err)
+	}
+
+	return nil
+}
+
+func dropLegacyUserTables(db *gorm.DB) error {
+	queries := []string{
+		`DROP TABLE IF EXISTS "user" CASCADE`,
+		`DROP TABLE IF EXISTS users CASCADE`,
+	}
+
+	for _, query := range queries {
+		if err := db.Exec(query).Error; err != nil {
+			return fmt.Errorf("drop legacy auth table with query %q: %w", query, err)
 		}
 	}
 
-	if err := renameColumnIfExists(db, "user", "badge_number", "work_id"); err != nil {
-		return err
+	return nil
+}
+
+func applySystemUserComments(db *gorm.DB) error {
+	if err := db.Exec(
+		`COMMENT ON TABLE "system_user" IS '系统操作员账号表'`,
+	).Error; err != nil {
+		return fmt.Errorf("comment system_user table: %w", err)
 	}
-	if err := renameColumnIfExists(db, "user", "display_name", "name"); err != nil {
-		return err
+
+	columnComments := map[string]string{
+		"id":            "主键",
+		"username":      "登录账号",
+		"password_hash": "Bcrypt加密后的密码",
+		"real_name":     "操作员真实姓名",
+		"badge_number":  "警号/工号，用于前端和视频回放生成防泄密数字水印",
+		"role_code":     "角色代码（如 admin、inspector），用于基础权限控制",
+		"status":        "账号状态（1:启用, 0:停用），不使用物理删除以保障历史审计日志不产生死链",
+		"created_at":    "账号创建时间",
+		"updated_at":    "账号最后更新时间",
 	}
-	if err := renameIndexIfExists(db, "idx_users_badge_number", "idx_user_work_id"); err != nil {
-		return err
-	}
-	if err := renameIndexIfExists(db, "idx_users_work_id", "idx_user_work_id"); err != nil {
-		return err
+
+	for column, comment := range columnComments {
+		query := fmt.Sprintf(
+			`COMMENT ON COLUMN "system_user"."%s" IS '%s'`,
+			column,
+			escapeSQLLiteral(comment),
+		)
+		if err := db.Exec(query).Error; err != nil {
+			return fmt.Errorf("comment system_user.%s: %w", column, err)
+		}
 	}
 
 	return nil
 }
 
-func hasTable(db *gorm.DB, tableName string) (bool, error) {
-	var exists bool
-	err := db.Raw(
-		`SELECT EXISTS (
-			SELECT 1
-			FROM information_schema.tables
-			WHERE table_schema = current_schema()
-			  AND table_name = ?
-		)`,
-		tableName,
-	).Scan(&exists).Error
-	return exists, err
-}
-
-func hasColumn(db *gorm.DB, tableName string, columnName string) (bool, error) {
-	var exists bool
-	err := db.Raw(
-		`SELECT EXISTS (
-			SELECT 1
-			FROM information_schema.columns
-			WHERE table_schema = current_schema()
-			  AND table_name = ?
-			  AND column_name = ?
-		)`,
-		tableName,
-		columnName,
-	).Scan(&exists).Error
-	return exists, err
-}
-
-func hasIndex(db *gorm.DB, indexName string) (bool, error) {
-	var exists bool
-	err := db.Raw(
-		`SELECT EXISTS (
-			SELECT 1
-			FROM pg_indexes
-			WHERE schemaname = current_schema()
-			  AND indexname = ?
-		)`,
-		indexName,
-	).Scan(&exists).Error
-	return exists, err
-}
-
-func renameColumnIfExists(db *gorm.DB, tableName string, oldColumn string, newColumn string) error {
-	hasOldColumn, err := hasColumn(db, tableName, oldColumn)
-	if err != nil {
-		return fmt.Errorf("check %s.%s: %w", tableName, oldColumn, err)
-	}
-	if !hasOldColumn {
-		return nil
-	}
-
-	hasNewColumn, err := hasColumn(db, tableName, newColumn)
-	if err != nil {
-		return fmt.Errorf("check %s.%s: %w", tableName, newColumn, err)
-	}
-	if hasNewColumn {
-		return nil
-	}
-
-	query := fmt.Sprintf(`ALTER TABLE "%s" RENAME COLUMN %s TO %s`, tableName, oldColumn, newColumn)
-	if err := db.Exec(query).Error; err != nil {
-		return fmt.Errorf("rename %s.%s to %s: %w", tableName, oldColumn, newColumn, err)
-	}
-
-	return nil
-}
-
-func renameIndexIfExists(db *gorm.DB, oldIndex string, newIndex string) error {
-	hasOldIndex, err := hasIndex(db, oldIndex)
-	if err != nil {
-		return fmt.Errorf("check index %s: %w", oldIndex, err)
-	}
-	if !hasOldIndex {
-		return nil
-	}
-
-	hasNewIndex, err := hasIndex(db, newIndex)
-	if err != nil {
-		return fmt.Errorf("check index %s: %w", newIndex, err)
-	}
-	if hasNewIndex {
-		return nil
-	}
-
-	query := fmt.Sprintf(`ALTER INDEX "%s" RENAME TO "%s"`, oldIndex, newIndex)
-	if err := db.Exec(query).Error; err != nil {
-		return fmt.Errorf("rename index %s to %s: %w", oldIndex, newIndex, err)
-	}
-
-	return nil
+func escapeSQLLiteral(value string) string {
+	return strings.ReplaceAll(value, "'", "''")
 }
 
 func HashPassword(password string) (string, error) {
@@ -224,6 +193,6 @@ func VerifyPassword(hash string, password string) error {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
 }
 
-func NormalizeWorkID(value string) string {
-	return strings.TrimSpace(value)
+func NormalizeUsername(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
 }

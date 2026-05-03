@@ -6,8 +6,9 @@ import { clearAuthSession, loadAuthSession } from '../auth';
 const router = useRouter();
 const session = loadAuthSession();
 
-const name = computed(() => session?.user.name || '普通员工');
-const workId = computed(() => session?.user.workId || '-');
+const realName = computed(() => session?.user.realName || '现场检查员');
+const username = computed(() => session?.user.username || 'user');
+const badgeNumber = computed(() => session?.user.badgeNumber || '-');
 
 async function logout() {
   clearAuthSession();
@@ -18,15 +19,16 @@ async function logout() {
 <template>
   <main class="placeholder-page">
     <section class="placeholder-card">
-      <p class="placeholder-eyebrow">EMPLOYEE PORTAL</p>
-      <h1>普通员工页面</h1>
+      <p class="placeholder-eyebrow">INSPECTOR PORTAL</p>
+      <h1>检查员页面</h1>
       <p class="placeholder-copy">
-        当前为普通员工登录态。后续业务页面还未实现，这里先作为系统主页占位。
+        当前为检查员登录态。后续业务页面还未实现，这里先作为系统主页占位。
       </p>
       <div class="placeholder-meta">
-        <span>身份：普通员工</span>
-        <span>姓名：{{ name }}</span>
-        <span>工号：{{ workId }}</span>
+        <span>身份：检查员</span>
+        <span>姓名：{{ realName }}</span>
+        <span>账号：{{ username }}</span>
+        <span>警号/工号：{{ badgeNumber }}</span>
       </div>
       <button class="placeholder-action" type="button" @click="logout">
         退出登录
