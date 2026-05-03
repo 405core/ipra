@@ -1,6 +1,13 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
+import {
+  importPassengerProfiles,
+  searchPassengerProfiles,
+  type ImportBatchResult,
+  type ImportType,
+  type PassengerProfileRecord,
+} from '../app/profile-service';
 
 type RiskLevel = 'high' | 'medium';
 
@@ -26,109 +33,100 @@ interface DashboardStat {
 
 const router = useRouter();
 
-const allResults: PassengerRecord[] = [
+const dashboardStats: DashboardStat[] = [
   {
-    id: 'result-zhang-wei',
-    name: 'ZHANG WEI',
-    documentId: 'E92834102',
-    pnr: 'CX880-LAX',
-    route: 'CX880 (HKG -> LAX)',
-    seat: '12A / Business',
-    eta: '预计 14:20 抵达',
-    riskLevel: 'high',
-    riskLabel: '高风险预警',
-    summary:
-      '最近 3 个月内存在多次异常行程组合，且与重点名单出现高重合度，建议执行二级人工审核。',
-    watchTags: ['异常行程', '名单重合', '人工复核'],
+    label: '导入入口',
+    value: 'CSV / XLSX',
+    detail: '支持基础画像与高风险名单',
   },
   {
-    id: 'result-li-na',
-    name: 'LI NA',
-    documentId: 'G5521009',
-    pnr: 'MU715-SIN',
-    route: 'MU715 (PVG -> SIN)',
-    seat: '18C / Economy',
-    eta: '预计 19:05 抵达',
-    riskLevel: 'medium',
-    riskLabel: '持续观察',
-    summary:
-      '同行人关系链存在轻度异常，建议补充核验近 30 天出入境与购票关联信息。',
-    watchTags: ['关系链复核', '补充数据', '持续观察'],
+    label: '检索方式',
+    value: '证件 / 姓名 / PNR',
+    detail: '命中后直接展示全息画像',
+  },
+  {
+    label: '风险联动',
+    value: '高风险即预警',
+    detail: '命中名单自动高亮',
+  },
+  {
+    label: '数据承载',
+    value: '主表 + JSON',
+    detail: '兼容多维画像字段',
   },
 ];
 
-const dashboardStats: DashboardStat[] = [
-  {
-    label: '本日查询量',
-    value: '1,284',
-    detail: '+12% vs. 昨日',
-  },
-  {
-    label: '高风险拦截',
-    value: '24',
-    detail: '+4 新增记录',
-  },
-  {
-    label: 'API 延迟',
-    value: '18ms',
-    detail: '当前链路稳定',
-  },
-  {
-    label: '节点负载',
-    value: '45%',
-    detail: '处于安全阈值',
-  },
+const importTypeOptions: Array<{ label: string; value: ImportType }> = [
+  { label: '基础画像', value: 'BASE_PROFILE' },
+  { label: '高风险名单', value: 'HIGH_RISK' },
 ];
 
 const query = ref('');
-const results = ref<PassengerRecord[]>([...allResults]);
-const recentSearches = ref(['E92834102', 'G5521009']);
-const searchStatus = ref('请输入旅客证件号或 PNR 发起检索。');
+const results = ref<PassengerRecord[]>([]);
+const recentSearches = ref<string[]>([]);
+const searchStatus = ref('正在加载最新画像记录...');
 const importStatus = ref('支持 CSV / XLSX，单次最大 20MB。');
 const isDropActive = ref(false);
+const isSearching = ref(false);
+const isImporting = ref(false);
+const selectedImportType = ref<ImportType>('BASE_PROFILE');
 const fileInput = ref<HTMLInputElement | null>(null);
 
-function performSearch(rawValue = query.value) {
+onMounted(() => {
+  void loadProfiles();
+});
+
+async function loadProfiles(rawValue = query.value) {
   const trimmed = rawValue.trim();
   query.value = trimmed;
+  isSearching.value = true;
+  searchStatus.value = trimmed ? '正在检索旅客画像...' : '正在加载最新画像记录...';
 
-  if (!trimmed) {
-    results.value = [...allResults];
-    searchStatus.value = '已重置为默认结果，请输入旅客证件号或 PNR。';
-    return;
+  try {
+    const profiles = await searchPassengerProfiles(trimmed);
+    results.value = profiles.map(mapProfileToCard);
+
+    if (trimmed) {
+      recentSearches.value = [
+        trimmed,
+        ...recentSearches.value.filter((item) => item !== trimmed),
+      ].slice(0, 4);
+    }
+
+    if (trimmed) {
+      searchStatus.value = results.value.length
+        ? `已检索到 ${results.value.length} 条匹配记录。`
+        : `未找到与 "${trimmed}" 匹配的旅客记录。`;
+    } else {
+      searchStatus.value = results.value.length
+        ? `已加载最新 ${results.value.length} 条画像记录。`
+        : '当前暂无已导入画像，请先导入文件。';
+    }
+  } catch (error) {
+    results.value = [];
+    searchStatus.value = normalizeErrorMessage(error, '查询旅客画像失败，请稍后重试。');
+  } finally {
+    isSearching.value = false;
   }
-
-  const keyword = trimmed.toLowerCase();
-  results.value = allResults.filter((record) =>
-    [record.documentId, record.pnr, record.name, record.route].some((field) =>
-      field.toLowerCase().includes(keyword)
-    )
-  );
-
-  recentSearches.value = [
-    trimmed,
-    ...recentSearches.value.filter((item) => item !== trimmed),
-  ].slice(0, 4);
-
-  searchStatus.value = results.value.length
-    ? `已检索到 ${results.value.length} 条匹配记录。`
-    : `未找到与 "${trimmed}" 匹配的旅客记录。`;
 }
 
-function submitSearch() {
-  performSearch();
+async function submitSearch() {
+  await loadProfiles();
 }
 
-function applyRecentSearch(item: string) {
+async function applyRecentSearch(item: string) {
   query.value = item;
-  performSearch(item);
+  await loadProfiles(item);
 }
 
 function triggerFileSelection() {
+  if (isImporting.value) {
+    return;
+  }
   fileInput.value?.click();
 }
 
-function acceptFile(file: File | null) {
+async function acceptFile(file: File | null) {
   if (!file) {
     importStatus.value = '未选择文件。';
     return;
@@ -143,21 +141,239 @@ function acceptFile(file: File | null) {
     return;
   }
 
-  importStatus.value = `已选择文件：${file.name}`;
+  isImporting.value = true;
+  importStatus.value = `正在导入 ${importTypeLabel(selectedImportType.value)}：${file.name}`;
+
+  try {
+    const result = await importPassengerProfiles(file, selectedImportType.value);
+    importStatus.value = buildImportStatus(file.name, result);
+    await loadProfiles(query.value);
+  } catch (error) {
+    importStatus.value = normalizeErrorMessage(error, '导入旅客画像失败，请稍后重试。');
+  } finally {
+    isImporting.value = false;
+    if (fileInput.value) {
+      fileInput.value.value = '';
+    }
+  }
 }
 
-function handleFileChange(event: Event) {
+async function handleFileChange(event: Event) {
   const input = event.target as HTMLInputElement;
-  acceptFile(input.files?.[0] ?? null);
+  await acceptFile(input.files?.[0] ?? null);
 }
 
-function handleDrop(event: DragEvent) {
+async function handleDrop(event: DragEvent) {
   isDropActive.value = false;
-  acceptFile(event.dataTransfer?.files?.[0] ?? null);
+  await acceptFile(event.dataTransfer?.files?.[0] ?? null);
+}
+
+function downloadTemplate() {
+  const header =
+    'document_type,document_num,issuing_region,full_name,gender,birth_date,nationality,pnr,flight_no,origin,destination,departure_date,purpose_declared,occupation,monthly_income,funding_source,is_high_risk,risk_tags,case_type,case_status,remark\n';
+  const sample =
+    'PASSPORT,E92834102,CN,ZHANG WEI,男,1990-04-12,中国,CX880-LAX,CX880,HKG,LAX,2026-05-18,旅游,销售,不稳定,个人借款,1,"名单重合,异常行程",跨境赌博关联,待核验,示例数据\n';
+  const blob = new Blob([header, sample], { type: 'text/csv;charset=utf-8' });
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = 'passenger_profile_template.csv';
+  anchor.click();
+  URL.revokeObjectURL(objectUrl);
+}
+
+async function reviewRecord(record: PassengerRecord) {
+  query.value = record.documentId;
+  await loadProfiles(record.documentId);
 }
 
 async function openAskWorkspace() {
   await router.push({ name: 'home-ask' });
+}
+
+function mapProfileToCard(profile: PassengerProfileRecord): PassengerRecord {
+  const dimensionData = asRecord(profile.dimensionData);
+  const tripInfo = asRecord(dimensionData.tripInfo);
+  const occupation = asRecord(dimensionData.occupation);
+  const riskRecords = asRecordArray(dimensionData.riskRecords);
+  const riskTags = asStringArray(dimensionData.riskTags);
+
+  const route = buildRouteLabel(tripInfo);
+  const seat = asString(tripInfo.seat) || asString(tripInfo.accommodation) || '未录入座位 / 住宿信息';
+  const eta =
+    asString(tripInfo.departureDate) ||
+    asString(tripInfo.returnTicketStatus) ||
+    `更新于 ${formatDateTime(profile.updatedAt)}`;
+  const pnr = asString(tripInfo.pnr) || '未录入 PNR';
+  const summary = buildSummary(profile, tripInfo, occupation, riskRecords, riskTags);
+  const watchTags = buildWatchTags(profile, tripInfo, riskRecords, riskTags);
+
+  return {
+    id: String(profile.id),
+    name: profile.fullName,
+    documentId: profile.documentNum,
+    pnr,
+    route,
+    seat,
+    eta,
+    riskLevel: profile.isHighRisk ? 'high' : 'medium',
+    riskLabel: profile.isHighRisk ? '高风险预警' : '画像已导入',
+    summary,
+    watchTags,
+  };
+}
+
+function buildRouteLabel(tripInfo: Record<string, unknown>) {
+  const route = asString(tripInfo.route);
+  if (route) {
+    return route;
+  }
+
+  const flightNo = asString(tripInfo.flightNo);
+  const origin = asString(tripInfo.origin);
+  const destination = asString(tripInfo.destination);
+
+  if (flightNo && origin && destination) {
+    return `${flightNo} (${origin} -> ${destination})`;
+  }
+  if (origin && destination) {
+    return `${origin} -> ${destination}`;
+  }
+  if (destination) {
+    return `目的地 ${destination}`;
+  }
+  return '未录入行程信息';
+}
+
+function buildSummary(
+  profile: PassengerProfileRecord,
+  tripInfo: Record<string, unknown>,
+  occupation: Record<string, unknown>,
+  riskRecords: Array<Record<string, unknown>>,
+  riskTags: string[]
+) {
+  const firstRisk = riskRecords[0] ?? {};
+  const riskType = asString(firstRisk.type);
+  const purpose = asString(tripInfo.purposeDeclared);
+  const occupationName =
+    asString(occupation.occupation) || asString(occupation.position) || asString(occupation.company);
+
+  if (profile.isHighRisk) {
+    const detail = riskType || riskTags[0] || '名单命中';
+    return `当前旅客已命中高风险画像：${detail}。建议优先核验行程目的、资金来源和同行关系。`;
+  }
+
+  if (purpose && occupationName) {
+    return `申报出境目的为“${purpose}”，当前职业信息为“${occupationName}”，可结合历史行程继续核验。`;
+  }
+
+  if (purpose) {
+    return `申报出境目的为“${purpose}”，画像已完成入库，可继续进行证件匹配和人工问询。`;
+  }
+
+  return '画像记录已完成入库，可继续开展证件匹配、风险比对和后续辅助问询。';
+}
+
+function buildWatchTags(
+  profile: PassengerProfileRecord,
+  tripInfo: Record<string, unknown>,
+  riskRecords: Array<Record<string, unknown>>,
+  riskTags: string[]
+) {
+  const tags = [...riskTags];
+
+  for (const record of riskRecords) {
+    const type = asString(record.type);
+    if (type) {
+      tags.push(type);
+    }
+  }
+
+  const destination = asString(tripInfo.destination);
+  if (destination) {
+    tags.push(`目的地:${destination}`);
+  }
+
+  if (profile.isHighRisk) {
+    tags.unshift('高风险名单');
+  }
+
+  const unique = [...new Set(tags.filter(Boolean))];
+  return unique.length ? unique.slice(0, 4) : ['已导入画像'];
+}
+
+function buildImportStatus(fileName: string, result: ImportBatchResult) {
+  const label = importTypeLabel(selectedImportType.value);
+  const firstError = result.errorDetails?.[0];
+
+  if (result.status === 'success') {
+    return `${label}导入完成：${fileName}，成功 ${result.successCount}/${result.totalRows} 行。`;
+  }
+
+  if (result.status === 'partial_failed') {
+    return `${label}部分导入成功：成功 ${result.successCount} 行，失败 ${result.failedCount} 行。${
+      firstError ? `首个错误位于第 ${firstError.rowNo} 行：${firstError.message}` : ''
+    }`;
+  }
+
+  return `${label}导入失败：${
+    firstError
+      ? firstError.rowNo
+        ? `第 ${firstError.rowNo} 行 ${firstError.message}`
+        : firstError.message
+      : '请检查文件格式和字段内容。'
+  }`;
+}
+
+function importTypeLabel(value: ImportType) {
+  return value === 'HIGH_RISK' ? '高风险名单' : '基础画像';
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || Array.isArray(value) || typeof value !== 'object') {
+    return {};
+  }
+  return value as Record<string, unknown>;
+}
+
+function asRecordArray(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.map((item) => asRecord(item)).filter((item) => Object.keys(item).length > 0);
+}
+
+function asStringArray(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => (typeof item === 'string' ? item.trim() : ''))
+    .filter((item) => item.length > 0);
+}
+
+function asString(value: unknown) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function formatDateTime(value: string) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return parsed.toLocaleString('zh-CN', {
+    hour12: false,
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function normalizeErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error && error.message ? error.message : fallback;
 }
 </script>
 
@@ -168,13 +384,13 @@ async function openAskWorkspace() {
         <p class="section-eyebrow">Search Console</p>
         <h2>数据检索与风险联动分析</h2>
         <p class="section-copy">
-          这个页面现在只负责 `UserHomeView` 自己的业务内容。侧边栏切换已经移到公共布局里，不再把页内分区误当成页面导航。
+          通过离线导入采购方提供的旅客画像与高风险名单，现场可按证件号、姓名或 PNR 快速检索，并直接查看已入库的全息画像摘要。
         </p>
       </div>
 
       <div class="hero-card__actions">
-        <button class="secondary-action" type="button">
-          导出模板
+        <button class="secondary-action" type="button" @click="downloadTemplate">
+          下载模板
         </button>
         <button class="primary-action" type="button" @click="openAskWorkspace">
           进入辅助问询
@@ -198,9 +414,11 @@ async function openAskWorkspace() {
             id="passenger-query"
             v-model="query"
             type="text"
-            placeholder="输入旅客证件号或订票编码 (PNR)"
+            placeholder="输入旅客证件号、姓名或订票编码 (PNR)"
           />
-          <button type="submit">查询</button>
+          <button type="submit" :disabled="isSearching">
+            {{ isSearching ? '检索中...' : '查询' }}
+          </button>
         </label>
 
         <p class="status-copy">{{ searchStatus }}</p>
@@ -236,18 +454,33 @@ async function openAskWorkspace() {
           @change="handleFileChange"
         />
 
+        <div class="tag-row tag-row--compact">
+          <span class="tag-row__label">导入类型</span>
+          <button
+            v-for="option in importTypeOptions"
+            :key="option.value"
+            class="tag-chip"
+            :class="{ 'tag-chip--active': selectedImportType === option.value }"
+            type="button"
+            @click="selectedImportType = option.value"
+          >
+            {{ option.label }}
+          </button>
+        </div>
+
         <button
           class="upload-dropzone"
           :class="{ 'is-active': isDropActive }"
           type="button"
+          :disabled="isImporting"
           @click="triggerFileSelection"
           @dragenter.prevent="isDropActive = true"
           @dragover.prevent="isDropActive = true"
           @dragleave.prevent="isDropActive = false"
           @drop.prevent="handleDrop"
         >
-          <strong>点击或拖拽文件至此处</strong>
-          <span>系统将校验文件格式并接入风险分析队列。</span>
+          <strong>{{ isImporting ? '正在处理导入文件...' : '点击或拖拽文件至此处' }}</strong>
+          <span>当前导入类型：{{ importTypeLabel(selectedImportType) }}。</span>
         </button>
 
         <p class="status-copy">{{ importStatus }}</p>
@@ -320,8 +553,12 @@ async function openAskWorkspace() {
             <button class="primary-action" type="button" @click="openAskWorkspace">
               发起辅助问询
             </button>
-            <button class="secondary-action" type="button">查看档案</button>
-            <button class="text-action" type="button">标记安全</button>
+            <button class="secondary-action" type="button" @click="reviewRecord(record)">
+              按证件复查
+            </button>
+            <button class="text-action" type="button" @click="applyRecentSearch(record.documentId)">
+              再次检索
+            </button>
           </div>
         </article>
       </div>
@@ -530,6 +767,14 @@ async function openAskWorkspace() {
   color: #5b7179;
 }
 
+.search-box button:disabled,
+.primary-action:disabled,
+.secondary-action:disabled,
+.text-action:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
 .tag-chip {
   min-height: 34px;
   padding: 0 12px;
@@ -543,6 +788,11 @@ async function openAskWorkspace() {
 
 .tag-chip--passive {
   cursor: default;
+}
+
+.tag-chip--active {
+  background: rgba(11, 114, 136, 0.16);
+  color: #09596c;
 }
 
 .upload-dropzone {
@@ -560,6 +810,11 @@ async function openAskWorkspace() {
 .upload-dropzone.is-active {
   border-color: #0b7288;
   background: linear-gradient(160deg, rgba(11, 114, 136, 0.12), rgba(255, 255, 255, 0.96));
+}
+
+.upload-dropzone:disabled {
+  cursor: wait;
+  opacity: 0.72;
 }
 
 .results-list {
