@@ -46,7 +46,7 @@ POST /v1/humanomni/summarize-window
 Content-Type: multipart/form-data
 ```
 
-用途：上传某一轮回答对应的 5-10 秒音视频片段，由 AI-Service 调用 HumanOmni0.5 生成摘要。
+用途：上传某一轮回答对应的 5-10 秒音视频片段，由 AI-Service 调用 HumanOmni0.5 生成摘要。建议前端上传已经转码好的标准 `mp4/h264/aac` 片段，避免浏览器原始 `webm` 因缺少有效时长索引导致 HumanOmni 读取不到帧数。
 
 ### 2.1 表单字段
 
@@ -262,7 +262,7 @@ Content-Type: application/json
 | `humanOmniWindows` | HumanOmni 返回的窗口摘要数组 |
 | `actionObservations` | 前端或动作识别模块输出的结构化动作 JSON |
 | `asr` | 可选 ASR 转写结果，当前已预留 |
-| `constraints.questionCount` | 希望返回的追问建议数量 |
+| `constraints.questionCount` | 希望返回的追问建议数量；后续追问接口默认 3 条，并会按该数量补齐或截断 `followupGuidance` |
 
 ### 4.4 响应核心字段
 
@@ -331,3 +331,45 @@ cd D:\405project\ipra
 & ".\apps\ai-service\.venv\Scripts\python.exe" apps\ai-service\scripts\smoke_first_round_strategy.py --base-url http://127.0.0.1:9000
 & ".\apps\ai-service\.venv\Scripts\python.exe" apps\ai-service\scripts\smoke_followup_guidance.py --base-url http://127.0.0.1:9000
 ```
+
+## 6. 本地业务 LLM 配置
+
+当前业务 LLM 支持两种 provider：
+
+| Provider | 说明 |
+| --- | --- |
+| `mock` | 默认模式，返回稳定测试 JSON，不加载真实大模型 |
+| `transformers_local` | 使用本地 Transformers 加载 Qwen2.5-3B-Instruct |
+
+使用本地 Qwen2.5-3B-Instruct 前，先下载模型：
+
+```powershell
+cd D:\405project\ipra
+& ".\apps\ai-service\.venv\Scripts\python.exe" apps\ai-service\scripts\download_business_llm_qwen25_3b.py --proxy http://127.0.0.1:7897
+```
+
+然后配置环境变量：
+
+```powershell
+$env:BUSINESS_LLM_PROVIDER="transformers_local"
+$env:BUSINESS_LLM_MODEL="Qwen2.5-3B-Instruct"
+$env:BUSINESS_LLM_MODEL_PATH="D:\405project\ipra\models\business-llm\modelscope\Qwen2.5-3B-Instruct"
+$env:BUSINESS_LLM_TIMEOUT_SECONDS="300"
+$env:BUSINESS_LLM_MAX_NEW_TOKENS="768"
+$env:BUSINESS_LLM_TORCH_DTYPE="auto"
+$env:BUSINESS_LLM_DEVICE_MAP="auto"
+```
+
+也可以写入 `.env`：
+
+```text
+BUSINESS_LLM_PROVIDER=transformers_local
+BUSINESS_LLM_MODEL=Qwen2.5-3B-Instruct
+BUSINESS_LLM_MODEL_PATH=../../models/business-llm/modelscope/Qwen2.5-3B-Instruct
+BUSINESS_LLM_TIMEOUT_SECONDS=300
+BUSINESS_LLM_MAX_NEW_TOKENS=768
+BUSINESS_LLM_TORCH_DTYPE=auto
+BUSINESS_LLM_DEVICE_MAP=auto
+```
+
+说明：首次调用业务 LLM 接口时会加载模型，耗时会明显长一些；加载后模型会缓存在当前 AI-Service 进程中，后续请求会复用。

@@ -3,44 +3,52 @@ from __future__ import annotations
 import json
 import os
 import re
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from config import REPO_ROOT, resolve_path
 from schemas.inquiry import (
     FirstRoundStrategyRequest,
     FirstRoundStrategyResponse,
     FollowupGuidanceRequest,
     FollowupGuidanceResponse,
+    FollowupQuestion,
 )
 
 
 PROMPT_DIR = Path(__file__).resolve().parents[1] / "prompts"
+DEFAULT_LOCAL_MODEL_PATH = REPO_ROOT / "models" / "business-llm" / "modelscope" / "Qwen2.5-3B-Instruct"
+DEFAULT_LOCAL_CACHE_DIR = REPO_ROOT / "models" / "business-llm" / "huggingface"
+_LOCAL_RUNNERS: dict[tuple[str, str, str], "_TransformersLocalRunner"] = {}
 
 
 @dataclass(frozen=True)
 class BusinessLlmSettings:
     provider: str
-    base_url: str
-    api_key: str
     model: str
+    model_path: Path
     timeout_seconds: int
+    max_new_tokens: int
+    torch_dtype: str
+    device_map: str
 
 
 def load_business_llm_settings() -> BusinessLlmSettings:
     provider = os.getenv("BUSINESS_LLM_PROVIDER", "mock").strip() or "mock"
-    base_url = os.getenv("BUSINESS_LLM_BASE_URL", "").strip()
-    if provider == "ollama" and not base_url:
-        base_url = "http://127.0.0.1:11434"
+    model_path = resolve_path(os.getenv("BUSINESS_LLM_MODEL_PATH"), DEFAULT_LOCAL_MODEL_PATH)
+    model_name = os.getenv("BUSINESS_LLM_MODEL", "").strip()
+    if not model_name:
+        model_name = "mock-business-llm" if provider == "mock" else model_path.name
 
     return BusinessLlmSettings(
         provider=provider,
-        base_url=base_url,
-        api_key=os.getenv("BUSINESS_LLM_API_KEY", "").strip(),
-        model=os.getenv("BUSINESS_LLM_MODEL", "mock-business-llm").strip() or "mock-business-llm",
-        timeout_seconds=_read_timeout_seconds(),
+        model=model_name,
+        model_path=model_path,
+        timeout_seconds=_read_positive_int("BUSINESS_LLM_TIMEOUT_SECONDS", 300),
+        max_new_tokens=_read_positive_int("BUSINESS_LLM_MAX_NEW_TOKENS", 768),
+        torch_dtype=os.getenv("BUSINESS_LLM_TORCH_DTYPE", "auto").strip() or "auto",
+        device_map=os.getenv("BUSINESS_LLM_DEVICE_MAP", "auto").strip() or "auto",
     )
 
 
@@ -54,7 +62,10 @@ class BusinessLlmClient:
 
     @property
     def runtime(self) -> dict[str, str]:
-        return {"provider": self.settings.provider, "model": self.settings.model}
+        runtime = {"provider": self.settings.provider, "model": self.settings.model}
+        if self.settings.provider == "transformers_local":
+            runtime["modelPath"] = str(self.settings.model_path)
+        return runtime
 
     def generate_first_round_strategy(
         self,
@@ -65,9 +76,9 @@ class BusinessLlmClient:
             from services.first_round_strategy import build_mock_first_round_strategy
 
             return build_mock_first_round_strategy(request, self.runtime, prompt)
-        if self.settings.provider == "ollama":
-            return self._generate_first_round_strategy_with_ollama(request, prompt)
-        raise NotImplementedError("Supported BUSINESS_LLM_PROVIDER values: mock, ollama.")
+        if self.settings.provider == "transformers_local":
+            return self._generate_first_round_strategy_with_local_model(request, prompt)
+        raise NotImplementedError("Supported BUSINESS_LLM_PROVIDER values: mock, transformers_local.")
 
     def generate_followup_guidance(
         self,
@@ -78,24 +89,19 @@ class BusinessLlmClient:
             from services.followup_guidance import build_mock_followup_guidance
 
             return build_mock_followup_guidance(request, self.runtime, prompt)
-        if self.settings.provider == "ollama":
-            return self._generate_followup_guidance_with_ollama(request, prompt)
-        raise NotImplementedError("Supported BUSINESS_LLM_PROVIDER values: mock, ollama.")
+        if self.settings.provider == "transformers_local":
+            return self._generate_followup_guidance_with_local_model(request, prompt)
+        raise NotImplementedError("Supported BUSINESS_LLM_PROVIDER values: mock, transformers_local.")
 
-    def _generate_first_round_strategy_with_ollama(
+    def _generate_first_round_strategy_with_local_model(
         self,
         request: FirstRoundStrategyRequest,
         prompt: str,
     ) -> FirstRoundStrategyResponse:
-        content = self._call_ollama_json(
+        content = self._runner().generate_json_text(
             system_prompt=_system_prompt(),
-            user_prompt=(
-                f"{prompt}\n\n"
-                "请根据输入生成首轮问询策略。必须只返回一个 JSON 对象，不要输出 Markdown。\n"
-                "JSON 必须包含这些字段：sessionId、llm、riskAssessment、strategy、questions、operatorNote。\n"
-                "questions 中每一项必须包含 questionId、priority、question、purpose、expectedEvidence。\n\n"
-                f"输入 JSON：\n{_to_json(request.model_dump(by_alias=True))}"
-            ),
+            user_prompt=_first_round_user_prompt(prompt, request),
+            max_new_tokens=self.settings.max_new_tokens,
         )
         data = _parse_json_object(content)
         data["sessionId"] = request.session_id
@@ -103,69 +109,130 @@ class BusinessLlmClient:
         try:
             return FirstRoundStrategyResponse.model_validate(data)
         except Exception as exc:
-            raise BusinessLlmError(f"Ollama first-round response does not match schema: {exc}; raw={content}") from exc
+            raise BusinessLlmError(
+                f"transformers_local first-round response does not match schema: {exc}; raw={content}"
+            ) from exc
 
-    def _generate_followup_guidance_with_ollama(
+    def _generate_followup_guidance_with_local_model(
         self,
         request: FollowupGuidanceRequest,
         prompt: str,
     ) -> FollowupGuidanceResponse:
-        content = self._call_ollama_json(
+        content = self._runner().generate_json_text(
             system_prompt=_system_prompt(),
-            user_prompt=(
-                f"{prompt}\n\n"
-                "请根据输入生成后续追问指引。必须只返回一个 JSON 对象，不要输出 Markdown。\n"
-                "JSON 必须包含这些字段：sessionId、roundNo、llm、multimodalAssessment、followupGuidance、operatorNote、warnings。\n"
-                "followupGuidance 中每一项必须包含 priority、question、reason、operatorTip、focusArea。\n\n"
-                f"输入 JSON：\n{_to_json(request.model_dump(by_alias=True))}"
-            ),
+            user_prompt=_followup_user_prompt(prompt, request),
+            max_new_tokens=self.settings.max_new_tokens,
         )
         data = _parse_json_object(content)
         data["sessionId"] = request.session_id
         data["roundNo"] = request.round_no
         data["llm"] = self.runtime
+        data["followupGuidance"] = _normalize_followup_guidance_count(
+            data.get("followupGuidance"),
+            request.constraints.question_count,
+        )
         try:
             return FollowupGuidanceResponse.model_validate(data)
         except Exception as exc:
-            raise BusinessLlmError(f"Ollama followup response does not match schema: {exc}; raw={content}") from exc
+            raise BusinessLlmError(
+                f"transformers_local followup response does not match schema: {exc}; raw={content}"
+            ) from exc
 
-    def _call_ollama_json(self, *, system_prompt: str, user_prompt: str) -> str:
-        if not self.settings.base_url:
-            raise BusinessLlmError("BUSINESS_LLM_BASE_URL is required when BUSINESS_LLM_PROVIDER=ollama.")
-        if not self.settings.model:
-            raise BusinessLlmError("BUSINESS_LLM_MODEL is required when BUSINESS_LLM_PROVIDER=ollama.")
+    def _runner(self) -> "_TransformersLocalRunner":
+        if not self.settings.model_path.is_dir():
+            raise BusinessLlmError(f"BUSINESS_LLM_MODEL_PATH does not exist: {self.settings.model_path}")
 
-        payload = {
-            "model": self.settings.model,
-            "stream": False,
-            "format": "json",
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "options": {
-                "temperature": 0.2,
-            },
-        }
-        request = urllib.request.Request(
-            self.settings.base_url.rstrip("/") + "/api/chat",
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
+        key = (
+            str(self.settings.model_path),
+            self.settings.torch_dtype,
+            self.settings.device_map,
         )
-        try:
-            with urllib.request.urlopen(request, timeout=self.settings.timeout_seconds) as response:
-                data = json.loads(response.read().decode("utf-8"))
-        except urllib.error.URLError as exc:
-            raise BusinessLlmError(f"Cannot call Ollama API: {exc}") from exc
-        except json.JSONDecodeError as exc:
-            raise BusinessLlmError(f"Cannot parse Ollama API response JSON: {exc}") from exc
+        if key not in _LOCAL_RUNNERS:
+            _LOCAL_RUNNERS[key] = _TransformersLocalRunner(
+                model_path=self.settings.model_path,
+                torch_dtype=self.settings.torch_dtype,
+                device_map=self.settings.device_map,
+            )
+        return _LOCAL_RUNNERS[key]
 
-        message = data.get("message") or {}
-        content = message.get("content")
-        if not isinstance(content, str) or not content.strip():
-            raise BusinessLlmError(f"Ollama API response does not contain message.content: {data}")
-        return content
+
+class _TransformersLocalRunner:
+    def __init__(self, *, model_path: Path, torch_dtype: str, device_map: str) -> None:
+        self.model_path = model_path
+        self.torch_dtype = torch_dtype
+        self.device_map = device_map
+        self._tokenizer = None
+        self._model = None
+
+    def generate_json_text(self, *, system_prompt: str, user_prompt: str, max_new_tokens: int) -> str:
+        self._ensure_loaded()
+        tokenizer = self._tokenizer
+        model = self._model
+        if tokenizer is None or model is None:
+            raise BusinessLlmError("Local Transformers model is not loaded.")
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        inputs = tokenizer([text], return_tensors="pt").to(model.device)
+
+        import torch
+
+        with torch.inference_mode():
+            generated_ids = model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                do_sample=False,
+                pad_token_id=tokenizer.eos_token_id,
+            )
+
+        output_ids = generated_ids[0][inputs.input_ids.shape[-1] :]
+        return tokenizer.decode(output_ids, skip_special_tokens=True).strip()
+
+    def _ensure_loaded(self) -> None:
+        if self._tokenizer is not None and self._model is not None:
+            return
+
+        DEFAULT_LOCAL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+
+        dtype = self._resolve_torch_dtype(torch)
+        self._tokenizer = AutoTokenizer.from_pretrained(
+            str(self.model_path),
+            cache_dir=str(DEFAULT_LOCAL_CACHE_DIR),
+            local_files_only=True,
+            trust_remote_code=True,
+        )
+        self._model = AutoModelForCausalLM.from_pretrained(
+            str(self.model_path),
+            cache_dir=str(DEFAULT_LOCAL_CACHE_DIR),
+            torch_dtype=dtype,
+            device_map=self.device_map,
+            local_files_only=True,
+            trust_remote_code=True,
+        )
+        self._model.generation_config.do_sample = False
+        self._model.generation_config.temperature = None
+        self._model.generation_config.top_p = None
+        self._model.generation_config.top_k = None
+        self._model.eval()
+
+    def _resolve_torch_dtype(self, torch_module):
+        value = self.torch_dtype.lower()
+        if value == "auto":
+            return torch_module.float16 if torch_module.cuda.is_available() else torch_module.float32
+        if value in {"float16", "fp16"}:
+            return torch_module.float16
+        if value in {"bfloat16", "bf16"}:
+            return torch_module.bfloat16
+        if value in {"float32", "fp32"}:
+            return torch_module.float32
+        raise BusinessLlmError("BUSINESS_LLM_TORCH_DTYPE must be one of: auto, float16, bfloat16, float32")
 
 
 def load_prompt(name: str) -> str:
@@ -180,24 +247,110 @@ def public_runtime(runtime: dict[str, Any]) -> dict[str, str]:
     }
 
 
-def _read_timeout_seconds() -> int:
-    raw_value = os.getenv("BUSINESS_LLM_TIMEOUT_SECONDS", "120").strip() or "120"
+def _read_positive_int(name: str, fallback: int) -> int:
+    raw_value = os.getenv(name, str(fallback)).strip() or str(fallback)
     try:
-        timeout = int(raw_value)
+        value = int(raw_value)
     except ValueError as exc:
-        raise ValueError("BUSINESS_LLM_TIMEOUT_SECONDS must be an integer") from exc
-    if timeout <= 0:
-        raise ValueError("BUSINESS_LLM_TIMEOUT_SECONDS must be greater than 0")
-    return timeout
+        raise ValueError(f"{name} must be an integer") from exc
+    if value <= 0:
+        raise ValueError(f"{name} must be greater than 0")
+    return value
 
 
 def _system_prompt() -> str:
     return (
         "你是智能旅客风险评估与辅助问询系统中的业务 LLM。"
-        "你必须输出严格 JSON，不能输出 Markdown、解释文字或代码块。"
+        "你必须只输出一个严格 JSON 对象，不能输出 Markdown、解释文字或代码块。"
         "所有追问话术必须中性、专业、非指控。"
         "动作、情绪和多模态观察只能作为追问参考，不能单独构成风险结论。"
     )
+
+
+def _first_round_user_prompt(prompt: str, request: FirstRoundStrategyRequest) -> str:
+    return (
+        f"{prompt}\n\n"
+        "请根据输入生成首轮问询策略。只返回 JSON 对象。\n"
+        "JSON 结构必须为：\n"
+        "{\n"
+        '  "sessionId": "...",\n'
+        '  "llm": {"provider": "...", "model": "..."},\n'
+        '  "riskAssessment": {"level": "low|medium|high|unknown", "summary": "...", "reasons": ["..."]},\n'
+        '  "strategy": {"goal": "...", "focusAreas": ["..."]},\n'
+        '  "questions": [{"questionId": "q1", "priority": 1, "question": "...", "purpose": "...", "expectedEvidence": ["..."]}],\n'
+        '  "operatorNote": "..."\n'
+        "}\n\n"
+        f"输入 JSON：\n{_to_json(request.model_dump(by_alias=True))}"
+    )
+
+
+def _followup_user_prompt(prompt: str, request: FollowupGuidanceRequest) -> str:
+    question_count = request.constraints.question_count
+    return (
+        f"{prompt}\n\n"
+        "请根据输入生成后续追问指引。只返回 JSON 对象。\n"
+        f"followupGuidance 必须恰好包含 {question_count} 条追问建议，priority 从 1 到 {question_count}，不要少于或多于该数量。\n"
+        "JSON 结构必须为：\n"
+        "{\n"
+        '  "sessionId": "...",\n'
+        '  "roundNo": 2,\n'
+        '  "llm": {"provider": "...", "model": "..."},\n'
+        '  "multimodalAssessment": {"summary": "...", "riskHints": ["..."], "evidence": ["..."], "limitations": ["..."]},\n'
+        '  "followupGuidance": [{"priority": 1, "question": "...", "reason": "...", "operatorTip": "...", "focusArea": "..."}],\n'
+        '  "operatorNote": "...",\n'
+        '  "warnings": ["..."]\n'
+        "}\n\n"
+        f"输入 JSON：\n{_to_json(request.model_dump(by_alias=True))}"
+    )
+
+
+def _normalize_followup_guidance_count(value: Any, question_count: int) -> list[dict[str, Any]]:
+    items = value if isinstance(value, list) else []
+    normalized: list[dict[str, Any]] = []
+    for item in items:
+        if isinstance(item, dict):
+            normalized.append(dict(item))
+
+    fallback_bank = [
+        {
+            "question": "请您进一步说明这次出境的具体行程安排，包括主要地点和时间顺序。",
+            "reason": "补充行程细节，核验申报目的与实际安排是否一致。",
+            "operatorTip": "保持中性核验，鼓励旅客按时间顺序说明。",
+            "focusArea": "行程细节",
+        },
+        {
+            "question": "请问这次行程费用的具体来源和支付方式是什么？",
+            "reason": "核验资金来源、支付方式与旅客基础画像是否匹配。",
+            "operatorTip": "围绕事实核验，不直接质疑资金真实性。",
+            "focusArea": "资金来源",
+        },
+        {
+            "question": "您到达后住宿和联系人是否已经确定，是否方便说明具体安排？",
+            "reason": "核验住宿安排、境外联系人和停留计划是否清晰。",
+            "operatorTip": "如旅客回答不确定，可继续追问预订凭证或联系人关系。",
+            "focusArea": "住宿与联系人",
+        },
+        {
+            "question": "请问目前返程时间或返程票是否已经确定？",
+            "reason": "核验停留边界和返程计划是否明确。",
+            "operatorTip": "不要直接推定逾期停留，只确认现有安排。",
+            "focusArea": "返程计划",
+        },
+    ]
+
+    while len(normalized) < question_count:
+        fallback = fallback_bank[len(normalized) % len(fallback_bank)]
+        normalized.append(dict(fallback))
+
+    result = normalized[:question_count]
+    for index, item in enumerate(result, start=1):
+        item["priority"] = index
+        item.setdefault("question", fallback_bank[(index - 1) % len(fallback_bank)]["question"])
+        item.setdefault("reason", fallback_bank[(index - 1) % len(fallback_bank)]["reason"])
+        item.setdefault("operatorTip", fallback_bank[(index - 1) % len(fallback_bank)]["operatorTip"])
+        item.setdefault("focusArea", fallback_bank[(index - 1) % len(fallback_bank)]["focusArea"])
+
+    return [FollowupQuestion.model_validate(item).model_dump(by_alias=True) for item in result]
 
 
 def _to_json(value: Any) -> str:
