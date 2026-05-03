@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "nx run-many -t serve --projects=frontend,backend --parallel=2 --outputStyle=stream",
     "dev:frontend": "nx serve frontend",
-    "dev:backend": "nx serve backend"
+    "dev:backend": "nx serve backend",
+    "dev:cn": "GOPROXY=https://goproxy.cn,direct nx run-many -t serve --projects=frontend,backend --parallel=2 --outputStyle=stream",
+    "dev:backend:cn": "GOPROXY=https://goproxy.cn,direct nx serve backend"
   },
   "private": true,
   "devDependencies": {
