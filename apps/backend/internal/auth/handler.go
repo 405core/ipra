@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	dbschema "ipra/backend/internal/database"
 )
 
 const authClaimsContextKey = "authClaims"
@@ -59,7 +60,7 @@ func (h *Handler) handleLogin(c *gin.Context) {
 		return
 	}
 
-	var user SystemUser
+	var user dbschema.SystemUser
 	if err := h.db.Where("username = ?", username).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusUnauthorized, gin.H{"message": "账号或密码错误"})
@@ -99,7 +100,7 @@ func (h *Handler) handleCurrentUser(c *gin.Context) {
 		return
 	}
 
-	var user SystemUser
+	var user dbschema.SystemUser
 	if err := h.db.First(&user, claims.UserID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusUnauthorized, gin.H{"message": "用户不存在"})
@@ -166,7 +167,7 @@ func parseBearerToken(header string) (string, bool) {
 	return token, true
 }
 
-func toUserResponse(user SystemUser) userResponse {
+func toUserResponse(user dbschema.SystemUser) userResponse {
 	return userResponse{
 		ID:          user.ID,
 		Username:    user.Username,

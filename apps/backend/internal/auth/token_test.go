@@ -3,12 +3,14 @@ package auth
 import (
 	"testing"
 	"time"
+
+	dbschema "ipra/backend/internal/database"
 )
 
 func TestTokenManagerSignAndParse(t *testing.T) {
 	manager := NewTokenManager("test-secret", time.Hour)
 
-	token, err := manager.Sign(SystemUser{
+	token, err := manager.Sign(dbschema.SystemUser{
 		ID:          7,
 		Username:    "user",
 		RealName:    "现场检查员",
@@ -45,7 +47,7 @@ func TestTokenManagerSignAndParse(t *testing.T) {
 func TestTokenManagerRejectsExpiredTokens(t *testing.T) {
 	manager := NewTokenManager("test-secret", -time.Second)
 
-	token, err := manager.Sign(SystemUser{
+	token, err := manager.Sign(dbschema.SystemUser{
 		ID:          1,
 		Username:    "admin",
 		RealName:    "系统管理员",

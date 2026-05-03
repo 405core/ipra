@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	dbschema "ipra/backend/internal/database"
 	"strings"
 	"time"
 )
@@ -41,7 +42,7 @@ func NewTokenManager(secret string, ttl time.Duration) *TokenManager {
 	}
 }
 
-func (m *TokenManager) Sign(user SystemUser) (string, error) {
+func (m *TokenManager) Sign(user dbschema.SystemUser) (string, error) {
 	header := tokenHeader{
 		Algorithm: "HS256",
 		Type:      "JWT",
