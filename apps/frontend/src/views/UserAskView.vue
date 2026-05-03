@@ -1,8 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
+import {
+  createIdleRealtimeDetectionState,
+  createRealtimeDetectionController,
+  type RealtimeDetectionController,
+  type RealtimeDetectionState,
+} from '../app/realtime-mediapipe';
 import { loadAuthSession } from '../auth';
 
-type WorkflowStage = 'strategy' | 'interview' | 'analysis' | 'judgement';
+type WorkflowStage = 'strategy' | 'interview' | 'judgement';
 type RiskLevel = 'high' | 'medium';
 type TranscriptRole = 'system' | 'interviewer' | 'subject';
 type SamplingPhase = 'idle' | 'active' | 'ended' | 'error';
@@ -69,12 +75,6 @@ interface SamplingState {
   permissionGranted: boolean;
 }
 
-interface AnalysisFinding {
-  title: string;
-  detail: string;
-  tone: 'alert' | 'warn' | 'info';
-}
-
 interface StageItem {
   id: WorkflowStage;
   label: string;
@@ -124,11 +124,6 @@ const workflowStages: StageItem[] = [
     id: 'interview',
     label: '智能辅助问询',
     helper: '采样、转写与多轮追问',
-  },
-  {
-    id: 'analysis',
-    label: 'AI 分析',
-    helper: '汇总轮次证据并生成结论',
   },
   {
     id: 'judgement',
@@ -396,7 +391,9 @@ const archivedAt = ref('');
 const archiveCode = ref('IPRA-ASK-20260503-014');
 
 const videoElement = ref<HTMLVideoElement | null>(null);
+const overlayCanvas = ref<HTMLCanvasElement | null>(null);
 const samplingState = ref<SamplingState>(createIdleSamplingState());
+const realtimeDetection = ref<RealtimeDetectionState>(createIdleRealtimeDetectionState());
 
 let mediaStream: MediaStream | null = null;
 let audioContext: AudioContext | null = null;
@@ -406,6 +403,7 @@ let meterFrameId: number | null = null;
 let elapsedIntervalId: number | null = null;
 let transcriptTimeoutIds: number[] = [];
 let samplingStartedAt = 0;
+let realtimeDetectionController: RealtimeDetectionController | null = null;
 
 const currentRound = computed(() => {
   if (!currentRoundId.value) {
@@ -438,16 +436,6 @@ const totalSampleDuration = computed(() =>
   completedRounds.value.reduce((sum, round) => sum + round.durationSeconds, 0)
 );
 
-const analysisScore = computed(() => {
-  const roundsFactor = completedRounds.value.length * 8;
-  const transcriptFactor = Math.min(12, totalTranscriptCount.value);
-  return Math.min(92, 58 + roundsFactor + transcriptFactor);
-});
-
-const analysisScoreStyle = computed<Record<string, string>>(() => ({
-  '--score-angle': `${Math.max(12, analysisScore.value * 3.6)}deg`,
-}));
-
 const strategyGenerated = computed(() => generatedQuestions.value.length > 0);
 const canEnterInterview = computed(() => strategyGenerated.value);
 const canStartSampling = computed(() => samplingState.value.phase !== 'active');
@@ -457,7 +445,7 @@ const canAdvanceRound = computed(
     samplingState.value.phase !== 'active' &&
     !isArchived.value
 );
-const canEnterAnalysis = computed(
+const canEnterJudgement = computed(
   () =>
     rounds.value.length > 1 &&
     Boolean(currentRound.value?.completed) &&
@@ -491,75 +479,45 @@ const selectedJudgementLabel = computed(() =>
   selectedJudgement.value ? judgementLabel(selectedJudgement.value) : '待判定'
 );
 
+const realtimeModelStatuses = computed(() => Object.values(realtimeDetection.value.models));
+const realtimeEnabledModelLabel = computed(() => {
+  const enabledModels = realtimeModelStatuses.value
+    .filter((status) => status.active)
+    .map((status) => status.label.replace(' Landmarker', ''));
+
+  return enabledModels.length ? enabledModels.join(' / ') : '未启用';
+});
+const faceCueItems = computed(() => [
+  {
+    key: 'brow',
+    label: '眉部紧张',
+    value: realtimeDetection.value.faceCues.browTension,
+    helper: '额眉区域短时收紧或上提',
+  },
+  {
+    key: 'eye',
+    label: '眼周收缩',
+    value: realtimeDetection.value.faceCues.eyeTension,
+    helper: '眯眼或眼周肌肉收缩候选',
+  },
+  {
+    key: 'mouth',
+    label: '唇部压紧',
+    value: realtimeDetection.value.faceCues.mouthPressure,
+    helper: '抿嘴、卷唇或口周压紧候选',
+  },
+  {
+    key: 'jaw',
+    label: '下颌动作',
+    value: realtimeDetection.value.faceCues.jawActivation,
+    helper: '张口、偏移或下颌发力候选',
+  },
+]);
+
 const keyEvidenceTags = computed(() => {
   const tags = completedRounds.value.flatMap((round) => [round.focus, round.signal]);
   return tags.slice(0, 4);
 });
-
-const analysisTimeline = computed(() => [
-  {
-    label: '完成轮次',
-    value: `${completedRounds.value.length} 轮`,
-    detail: rounds.value.length > 1 ? '已满足进入分析的轮次要求' : '至少需要两轮采样',
-  },
-  {
-    label: '累计转写',
-    value: `${totalTranscriptCount.value} 条`,
-    detail: '转写为前端 mock 脚本流，按采样状态实时注入',
-  },
-  {
-    label: '累计采样',
-    value: formatDuration(totalSampleDuration.value),
-    detail: '摄像头与话筒通过浏览器真实调用',
-  },
-]);
-
-const analysisFindings = computed<AnalysisFinding[]>(() => {
-  const firstCue = getRoundCue(completedRounds.value[0]) || '终端异常';
-  const latestCue =
-    getRoundCue(completedRounds.value[completedRounds.value.length - 1]) ||
-    '移动路径说明';
-
-  return [
-    {
-      title: '时间线稳定性下降',
-      detail: `对象围绕“${firstCue}”的描述在后续轮次中出现新的动作补充，说明首轮陈述并不完整。`,
-      tone: 'alert',
-    },
-    {
-      title: '设备空窗解释不足',
-      detail:
-        '对象未形成完整的异常上报链路，且将“短暂卡顿”逐步修正为靠近配电箱与移动工位，口径存在漂移。',
-      tone: 'alert',
-    },
-    {
-      title: '旁证线索后置出现',
-      detail: `关于“${latestCue}”的说明直到后续轮次才出现，适合结合通道监控与同伴笔录继续人工复核。`,
-      tone: 'warn',
-    },
-  ];
-});
-
-const analysisRecommendations = computed<AnalysisFinding[]>(() => [
-  {
-    title: '优先核验设备与工位日志',
-    detail: '比对终端空窗、备用扫码枪领取记录与配电箱周边监控时间戳。',
-    tone: 'info',
-  },
-  {
-    title: '补充同伴交叉问询',
-    detail: '围绕赵强、值班员与现场设备管理员开展旁证核验，确认是否存在未记录的短时交接。',
-    tone: 'warn',
-  },
-  {
-    title: '人工结论建议',
-    detail:
-      analysisScore.value >= 80
-        ? '当前模型倾向认为对象存在显著陈述缺口，建议人工判断时重点审视“隐瞒”与“虚假陈述”。'
-        : '当前模型仍建议人工判断时保留无异常可能，但需给出完整理由。',
-    tone: 'info',
-  },
-]);
 
 function createIdleMeterBars() {
   return [0.22, 0.28, 0.18, 0.24, 0.3, 0.2, 0.26, 0.18, 0.22, 0.3, 0.24, 0.2];
@@ -835,11 +793,16 @@ function stopSamplingResources() {
   clearTranscriptTimers();
   stopElapsedTimer();
   stopMeterLoop();
+  realtimeDetectionController?.stop();
   releaseMediaStream();
 }
 
 function resetSamplingIndicators() {
   samplingState.value = createIdleSamplingState();
+}
+
+function resetRealtimeDetectionViewState() {
+  realtimeDetection.value = createIdleRealtimeDetectionState();
 }
 
 function resolveMediaError(error: unknown) {
@@ -879,6 +842,37 @@ function updateAudioMeter() {
 
   samplingState.value.meterBars = meterBars;
   samplingState.value.audioLevel = average;
+}
+
+function ensureRealtimeDetectionController() {
+  if (!realtimeDetectionController) {
+    realtimeDetectionController = createRealtimeDetectionController({
+      targetFps: 6,
+      maxEntries: 12,
+      onUpdate: (nextState) => {
+        realtimeDetection.value = nextState;
+      },
+    });
+  }
+
+  return realtimeDetectionController;
+}
+
+async function startRealtimeDetection() {
+  if (!videoElement.value || !overlayCanvas.value || samplingState.value.phase !== 'active') {
+    return;
+  }
+
+  try {
+    const controller = ensureRealtimeDetectionController();
+    await controller.start(videoElement.value, overlayCanvas.value);
+  } catch (error) {
+    realtimeDetection.value = createIdleRealtimeDetectionState({
+      phase: 'error',
+      statusMessage: '视觉检测启动失败',
+      windowSummary: error instanceof Error ? error.message : '实时视觉检测未能成功启动。',
+    });
+  }
 }
 
 function startMeterLoop() {
@@ -942,6 +936,7 @@ async function startSampling() {
 
   stopSamplingResources();
   resetSamplingIndicators();
+  resetRealtimeDetectionViewState();
   round.completed = false;
   round.durationSeconds = 0;
   round.summary = '';
@@ -984,8 +979,10 @@ async function startSampling() {
 
     startElapsedTimer();
     scheduleMockTranscripts(round);
+    void startRealtimeDetection();
   } catch (error) {
     stopSamplingResources();
+    resetRealtimeDetectionViewState();
     samplingState.value = {
       ...createIdleSamplingState(),
       phase: 'error',
@@ -1022,17 +1019,14 @@ function enterNextRound() {
   rounds.value.push(nextRound);
   currentRoundId.value = nextRound.id;
   resetSamplingIndicators();
-}
-
-function enterAnalysisStage() {
-  if (!canEnterAnalysis.value) {
-    return;
-  }
-
-  currentStage.value = 'analysis';
+  resetRealtimeDetectionViewState();
 }
 
 function enterJudgementStage() {
+  if (currentStage.value === 'interview' && !canEnterJudgement.value) {
+    return;
+  }
+
   currentStage.value = 'judgement';
 }
 
@@ -1055,6 +1049,32 @@ function selectJudgement(value: FinalJudgement) {
   selectedJudgement.value = value;
 }
 
+function formatRealtimeClock(timestamp: number | null) {
+  if (!timestamp) {
+    return '暂无';
+  }
+
+  return new Date(timestamp).toLocaleTimeString('zh-CN', {
+    hour12: false,
+  });
+}
+
+function formatCuePercent(value: number) {
+  return `${Math.round(value * 100)}%`;
+}
+
+function faceCueLevelClass(value: number) {
+  if (value >= 0.42) {
+    return 'face-cue-card--strong';
+  }
+
+  if (value >= 0.24) {
+    return 'face-cue-card--active';
+  }
+
+  return 'face-cue-card--idle';
+}
+
 onBeforeUnmount(() => {
   stopSamplingResources();
 });
@@ -1067,7 +1087,7 @@ onBeforeUnmount(() => {
         <p class="section-eyebrow">Inquiry Flow</p>
         <h2>辅助问询流程控制台</h2>
         <p class="section-copy">
-          使用单一主工作面管理策略生成、多轮采样、AI 分析和人工判定。页面中的问询数据全部为前端
+          使用单一主工作面管理策略生成、多轮采样和人工判定。页面中的问询数据全部为前端
           mock，但摄像头与话筒采样为真实浏览器调用。
         </p>
       </div>
@@ -1090,7 +1110,7 @@ onBeforeUnmount(() => {
           <div class="stage-card__progress-head">
             <div>
               <p class="section-eyebrow">Progress Track</p>
-              <h4>四阶段流程锁定推进</h4>
+              <h4>三阶段流程锁定推进</h4>
             </div>
             <span class="progress-note">仅完成上一阶段后才会解锁下一阶段</span>
           </div>
@@ -1244,7 +1264,7 @@ onBeforeUnmount(() => {
               <h3>智能辅助问询</h3>
               <p class="section-copy">
                 当前阶段支持真实摄像头与话筒采样，语音转文字使用前端 mock
-                脚本流实时注入。需要至少完成一轮进入下一轮后，才会解锁进入分析。
+                脚本流实时注入。需要至少完成一轮进入下一轮后，才会解锁进入人工辅助判断。
               </p>
             </div>
 
@@ -1278,6 +1298,22 @@ onBeforeUnmount(() => {
                   playsinline
                   class="video-stage__feed"
                 ></video>
+                <canvas ref="overlayCanvas" class="video-stage__canvas"></canvas>
+
+                <div class="video-stage__assist">
+                  <span class="detector-pill" :class="`detector-pill--${realtimeDetection.phase}`">
+                    {{ realtimeDetection.statusMessage }}
+                  </span>
+                  <span class="detector-pill detector-pill--neutral">
+                    Face {{ realtimeDetection.overlayFrame.faceCount }}
+                  </span>
+                  <span class="detector-pill detector-pill--neutral">
+                    Hand {{ realtimeDetection.overlayFrame.handCount }}
+                  </span>
+                  <span class="detector-pill detector-pill--neutral">
+                    Pose {{ realtimeDetection.overlayFrame.poseDetected ? 'ON' : 'OFF' }}
+                  </span>
+                </div>
 
                 <div v-if="samplingState.phase !== 'active'" class="video-stage__placeholder">
                   <strong>{{ samplingState.phase === 'ended' ? '本轮采样已完成' : '等待开始采样' }}</strong>
@@ -1290,8 +1326,131 @@ onBeforeUnmount(() => {
                   <span class="live-dot" :class="{ 'is-active': samplingState.phase === 'active' }"></span>
                   <strong>{{ passengerProfile.alias }}</strong>
                   <span>{{ passengerProfile.route }}</span>
+                  <span>
+                    {{
+                      realtimeDetection.enabledModels.length
+                        ? `${realtimeDetection.enabledModels.length} 个视觉模型已启用`
+                        : '等待视觉检测启动'
+                    }}
+                  </span>
                 </div>
               </div>
+
+              <section class="sampling-console">
+                <div class="sampling-console__head">
+                  <div>
+                    <p class="section-eyebrow">Sampling Console</p>
+                    <h4>采样控制台</h4>
+                  </div>
+                  <span class="status-chip" :class="`status-chip--${realtimeDetection.phase}`">
+                    {{ realtimeDetection.statusMessage }}
+                  </span>
+                </div>
+
+                <div class="sampling-console__stats">
+                  <article class="console-stat">
+                    <span>采样时长</span>
+                    <strong>{{ formatDuration(samplingState.elapsedSeconds) }}</strong>
+                  </article>
+                  <article class="console-stat">
+                    <span>最近检测</span>
+                    <strong>{{ formatRealtimeClock(realtimeDetection.lastDetectedAt) }}</strong>
+                  </article>
+                  <article class="console-stat">
+                    <span>启用模型</span>
+                    <strong>{{ realtimeEnabledModelLabel }}</strong>
+                  </article>
+                </div>
+
+                <div class="sampling-console__detectors">
+                  <article
+                    v-for="status in realtimeModelStatuses"
+                    :key="status.key"
+                    class="detector-chip"
+                    :class="`detector-chip--${status.state}`"
+                  >
+                    <strong>{{ status.label }}</strong>
+                    <span>{{ status.detail }}</span>
+                  </article>
+                </div>
+
+                <div class="console-summary">
+                  <strong>当前窗口摘要</strong>
+                  <p>{{ realtimeDetection.windowSummary }}</p>
+                </div>
+
+                <div class="face-cue-panel">
+                  <div class="console-stream__head">
+                    <strong>面部细微波动</strong>
+                    <span>基于 MediaPipe blendshapes 的前端候选信号</span>
+                  </div>
+
+                  <div class="face-cue-grid">
+                    <article
+                      v-for="item in faceCueItems"
+                      :key="item.key"
+                      class="face-cue-card"
+                      :class="faceCueLevelClass(item.value)"
+                    >
+                      <div class="face-cue-card__meta">
+                        <span>{{ item.label }}</span>
+                        <strong>{{ formatCuePercent(item.value) }}</strong>
+                      </div>
+                      <div class="face-cue-card__bar">
+                        <span :style="{ width: `${Math.max(8, item.value * 100)}%` }"></span>
+                      </div>
+                      <p>{{ item.helper }}</p>
+                    </article>
+                  </div>
+
+                  <p class="face-cue-note">
+                    当前主导信号为“{{ realtimeDetection.faceCues.dominantCue }}”，用于辅助观察短时面部变化，不等价于最终微表情结论。
+                  </p>
+                </div>
+
+                <div class="console-metrics">
+                  <span class="soft-chip">
+                    检测 {{ realtimeDetection.overlayFrame.detectionFps.toFixed(1) }} FPS
+                  </span>
+                  <span class="soft-chip">
+                    推理 {{ realtimeDetection.overlayFrame.inferenceMs.toFixed(1) }} ms
+                  </span>
+                  <span class="soft-chip">
+                    {{ realtimeDetection.overlayFrame.hasFace ? '人脸已识别' : '人脸未识别' }}
+                  </span>
+                  <span class="soft-chip">
+                    {{ realtimeDetection.overlayFrame.poseDetected ? '姿态已识别' : '姿态未识别' }}
+                  </span>
+                </div>
+
+                <div class="console-stream">
+                  <div class="console-stream__head">
+                    <strong>实时业务事件流</strong>
+                    <span>以问询辅助线索为主</span>
+                  </div>
+
+                  <article
+                    v-for="entry in realtimeDetection.consoleEntries"
+                    :key="entry.id"
+                    class="console-entry"
+                    :class="[`console-entry--${entry.tone}`, `console-entry--${entry.kind}`]"
+                  >
+                    <div class="console-entry__meta">
+                      <strong>{{ entry.title }}</strong>
+                      <span>{{ entry.time }}</span>
+                    </div>
+                    <p>{{ entry.detail }}</p>
+                  </article>
+
+                  <div
+                    v-if="!realtimeDetection.consoleEntries.length"
+                    class="empty-panel empty-panel--compact"
+                  >
+                    <strong>尚无采样控制台输出</strong>
+                    <span>开始采样后，这里会滚动输出模型状态与实时辅助事件。</span>
+                  </div>
+                </div>
+              </section>
 
               <div class="audio-meter">
                 <div class="audio-meter__head">
@@ -1382,7 +1541,7 @@ onBeforeUnmount(() => {
                 <div class="round-actions__copy">
                   <strong>{{ currentRound.completed ? '本轮已完成' : '本轮未完成' }}</strong>
                   <span>
-                    {{ currentRound.completed ? currentRound.summary : '请先完成采样并结束本轮，才能解锁下一轮或进入分析。' }}
+                    {{ currentRound.completed ? currentRound.summary : '请先完成采样并结束本轮，才能解锁下一轮或进入人工辅助判断。' }}
                   </span>
                 </div>
 
@@ -1398,10 +1557,10 @@ onBeforeUnmount(() => {
                   <button
                     class="primary-action"
                     type="button"
-                    :disabled="!canEnterAnalysis"
-                    @click="enterAnalysisStage"
+                    :disabled="!canEnterJudgement"
+                    @click="enterJudgementStage"
                   >
-                    进入分析
+                    进入人工辅助判断
                   </button>
                 </div>
               </div>
@@ -1442,99 +1601,13 @@ onBeforeUnmount(() => {
           </section>
         </template>
 
-        <template v-else-if="currentStage === 'analysis'">
-          <header class="stage-card__head">
-            <div>
-              <p class="section-eyebrow">Stage 03</p>
-              <h3>AI 分析</h3>
-              <p class="section-copy">
-                当前结果基于已完成轮次的所有 mock 数据生成，用于帮助检查员快速定位矛盾点、风险信号与人工复核方向。
-              </p>
-            </div>
-
-            <div class="stage-chip-group">
-              <span class="status-chip status-chip--analysis">Analysis Ready</span>
-              <span class="soft-chip">{{ completedRounds.length }} 轮数据已汇总</span>
-            </div>
-          </header>
-
-          <div class="analysis-layout">
-            <section class="analysis-hero">
-              <div class="analysis-score" :style="analysisScoreStyle">
-                <div class="analysis-score__inner">
-                  <strong>{{ analysisScore }}%</strong>
-                  <span>风险倾向</span>
-                </div>
-              </div>
-
-              <div class="analysis-hero__copy">
-                <p class="section-eyebrow">Model Summary</p>
-                <h4>多轮口径已出现明显补充与修正</h4>
-                <p>
-                  系统认为对象关于设备空窗、配电箱附近停留与旁证同伴的陈述存在逐轮扩张，适合进入人工辅助判断阶段完成最终定性。
-                </p>
-              </div>
-            </section>
-
-            <section class="timeline-strip">
-              <article v-for="item in analysisTimeline" :key="item.label" class="timeline-strip__item">
-                <span>{{ item.label }}</span>
-                <strong>{{ item.value }}</strong>
-                <p>{{ item.detail }}</p>
-              </article>
-            </section>
-
-            <section class="analysis-columns">
-              <div class="analysis-column">
-                <div class="analysis-column__head">
-                  <p class="section-eyebrow">Risk Signals</p>
-                  <h4>关键风险信号</h4>
-                </div>
-
-                <article
-                  v-for="finding in analysisFindings"
-                  :key="finding.title"
-                  class="finding-item"
-                  :class="`finding-item--${finding.tone}`"
-                >
-                  <strong>{{ finding.title }}</strong>
-                  <p>{{ finding.detail }}</p>
-                </article>
-              </div>
-
-              <div class="analysis-column">
-                <div class="analysis-column__head">
-                  <p class="section-eyebrow">Operator Guidance</p>
-                  <h4>人工复核建议</h4>
-                </div>
-
-                <article
-                  v-for="finding in analysisRecommendations"
-                  :key="finding.title"
-                  class="finding-item"
-                  :class="`finding-item--${finding.tone}`"
-                >
-                  <strong>{{ finding.title }}</strong>
-                  <p>{{ finding.detail }}</p>
-                </article>
-              </div>
-            </section>
-          </div>
-
-          <div class="action-row">
-            <button class="primary-action" type="button" @click="enterJudgementStage">
-              进入人工辅助判断
-            </button>
-          </div>
-        </template>
-
         <template v-else-if="currentStage === 'judgement' && !isArchived">
           <header class="stage-card__head">
             <div>
-              <p class="section-eyebrow">Stage 04</p>
+              <p class="section-eyebrow">Stage 03</p>
               <h3>人工辅助判断</h3>
               <p class="section-copy">
-                最终判定必须由检查员完成。请选择结论，并填写详细理由；理由不足时页面不允许归档。
+                第二阶段问询达到要求后，最终判定必须由检查员完成。请选择结论，并填写详细理由；理由不足时页面不允许归档。
               </p>
             </div>
 
@@ -1749,10 +1822,12 @@ onBeforeUnmount(() => {
 .stage-card__head,
 .workspace-panel__head,
 .video-panel__head,
+.sampling-console__head,
 .transcript-panel__head,
 .history-panel__head,
 .analysis-column__head,
 .audio-meter__head,
+.console-stream__head,
 .round-actions,
 .completion-hero {
   display: flex;
@@ -2023,6 +2098,13 @@ onBeforeUnmount(() => {
   padding: 22px;
 }
 
+.video-panel,
+.sampling-console,
+.audio-meter {
+  display: grid;
+  gap: 18px;
+}
+
 .profile-panel__identity,
 .question-item,
 .question-brief,
@@ -2098,6 +2180,7 @@ onBeforeUnmount(() => {
 .question-item__meta,
 .history-item__meta,
 .transcript-entry__meta,
+.console-entry__meta,
 .reason-meta {
   display: flex;
   align-items: flex-start;
@@ -2213,9 +2296,31 @@ onBeforeUnmount(() => {
   transform: scaleX(-1);
 }
 
+.video-stage__canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 360px;
+  pointer-events: none;
+  transform: scaleX(-1);
+}
+
+.video-stage__assist {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  max-width: calc(100% - 32px);
+}
+
 .video-stage__placeholder {
   position: absolute;
   inset: 0;
+  z-index: 3;
   display: grid;
   gap: 8px;
   place-content: center;
@@ -2229,6 +2334,7 @@ onBeforeUnmount(() => {
   position: absolute;
   right: 16px;
   bottom: 16px;
+  z-index: 2;
   display: grid;
   gap: 4px;
   padding: 12px 14px;
@@ -2236,6 +2342,41 @@ onBeforeUnmount(() => {
   background: rgba(10, 20, 24, 0.48);
   color: #ffffff;
   backdrop-filter: blur(12px);
+}
+
+.detector-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(10, 20, 24, 0.5);
+  color: #ffffff;
+  font-size: 0.82rem;
+  font-weight: 700;
+  backdrop-filter: blur(14px);
+}
+
+.detector-pill--neutral {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.detector-pill--running,
+.detector-pill--partial {
+  background: rgba(19, 163, 187, 0.32);
+}
+
+.detector-pill--loading {
+  background: rgba(226, 170, 77, 0.3);
+}
+
+.detector-pill--unavailable,
+.detector-pill--error {
+  background: rgba(182, 78, 61, 0.34);
+}
+
+.detector-pill--idle {
+  background: rgba(255, 255, 255, 0.16);
 }
 
 .live-dot {
@@ -2250,10 +2391,197 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 0 6px rgba(51, 176, 108, 0.14);
 }
 
-.audio-meter {
+.sampling-console {
+  padding: 18px;
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgba(11, 114, 136, 0.06), rgba(255, 255, 255, 0.96)),
+    #ffffff;
+  border: 1px solid rgba(157, 189, 202, 0.22);
+}
+
+.sampling-console__stats,
+.sampling-console__detectors,
+.console-metrics,
+.face-cue-grid {
   display: grid;
   gap: 12px;
-  margin-top: 18px;
+}
+
+.sampling-console__stats {
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.console-stat,
+.console-summary,
+.console-entry {
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(157, 189, 202, 0.18);
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.console-stat {
+  display: grid;
+  gap: 6px;
+}
+
+.console-stat span,
+.console-entry__meta span,
+.console-stream__head span {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.console-stat strong,
+.console-summary strong,
+.console-entry strong,
+.detector-chip strong {
+  color: var(--text-main);
+}
+
+.sampling-console__detectors {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.detector-chip {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(157, 189, 202, 0.18);
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.detector-chip span {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.detector-chip--loading {
+  border-color: rgba(226, 170, 77, 0.26);
+  background: rgba(255, 247, 233, 0.94);
+}
+
+.detector-chip--ready {
+  border-color: rgba(11, 114, 136, 0.22);
+  background: rgba(240, 249, 252, 0.94);
+}
+
+.detector-chip--failed,
+.detector-chip--unavailable {
+  border-color: rgba(182, 78, 61, 0.24);
+  background: rgba(255, 243, 239, 0.96);
+}
+
+.console-summary {
+  display: grid;
+  gap: 8px;
+}
+
+.console-summary p,
+.console-entry p,
+.face-cue-note,
+.face-cue-card p {
+  margin: 0;
+}
+
+.face-cue-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.face-cue-grid {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.face-cue-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(157, 189, 202, 0.18);
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.face-cue-card__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.face-cue-card__meta span,
+.face-cue-card p,
+.face-cue-note {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.face-cue-card__meta strong {
+  color: var(--text-main);
+}
+
+.face-cue-card__bar {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(157, 189, 202, 0.18);
+}
+
+.face-cue-card__bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(32, 168, 197, 0.68), rgba(11, 114, 136, 0.96));
+}
+
+.face-cue-card--active {
+  border-color: rgba(11, 114, 136, 0.2);
+  background: rgba(240, 249, 252, 0.94);
+}
+
+.face-cue-card--strong {
+  border-color: rgba(192, 123, 25, 0.24);
+  background: rgba(255, 247, 233, 0.96);
+}
+
+.console-metrics {
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+
+.console-stream {
+  display: grid;
+  gap: 12px;
+  max-height: 360px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.console-entry {
+  display: grid;
+  gap: 8px;
+}
+
+.console-entry--event {
+  border-left: 4px solid rgba(11, 114, 136, 0.24);
+}
+
+.console-entry--status {
+  background: rgba(248, 252, 253, 0.9);
+}
+
+.console-entry--warn {
+  border-left-color: var(--warn);
+}
+
+.console-entry--alert {
+  border-left-color: var(--alert);
+}
+
+.audio-meter {
+  margin-top: 0;
 }
 
 .audio-meter__bars {
@@ -2361,10 +2689,17 @@ onBeforeUnmount(() => {
 }
 
 .status-chip--active,
+.status-chip--running,
+.status-chip--partial,
 .status-chip--analysis,
 .status-chip--judgement {
   background: rgba(11, 114, 136, 0.12);
   color: var(--accent-strong);
+}
+
+.status-chip--loading {
+  background: rgba(192, 123, 25, 0.12);
+  color: var(--warn);
 }
 
 .status-chip--ended {
@@ -2372,6 +2707,7 @@ onBeforeUnmount(() => {
   color: var(--safe);
 }
 
+.status-chip--unavailable,
 .status-chip--error {
   background: rgba(182, 78, 61, 0.12);
   color: var(--alert);
@@ -2605,6 +2941,7 @@ onBeforeUnmount(() => {
   .workflow-hero,
   .stage-card__progress-head,
   .stage-card__head,
+  .sampling-console__head,
   .round-actions,
   .completion-hero,
   .analysis-hero {
@@ -2626,6 +2963,12 @@ onBeforeUnmount(() => {
   .analysis-score {
     width: 148px;
     min-width: 148px;
+  }
+
+  .sampling-console__stats,
+  .sampling-console__detectors,
+  .console-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -2670,7 +3013,8 @@ onBeforeUnmount(() => {
   }
 
   .video-stage,
-  .video-stage__feed {
+  .video-stage__feed,
+  .video-stage__canvas {
     min-height: 280px;
   }
 
@@ -2688,6 +3032,25 @@ onBeforeUnmount(() => {
 
   .action-row {
     flex-direction: column;
+  }
+
+  .video-stage__assist {
+    right: 16px;
+    max-width: none;
+  }
+
+  .sampling-console,
+  .console-stat,
+  .detector-chip,
+  .console-summary,
+  .console-entry {
+    padding: 14px;
+  }
+
+  .sampling-console__stats,
+  .sampling-console__detectors,
+  .console-metrics {
+    grid-template-columns: 1fr;
   }
 
   .analysis-score__inner strong {
