@@ -24,6 +24,7 @@ const router = createRouter({
       component: LoginView,
       meta: {
         guestOnly: true,
+        watermark: false,
       },
     },
     {
@@ -33,6 +34,7 @@ const router = createRouter({
       meta: {
         requiresAuth: true,
         roles: ['inspector'] satisfies UserRole[],
+        watermark: true,
       },
       children: [
         {
@@ -80,6 +82,7 @@ const router = createRouter({
       meta: {
         requiresAuth: true,
         roles: ['admin'] satisfies UserRole[],
+        watermark: true,
       },
     },
     {
