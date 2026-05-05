@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 	"ipra/backend/internal/auth"
 	"ipra/backend/internal/config"
+	"ipra/backend/internal/profile"
 )
 
 func main() {
@@ -44,6 +45,8 @@ func newRouter(authHandler *auth.Handler) *gin.Engine {
 			"status":  "Go 后端已就绪",
 		})
 	})
+
+	profile.RegisterRoutes(r)
 
 	if authHandler != nil {
 		authHandler.Register(r)

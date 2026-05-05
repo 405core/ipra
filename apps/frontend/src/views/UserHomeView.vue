@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
+import { loadAuthSession } from '../auth';
 
 type RiskLevel = 'high' | 'medium';
 
@@ -84,7 +85,7 @@ const query = ref('');
 const results = ref<PassengerRecord[]>([...allResults]);
 const recentSearches = ref(['E92834102', 'G5521009']);
 const searchStatus = ref('请输入旅客证件号或 PNR 发起检索。');
-const importStatus = ref('支持 CSV / XLSX，单次最大 20MB。');
+const importStatus = ref('支持 CSV / XLSX，单次最大 20MB。推荐使用系统导出的多 sheet XLSX 模板。');
 const isDropActive = ref(false);
 const fileInput = ref<HTMLInputElement | null>(null);
 
@@ -126,6 +127,44 @@ function applyRecentSearch(item: string) {
 
 function triggerFileSelection() {
   fileInput.value?.click();
+}
+
+async function exportImportTemplate() {
+  importStatus.value = '正在获取模板文件...';
+
+  try {
+    const session = loadAuthSession();
+    const response = await fetch('/api/import-templates/passenger-profile.xlsx', {
+      headers: session?.token
+        ? {
+            Authorization: `Bearer ${session.token}`,
+          }
+        : undefined,
+    });
+
+    if (!response.ok) {
+      throw new Error('模板下载失败');
+    }
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const disposition = response.headers.get('Content-Disposition') ?? '';
+    const match = disposition.match(/filename="([^"]+)"/);
+    const filename = match?.[1] ?? 'ipra-passenger-profile-template.xlsx';
+
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    importStatus.value = `模板已导出：${filename}`;
+  } catch (error) {
+    importStatus.value =
+      error instanceof Error ? error.message : '模板下载失败，请稍后重试。';
+  }
 }
 
 function acceptFile(file: File | null) {
@@ -173,7 +212,7 @@ async function openAskWorkspace() {
       </div>
 
       <div class="hero-card__actions">
-        <button class="secondary-action" type="button">
+        <button class="secondary-action" type="button" @click="exportImportTemplate">
           导出模板
         </button>
         <button class="primary-action" type="button" @click="openAskWorkspace">
