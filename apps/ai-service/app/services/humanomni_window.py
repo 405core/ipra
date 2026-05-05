@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from fastapi import UploadFile
 
-from config import AI_SERVICE_ROOT, DEFAULT_MODEL_PATH, REPO_ROOT, resolve_path
+from config import AI_SERVICE_ROOT, DEFAULT_HF_HOME, DEFAULT_MODEL_PATH, REPO_ROOT, resolve_path
 from schemas.humanomni import (
     HumanOmniSummarizeWindowResponse,
     HumanOmniSummaryResult,
@@ -169,6 +169,9 @@ def _run_humanomni(
     env = os.environ.copy()
     env.setdefault("PYTHONUTF8", "1")
     env.setdefault("PYTHONIOENCODING", "utf-8")
+    env["HF_HOME"] = str(DEFAULT_HF_HOME)
+    env["HF_HUB_OFFLINE"] = "1"
+    env["TRANSFORMERS_OFFLINE"] = "1"
 
     started = time.perf_counter()
     try:
@@ -267,4 +270,3 @@ def _delete_if_exists(path: Path) -> None:
             path.unlink()
     except OSError:
         pass
-

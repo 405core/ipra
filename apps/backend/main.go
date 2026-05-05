@@ -26,8 +26,9 @@ func main() {
 
 	tokenManager := auth.NewTokenManager(cfg.Auth.JWTSecret, 24*time.Hour)
 	authHandler := auth.NewHandler(db, tokenManager)
+	profileHandler := profile.NewHandler(db)
 
-	r := newRouter(authHandler)
+	r := newRouter(authHandler, profileHandler)
 
 	addr := ":" + cfg.Port
 	log.Printf("backend listening on %s (%s)", addr, cfg.AppEnv)
@@ -36,7 +37,7 @@ func main() {
 	}
 }
 
-func newRouter(authHandler *auth.Handler) *gin.Engine {
+func newRouter(authHandler *auth.Handler, profileHandler *profile.Handler) *gin.Engine {
 	r := gin.Default()
 
 	r.GET("/api/ping", func(c *gin.Context) {
@@ -50,6 +51,9 @@ func newRouter(authHandler *auth.Handler) *gin.Engine {
 
 	if authHandler != nil {
 		authHandler.Register(r)
+		if profileHandler != nil {
+			profileHandler.Register(r, authHandler.AuthMiddleware())
+		}
 	}
 
 	return r

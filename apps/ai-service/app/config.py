@@ -16,6 +16,14 @@ COMPAT_ROOT = AI_SERVICE_ROOT / "app" / "compat"
 DEFAULT_MODEL_PATH = REPO_ROOT / "models" / "humanomni0.5" / "iic" / "HumanOmni-0___5B"
 DEFAULT_HF_HOME = REPO_ROOT / "models" / "humanomni0.5" / "huggingface"
 TRUE_VALUES = {"1", "ON", "TRUE", "YES"}
+DEFAULT_CORS_ORIGINS = (
+    "http://localhost:4200",
+    "http://127.0.0.1:4200",
+    "http://localhost:4300",
+    "http://127.0.0.1:4300",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+)
 
 
 @dataclass(frozen=True)
@@ -48,6 +56,19 @@ def resolve_hf_offline() -> str:
 
 def is_truthy(value: str | None) -> bool:
     return str(value or "").strip().upper() in TRUE_VALUES
+
+
+def get_cors_origins() -> list[str]:
+    raw_value = os.getenv("AI_SERVICE_CORS_ORIGINS", "").strip()
+    if not raw_value:
+        return list(DEFAULT_CORS_ORIGINS)
+
+    origins = [
+        origin.strip()
+        for origin in raw_value.replace("\n", ",").replace(";", ",").split(",")
+        if origin.strip()
+    ]
+    return origins or list(DEFAULT_CORS_ORIGINS)
 
 
 def configure_warning_output() -> None:

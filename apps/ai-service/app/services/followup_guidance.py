@@ -50,6 +50,7 @@ def build_mock_followup_guidance(
     else:
         summary = "当前缺少可用的问答、HumanOmni 或动作采样信息，建议先补齐基础答复。"
 
+    selected_followups = [FOLLOWUP_BANK[index % len(FOLLOWUP_BANK)] for index in range(question_count)]
     followups = [
         FollowupQuestion(
             priority=index,
@@ -58,7 +59,7 @@ def build_mock_followup_guidance(
             operatorTip="保持中性核验，不直接使用表情或动作对旅客作出定性判断。",
             focusArea=focus_area,
         )
-        for index, (focus_area, question, reason) in enumerate(FOLLOWUP_BANK[:question_count], start=1)
+        for index, (focus_area, question, reason) in enumerate(selected_followups, start=1)
     ]
 
     return FollowupGuidanceResponse(
@@ -146,4 +147,3 @@ def _time_range(start: float | None, end: float | None) -> str:
     if start is None or end is None:
         return ""
     return f"{start:.2f}-{end:.2f}s"
-

@@ -46,13 +46,13 @@ POST /v1/humanomni/summarize-window
 Content-Type: multipart/form-data
 ```
 
-用途：上传某一轮回答对应的 5-10 秒音视频片段，由 AI-Service 调用 HumanOmni0.5 生成摘要。
+用途：上传某一轮回答对应的 5-10 秒音视频片段，由 AI-Service 调用 HumanOmni0.5 生成摘要。建议前端上传已经转码好的标准 `mp4/h264/aac` 片段，避免浏览器原始 `webm` 因缺少有效时长索引导致 HumanOmni 读取不到帧数。
 
 ### 2.1 表单字段
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `file` | file | 是 | 上传的视频或音频片段，建议 mp4 |
+| `file` | file | 是 | 上传的视频或音频片段，当前前端按 MP4/H.264 生成并上传 |
 | `sessionId` | string | 是 | 问询会话 ID |
 | `questionId` | string | 否 | 当前问题 ID |
 | `windowId` | string | 否 | 当前窗口 ID，不传则服务端生成 |
@@ -262,7 +262,7 @@ Content-Type: application/json
 | `humanOmniWindows` | HumanOmni 返回的窗口摘要数组 |
 | `actionObservations` | 前端或动作识别模块输出的结构化动作 JSON |
 | `asr` | 可选 ASR 转写结果，当前已预留 |
-| `constraints.questionCount` | 希望返回的追问建议数量 |
+| `constraints.questionCount` | 希望返回的追问建议数量；后续追问接口默认 3 条，并会按该数量补齐或截断 `followupGuidance` |
 
 ### 4.4 响应核心字段
 
@@ -274,7 +274,48 @@ Content-Type: application/json
 | `followupGuidance` | 后续追问建议和提示话术 |
 | `warnings` | 风险提示，强调系统输出不直接构成结论 |
 
-## 5. 本地联调命令
+## 5. TODO / 当前前端 Mock 字段
+
+当前 `UserAskView` 已直接请求 AI-Service，但前端暂时拿不到的字段会做显式补齐。下面表格用于联调期追踪，避免 mock 字段被误认为真实来源。
+
+| 接口 | 字段 | 当前来源 | 当前状态（mock / derived / real） | 后续替换说明 |
+| --- | --- | --- | --- | --- |
+| `POST /v1/inquiry/first-round-strategy` | `sessionId` | 前端页面进入时本地生成 `inq-...` | derived | 后续若后端提供统一会话体系，应改为由后端创建并下发 |
+| `POST /v1/inquiry/first-round-strategy` | `passengerProfile.name` | 问询页固定 mock 档案中的姓名 | real | 如后续由检索页透传真实对象档案，可直接替换 |
+| `POST /v1/inquiry/first-round-strategy` | `passengerProfile.passengerId` | 前端按证件号拼接 `pax-...` | mock | 建议改为后端或上游业务主键 |
+| `POST /v1/inquiry/first-round-strategy` | `passengerProfile.age` | 前端固定数值 | mock | 需要真实画像系统提供 |
+| `POST /v1/inquiry/first-round-strategy` | `passengerProfile.gender` | 前端固定枚举 | mock | 需要真实画像系统提供 |
+| `POST /v1/inquiry/first-round-strategy` | `passengerProfile.nationality` | 前端固定文本 | mock | 需要真实证件/画像信息提供 |
+| `POST /v1/inquiry/first-round-strategy` | `passengerProfile.occupation` | 前端固定文本 | mock | 需要真实画像系统提供 |
+| `POST /v1/inquiry/first-round-strategy` | `passengerProfile.monthlyIncome` | 前端固定文本区间 | mock | 需要真实画像系统提供 |
+| `POST /v1/inquiry/first-round-strategy` | `passengerProfile.travelHistory` | 前端本地数组 | mock | 需要真实出入境/行程历史系统提供 |
+| `POST /v1/inquiry/first-round-strategy` | `passengerProfile.documents` | 证件号来自页面，其余证件状态由前端补齐 | mixed | `documentNumber` 为 real，证件类型/签证状态/签发国为 mock，后续应统一改为真实证件信息 |
+| `POST /v1/inquiry/first-round-strategy` | `tripProfile.destination` | 由页面 `route` 解析终点机场 | derived | 后续可改为真实行程字段 |
+| `POST /v1/inquiry/first-round-strategy` | `tripProfile.purposeDeclared` | 前端固定文本 | mock | 需要真实申报目的或检索页透传 |
+| `POST /v1/inquiry/first-round-strategy` | `tripProfile.stayDays` | 前端固定天数 | mock | 需要真实行程停留时长 |
+| `POST /v1/inquiry/first-round-strategy` | `tripProfile.ticketType` | 前端固定文本 | mock | 需要真实票务信息 |
+| `POST /v1/inquiry/first-round-strategy` | `tripProfile.returnTicketStatus` | 前端固定文本 | mock | 需要真实返程票状态 |
+| `POST /v1/inquiry/first-round-strategy` | `tripProfile.companions` | 前端固定数组 | mock | 需要真实同行人信息 |
+| `POST /v1/inquiry/first-round-strategy` | `tripProfile.accommodation` | 前端固定文本 | mock | 需要真实住宿或接待信息 |
+| `POST /v1/inquiry/first-round-strategy` | `tripProfile.fundingSource` | 前端固定文本 | mock | 需要真实资金来源信息 |
+| `POST /v1/inquiry/first-round-strategy` | `knownFacts` | 页面 `summary`、`observation`、`tags` 组合 | derived | 后续可接入更完整的风险事实拼装逻辑 |
+| `POST /v1/humanomni/summarize-window` | `file` | 浏览器 `MediaRecorder` 真实录制的 MP4/H.264 片段 | real | 保持真实采样；若浏览器不支持 MP4/H.264，则前端直接报错，不再回退到 webm |
+| `POST /v1/humanomni/summarize-window` | `questionId` | 当前轮首个问题 ID | derived | 后续若支持逐题采样，应切换成真实窗口对应的问题 ID |
+| `POST /v1/humanomni/summarize-window` | `windowId` | 前端本地生成 | derived | 后续若后端统一生成窗口 ID，可由服务端接管 |
+| `POST /v1/humanomni/summarize-window` | `startSeconds / endSeconds` | 以前端本轮采样时长近似填充 | derived | 后续若有逐问题时间线，应改为真实窗口边界 |
+| `POST /v1/inquiry/followup-guidance` | `qaHistory` | 各轮问题 + mock 转写中的受检人回答拼接 | mixed | 问题为 real，回答文本当前来自 mock transcript，后续应改成真实 ASR/人工录入 |
+| `POST /v1/inquiry/followup-guidance` | `humanOmniWindows` | `summarize-window` 接口返回值 | real | 保持真实接口返回 |
+| `POST /v1/inquiry/followup-guidance` | `actionObservations.type / label / description / startSeconds / endSeconds / timeRange / source` | 前端 MediaPipe 实时事件映射 | derived | 当前属于前端规则推导，后续可与统一动作识别模块对齐 |
+| `POST /v1/inquiry/followup-guidance` | `actionObservations.confidence` | 按事件 tone 映射固定阈值 | mock | 后续应改为真实模型置信度或规则评分 |
+| `POST /v1/inquiry/followup-guidance` | `actionObservations.evidence` | 前端仅写入展示时间和事件 tone | mock | 后续应补充更细的 landmarks/规则命中依据 |
+| `POST /v1/inquiry/followup-guidance` | `asr.provider` | `frontend-mock` | mock | 后续接入真实 ASR 提供方 |
+| `POST /v1/inquiry/followup-guidance` | `asr.model` | `frontend-mock-transcript` | mock | 后续接入真实 ASR 模型名 |
+| `POST /v1/inquiry/followup-guidance` | `asr.text` | 当前轮 mock transcript 中的受检人文本拼接 | mock | 后续改为真实 ASR 文本 |
+| `POST /v1/inquiry/followup-guidance` | `asr.segments` | 以前端采样总时长构造单段 segment | mock | 后续改为真实分段时间戳 |
+| `POST /v1/inquiry/followup-guidance` | `asr.words` | 固定空数组 | mock | 后续接入词级时间戳后替换 |
+| `POST /v1/inquiry/followup-guidance` | `constraints.questionCount / tone / language` | 前端固定值（下一轮 3 个问题，`zh-CN`） | derived | 后续可按业务配置中心或页面参数动态下发 |
+
+## 6. 本地联调命令
 
 启动服务：
 
@@ -290,3 +331,45 @@ cd D:\405project\ipra
 & ".\apps\ai-service\.venv\Scripts\python.exe" apps\ai-service\scripts\smoke_first_round_strategy.py --base-url http://127.0.0.1:9000
 & ".\apps\ai-service\.venv\Scripts\python.exe" apps\ai-service\scripts\smoke_followup_guidance.py --base-url http://127.0.0.1:9000
 ```
+
+## 6. 本地业务 LLM 配置
+
+当前业务 LLM 支持两种 provider：
+
+| Provider | 说明 |
+| --- | --- |
+| `mock` | 默认模式，返回稳定测试 JSON，不加载真实大模型 |
+| `transformers_local` | 使用本地 Transformers 加载 Qwen2.5-3B-Instruct |
+
+使用本地 Qwen2.5-3B-Instruct 前，先下载模型：
+
+```powershell
+cd D:\405project\ipra
+& ".\apps\ai-service\.venv\Scripts\python.exe" apps\ai-service\scripts\download_business_llm_qwen25_3b.py --proxy http://127.0.0.1:7897
+```
+
+然后配置环境变量：
+
+```powershell
+$env:BUSINESS_LLM_PROVIDER="transformers_local"
+$env:BUSINESS_LLM_MODEL="Qwen2.5-3B-Instruct"
+$env:BUSINESS_LLM_MODEL_PATH="D:\405project\ipra\models\business-llm\modelscope\Qwen2.5-3B-Instruct"
+$env:BUSINESS_LLM_TIMEOUT_SECONDS="300"
+$env:BUSINESS_LLM_MAX_NEW_TOKENS="768"
+$env:BUSINESS_LLM_TORCH_DTYPE="auto"
+$env:BUSINESS_LLM_DEVICE_MAP="auto"
+```
+
+也可以写入 `.env`：
+
+```text
+BUSINESS_LLM_PROVIDER=transformers_local
+BUSINESS_LLM_MODEL=Qwen2.5-3B-Instruct
+BUSINESS_LLM_MODEL_PATH=../../models/business-llm/modelscope/Qwen2.5-3B-Instruct
+BUSINESS_LLM_TIMEOUT_SECONDS=300
+BUSINESS_LLM_MAX_NEW_TOKENS=768
+BUSINESS_LLM_TORCH_DTYPE=auto
+BUSINESS_LLM_DEVICE_MAP=auto
+```
+
+说明：首次调用业务 LLM 接口时会加载模型，耗时会明显长一些；加载后模型会缓存在当前 AI-Service 进程中，后续请求会复用。
