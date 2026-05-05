@@ -407,7 +407,6 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 
       <div class="hero-card__actions">
         <button class="secondary-action" type="button" @click="exportImportTemplate">
-        <button class="secondary-action" type="button" @click="exportImportTemplate">
           下载模板
         </button>
         <button class="primary-action" type="button" @click="openAskWorkspace">
