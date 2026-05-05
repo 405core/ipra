@@ -113,6 +113,42 @@ PORT=8080
 	}
 }
 
+func TestLoadFallsBackToBackendAppEnvFileWhenRunFromWorkspaceRoot(t *testing.T) {
+	restoreEnv(t)
+	chdirTemp(t)
+
+	if err := os.MkdirAll(filepath.Join("apps", "backend"), 0o755); err != nil {
+		t.Fatalf("MkdirAll apps/backend: %v", err)
+	}
+
+	writeFile(t, filepath.Join("apps", "backend", ".env.local"), `PORT=9100
+DB_HOST=workspace-db
+DB_PORT=5432
+DB_USER=workspace-user
+DB_PASSWORD=workspace-password
+DB_NAME=workspace-name
+DB_SSLMODE=disable
+`)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.Port != "9100" {
+		t.Fatalf("Port = %q, want %q", cfg.Port, "9100")
+	}
+	if cfg.Database.Host != "workspace-db" {
+		t.Fatalf("DB_HOST = %q, want %q", cfg.Database.Host, "workspace-db")
+	}
+	if cfg.Database.User != "workspace-user" {
+		t.Fatalf("DB_USER = %q, want %q", cfg.Database.User, "workspace-user")
+	}
+	if cfg.Database.Name != "workspace-name" {
+		t.Fatalf("DB_NAME = %q, want %q", cfg.Database.Name, "workspace-name")
+	}
+}
+
 func TestLoadReturnsErrorWhenDatabaseConfigMissing(t *testing.T) {
 	restoreEnv(t)
 	chdirTemp(t)

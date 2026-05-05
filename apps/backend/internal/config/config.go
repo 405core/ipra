@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -102,12 +103,21 @@ func (d DatabaseConfig) DSN() string {
 }
 
 func loadEnvFiles(initialEnv map[string]struct{}, appEnv string) error {
-	files := []string{envFileFor(appEnv)}
+	filename := envFileFor(appEnv)
 
-	for _, path := range files {
-		if err := loadEnvFile(path, initialEnv); err != nil {
-			return err
+	for _, path := range candidateEnvPaths(filename) {
+		info, err := os.Stat(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("stat %s: %w", path, err)
 		}
+		if info.IsDir() {
+			continue
+		}
+
+		return loadEnvFile(path, initialEnv)
 	}
 
 	return nil
@@ -122,6 +132,25 @@ func envFileFor(appEnv string) string {
 	default:
 		return fmt.Sprintf(".env.%s", appEnv)
 	}
+}
+
+func candidateEnvPaths(filename string) []string {
+	seen := make(map[string]struct{}, 2)
+	paths := make([]string, 0, 2)
+
+	for _, path := range []string{
+		filename,
+		filepath.Join("apps", "backend", filename),
+	} {
+		clean := filepath.Clean(path)
+		if _, ok := seen[clean]; ok {
+			continue
+		}
+		seen[clean] = struct{}{}
+		paths = append(paths, clean)
+	}
+
+	return paths
 }
 
 func loadEnvFile(path string, initialEnv map[string]struct{}) error {

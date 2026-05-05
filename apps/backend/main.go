@@ -47,6 +47,8 @@ func newRouter(authHandler *auth.Handler, profileHandler *profile.Handler) *gin.
 		})
 	})
 
+	profile.RegisterRoutes(r)
+
 	if authHandler != nil {
 		authHandler.Register(r)
 		if profileHandler != nil {

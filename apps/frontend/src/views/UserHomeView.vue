@@ -65,7 +65,7 @@ const query = ref('');
 const results = ref<PassengerRecord[]>([]);
 const recentSearches = ref<string[]>([]);
 const searchStatus = ref('正在加载最新画像记录...');
-const importStatus = ref('支持 CSV / XLSX，单次最大 20MB。');
+const importStatus = ref('支持 CSV / XLSX，单次最大 20MB。推荐使用系统导出的多 sheet XLSX 模板。');
 const isDropActive = ref(false);
 const isSearching = ref(false);
 const isImporting = ref(false);
@@ -126,6 +126,37 @@ function triggerFileSelection() {
   fileInput.value?.click();
 }
 
+async function exportImportTemplate() {
+  importStatus.value = '正在获取模板文件...';
+
+  try {
+    const response = await fetch('/api/import-templates/passenger-profile.xlsx');
+
+    if (!response.ok) {
+      throw new Error('模板下载失败');
+    }
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const disposition = response.headers.get('Content-Disposition') ?? '';
+    const match = disposition.match(/filename="([^"]+)"/);
+    const filename = match?.[1] ?? 'ipra-passenger-profile-template.xlsx';
+
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    importStatus.value = `模板已导出：${filename}`;
+  } catch (error) {
+    importStatus.value =
+      error instanceof Error ? error.message : '模板下载失败，请稍后重试。';
+  }
+}
+
 async function acceptFile(file: File | null) {
   if (!file) {
     importStatus.value = '未选择文件。';
@@ -166,20 +197,6 @@ async function handleFileChange(event: Event) {
 async function handleDrop(event: DragEvent) {
   isDropActive.value = false;
   await acceptFile(event.dataTransfer?.files?.[0] ?? null);
-}
-
-function downloadTemplate() {
-  const header =
-    'document_type,document_num,issuing_region,full_name,gender,birth_date,nationality,pnr,flight_no,origin,destination,departure_date,purpose_declared,occupation,monthly_income,funding_source,is_high_risk,risk_tags,case_type,case_status,remark\n';
-  const sample =
-    'PASSPORT,E92834102,CN,ZHANG WEI,男,1990-04-12,中国,CX880-LAX,CX880,HKG,LAX,2026-05-18,旅游,销售,不稳定,个人借款,1,"名单重合,异常行程",跨境赌博关联,待核验,示例数据\n';
-  const blob = new Blob([header, sample], { type: 'text/csv;charset=utf-8' });
-  const objectUrl = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = objectUrl;
-  anchor.download = 'passenger_profile_template.csv';
-  anchor.click();
-  URL.revokeObjectURL(objectUrl);
 }
 
 async function reviewRecord(record: PassengerRecord) {
@@ -389,7 +406,8 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
       </div>
 
       <div class="hero-card__actions">
-        <button class="secondary-action" type="button" @click="downloadTemplate">
+        <button class="secondary-action" type="button" @click="exportImportTemplate">
+        <button class="secondary-action" type="button" @click="exportImportTemplate">
           下载模板
         </button>
         <button class="primary-action" type="button" @click="openAskWorkspace">
