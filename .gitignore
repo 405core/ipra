@@ -33,10 +33,12 @@ npm-debug.log
 yarn-error.log
 testem.log
 /typings
+.npm-cache/
 
 # System Files
 .DS_Store
 Thumbs.db
+~$*.docx
 
 .nx/cache
 .nx/workspace-data
@@ -53,6 +55,8 @@ docs/.vitepress/dist/
 
 # local AI/runtime artifacts
 .codex-temp/
+.gocache/
+**/.gocache*/
 models/
 postgres_data/
 apps/ai-service/.venv/
@@ -64,3 +68,6 @@ apps/ai-service/asr-runs/
 apps/ai-service/uploads/
 apps/ai-service/**/__pycache__/
 apps/ai-service/**/*.pyc
+
+# local requirement/reference documents copied for development
+document/

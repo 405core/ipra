@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 	"ipra/backend/internal/auth"
 	"ipra/backend/internal/config"
+	"ipra/backend/internal/inquiry"
 	"ipra/backend/internal/profile"
 )
 
@@ -27,8 +28,9 @@ func main() {
 	tokenManager := auth.NewTokenManager(cfg.Auth.JWTSecret, 24*time.Hour)
 	authHandler := auth.NewHandler(db, tokenManager)
 	profileHandler := profile.NewHandler(db)
+	inquiryHandler := inquiry.NewHandler()
 
-	r := newRouter(authHandler, profileHandler)
+	r := newRouter(authHandler, profileHandler, inquiryHandler)
 
 	addr := ":" + cfg.Port
 	log.Printf("backend listening on %s (%s)", addr, cfg.AppEnv)
@@ -37,7 +39,11 @@ func main() {
 	}
 }
 
-func newRouter(authHandler *auth.Handler, profileHandler *profile.Handler) *gin.Engine {
+func newRouter(
+	authHandler *auth.Handler,
+	profileHandler *profile.Handler,
+	inquiryHandler *inquiry.Handler,
+) *gin.Engine {
 	r := gin.Default()
 
 	r.GET("/api/ping", func(c *gin.Context) {
@@ -48,6 +54,10 @@ func newRouter(authHandler *auth.Handler, profileHandler *profile.Handler) *gin.
 	})
 
 	profile.RegisterRoutes(r)
+
+	if inquiryHandler != nil {
+		inquiryHandler.Register(r)
+	}
 
 	if authHandler != nil {
 		authHandler.Register(r)

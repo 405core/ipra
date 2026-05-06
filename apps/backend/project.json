@@ -7,7 +7,7 @@
     "build": {
       "executor": "@nx-go/nx-go:build",
       "options": {
-        "main": "main.go", 
+        "main": "main.go",
         "outputPath": "../../dist/apps/backend"
       }
     },
@@ -15,6 +15,13 @@
       "executor": "@nx-go/nx-go:serve",
       "options": {
         "main": "main.go"
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "go test ./...",
+        "cwd": "apps/backend"
       }
     }
   },
