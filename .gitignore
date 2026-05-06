@@ -53,6 +53,7 @@ docs/.vitepress/dist/
 
 # local AI/runtime artifacts
 .codex-temp/
+.gocache/
 models/
 postgres_data/
 apps/ai-service/.venv/

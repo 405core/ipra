@@ -7,7 +7,7 @@ import (
 )
 
 func TestPingRoute(t *testing.T) {
-	router := newRouter(nil, nil)
+	router := newRouter(nil, nil, nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/ping", nil)
 	recorder := httptest.NewRecorder()
 
@@ -19,8 +19,12 @@ func TestPingRoute(t *testing.T) {
 }
 
 func TestImportTemplateRoute(t *testing.T) {
-	router := newRouter(nil)
-	req := httptest.NewRequest(http.MethodGet, "/api/import-templates/passenger-profile.xlsx", nil)
+	router := newRouter(nil, nil, nil)
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/api/import-templates/passenger-profile.xlsx",
+		nil,
+	)
 	recorder := httptest.NewRecorder()
 
 	router.ServeHTTP(recorder, req)
@@ -29,7 +33,11 @@ func TestImportTemplateRoute(t *testing.T) {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
 	}
 	if contentType := recorder.Header().Get("Content-Type"); contentType != "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" {
-		t.Fatalf("Content-Type = %q, want %q", contentType, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+		t.Fatalf(
+			"Content-Type = %q, want %q",
+			contentType,
+			"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		)
 	}
 	if disposition := recorder.Header().Get("Content-Disposition"); disposition == "" {
 		t.Fatal("Content-Disposition header is empty")

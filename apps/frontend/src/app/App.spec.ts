@@ -101,10 +101,14 @@ describe('App', () => {
 
     const wrapper = await mountAt('/management');
 
-    expect(wrapper.get('[data-testid="global-watermark"]').text()).toContain('张测试');
-    expect(wrapper.get('[data-testid="global-watermark"]').text()).toContain('A-2048');
     expect(wrapper.get('[data-testid="global-watermark"]').text()).toContain(
-      formatWatermarkTimestamp(currentTime.getTime())
+      '张测试',
+    );
+    expect(wrapper.get('[data-testid="global-watermark"]').text()).toContain(
+      'A-2048',
+    );
+    expect(wrapper.get('[data-testid="global-watermark"]').text()).toContain(
+      formatWatermarkTimestamp(currentTime.getTime()),
     );
   });
 
@@ -113,7 +117,9 @@ describe('App', () => {
 
     const wrapper = await mountAt('/login');
 
-    expect(wrapper.find('[data-testid="global-watermark"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="global-watermark"]').exists()).toBe(
+      false,
+    );
   });
 
   it('refreshes the timestamp every second', async () => {
@@ -130,9 +136,13 @@ describe('App', () => {
 
     const afterText = wrapper.get('[data-testid="global-watermark"]').text();
 
-    expect(beforeText).toContain(formatWatermarkTimestamp(initialTime.getTime()));
+    expect(beforeText).toContain(
+      formatWatermarkTimestamp(initialTime.getTime()),
+    );
     expect(afterText).toContain(formatWatermarkTimestamp(nextTime.getTime()));
-    expect(afterText).not.toContain(formatWatermarkTimestamp(initialTime.getTime()));
+    expect(afterText).not.toContain(
+      formatWatermarkTimestamp(initialTime.getTime()),
+    );
   });
 
   it('keeps the overlay click-through for underlying actions', async () => {
@@ -142,9 +152,11 @@ describe('App', () => {
 
     await wrapper.get('[data-testid="secured-action"]').trigger('click');
 
-    expect(wrapper.get('[data-testid="secured-action"]').text()).toContain('Action 1');
-    expect(wrapper.get('[data-testid="global-watermark"]').attributes('style')).toContain(
-      'pointer-events: none;'
+    expect(wrapper.get('[data-testid="secured-action"]').text()).toContain(
+      'Action 1',
     );
+    expect(
+      wrapper.get('[data-testid="global-watermark"]').attributes('style'),
+    ).toContain('pointer-events: none;');
   });
 });
