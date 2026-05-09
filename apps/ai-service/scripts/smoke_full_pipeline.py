@@ -17,7 +17,7 @@ DEFAULT_REPORT_DIR = AI_SERVICE_ROOT / "window-runs"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run a full AI-Service pipeline smoke test: mock JSON -> HumanOmni summary -> followup guidance."
+        description="Run a full AI-Service pipeline smoke test: sample JSON -> HumanOmni summary -> followup guidance."
     )
     parser.add_argument("--base-url", default="http://127.0.0.1:9000")
     parser.add_argument("--video-path", default=str(DEFAULT_VIDEO_PATH))

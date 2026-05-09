@@ -87,7 +87,7 @@ def main() -> int:
     print(f"vendor: {settings.vendor_root}")
     print(f"HF_HOME:{settings.hf_home}")
     print(f"HF offline mode: {settings.hf_offline}")
-    business_provider = os.getenv("BUSINESS_LLM_PROVIDER", "mock") or "mock"
+    business_provider = os.getenv("BUSINESS_LLM_PROVIDER", "transformers_local") or "transformers_local"
     print(f"business LLM provider: {business_provider}")
     print()
 
