@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -15,6 +15,7 @@ from schemas.inquiry import (
 from services.business_llm_client import BusinessLlmClient, load_prompt
 from services.business_llm_client import BusinessLlmError
 from services.humanomni_window import summarize_uploaded_window
+from services.iflytek_realtime_asr import bridge_iflytek_realtime_asr
 
 
 class HealthResponse(BaseModel):
@@ -93,3 +94,8 @@ def followup_guidance(request: FollowupGuidanceRequest) -> FollowupGuidanceRespo
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.websocket("/v1/asr/iflytek/realtime")
+async def iflytek_realtime_asr(websocket: WebSocket) -> None:
+    await bridge_iflytek_realtime_asr(websocket)
