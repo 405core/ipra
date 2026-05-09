@@ -37,6 +37,11 @@ type TranscriptRole = 'system' | 'interviewer' | 'subject';
 type SamplingPhase = 'idle' | 'active' | 'ended' | 'error';
 type RoundUploadState = 'idle' | 'uploading' | 'uploaded' | 'error';
 type FinalJudgement = 'concealment' | 'falseStatement' | 'clear';
+type StageLoadingMode =
+  | 'strategy'
+  | 'samplingUpload'
+  | 'nextRound'
+  | 'judgementBriefing';
 type CVoiceRecorderPhase =
   | 'idle'
   | 'recording'
@@ -115,6 +120,13 @@ interface StageItem {
   id: WorkflowStage;
   label: string;
   helper: string;
+}
+
+interface StageLoadingContent {
+  eyebrow: string;
+  title: string;
+  detail: string;
+  phrases: string[];
 }
 
 interface FollowUpTheme {
@@ -223,6 +235,53 @@ const workflowStages: StageItem[] = [
     helper: '给出最终判定并归档',
   },
 ];
+
+const stageLoadingContent: Record<StageLoadingMode, StageLoadingContent> = {
+  strategy: {
+    eyebrow: 'Strategy Engine',
+    title: '正在生成首轮策略',
+    detail: 'AI-Service 正在整合画像、风险标签和输出约束。',
+    phrases: [
+      '正在读取旅客画像',
+      '正在校准风险标签',
+      '正在组织首轮问题包',
+      '正在生成工作人员提示',
+    ],
+  },
+  samplingUpload: {
+    eyebrow: 'Sampling Window',
+    title: '正在整理本轮采样',
+    detail: '系统正在停止录制、汇总转写，并上传音视频窗口摘要。',
+    phrases: [
+      '正在封装音视频片段',
+      '正在提取本轮问询线索',
+      '正在上传 HumanOmni 窗口',
+      '正在等待多模态摘要返回',
+    ],
+  },
+  nextRound: {
+    eyebrow: 'Follow-up Guidance',
+    title: '正在生成下一轮追问',
+    detail: '系统正在结合本轮摘要和历史线索，整理下一轮问询重点。',
+    phrases: [
+      '正在读取本轮摘要',
+      '正在比对风险缺口',
+      '正在生成追问问题',
+      '正在更新轮次焦点',
+    ],
+  },
+  judgementBriefing: {
+    eyebrow: 'Human Review',
+    title: '正在整理人审前摘要',
+    detail: 'AI-Service 正在生成多模态辅助线索，供检查员最终判定。',
+    phrases: [
+      '正在归并多轮采样证据',
+      '正在提炼风险提示',
+      '正在生成判定辅助摘要',
+      '正在准备人工复核材料',
+    ],
+  },
+};
 
 const strategyBlueprints = [
   {
@@ -485,6 +544,8 @@ const judgementBriefing = ref<JudgementBriefing | null>(null);
 const isArchived = ref(false);
 const archivedAt = ref('');
 const archiveCode = ref('IPRA-ASK-20260503-014');
+const stageLoadingMode = ref<StageLoadingMode | null>(null);
+const stageLoadingPhraseIndex = ref(0);
 const cMaxRounds = ref(3);
 const cSession = ref<CInquirySessionPayload | null>(null);
 const cTurnResponse = ref<CInquiryTurnResponse | null>(null);
@@ -529,6 +590,7 @@ let cVoiceMimeType = '';
 let cVoiceStartedAt = 0;
 let cVoiceTimerId: number | null = null;
 let cVoiceDiscardRecording = false;
+let stageLoadingTimerId: number | null = null;
 const MP4_H264_MIME_TYPES = [
   'video/mp4;codecs=avc1.64001F,mp4a.40.2',
   'video/mp4;codecs=avc1.4D401F,mp4a.40.2',
@@ -612,6 +674,21 @@ const canArchive = computed(
 const stageCardKey = computed(() =>
   isArchived.value ? 'judgement-archived' : currentStage.value,
 );
+
+const activeStageLoading = computed(() =>
+  stageLoadingMode.value ? stageLoadingContent[stageLoadingMode.value] : null,
+);
+
+const activeStageLoadingPhrase = computed(() => {
+  const loading = activeStageLoading.value;
+  if (!loading) {
+    return '';
+  }
+
+  return loading.phrases[
+    stageLoadingPhraseIndex.value % loading.phrases.length
+  ];
+});
 
 const samplingPhaseLabel = computed(() => {
   switch (samplingState.value.phase) {
@@ -1310,6 +1387,32 @@ function clearTranscriptTimers() {
   transcriptTimeoutIds = [];
 }
 
+function clearStageLoadingTimer() {
+  if (stageLoadingTimerId !== null) {
+    window.clearInterval(stageLoadingTimerId);
+    stageLoadingTimerId = null;
+  }
+}
+
+function openStageLoading(mode: StageLoadingMode) {
+  stageLoadingMode.value = mode;
+  stageLoadingPhraseIndex.value = 0;
+  clearStageLoadingTimer();
+  stageLoadingTimerId = window.setInterval(() => {
+    stageLoadingPhraseIndex.value += 1;
+  }, 1400);
+}
+
+function closeStageLoading(mode?: StageLoadingMode) {
+  if (mode && stageLoadingMode.value !== mode) {
+    return;
+  }
+
+  stageLoadingMode.value = null;
+  stageLoadingPhraseIndex.value = 0;
+  clearStageLoadingTimer();
+}
+
 function stopElapsedTimer() {
   if (elapsedIntervalId !== null) {
     window.clearInterval(elapsedIntervalId);
@@ -1649,6 +1752,7 @@ async function generateStrategy() {
 
   isGeneratingStrategy.value = true;
   strategyRequestError.value = '';
+  openStageLoading('strategy');
 
   try {
     const response = await requestFirstRoundStrategy({
@@ -1679,6 +1783,7 @@ async function generateStrategy() {
     );
   } finally {
     isGeneratingStrategy.value = false;
+    closeStageLoading('strategy');
   }
 }
 
@@ -1777,6 +1882,7 @@ async function endSampling() {
 
   isEndingSampling.value = true;
   roundServiceError.value = '';
+  openStageLoading('samplingUpload');
 
   const collectedDuration = Math.max(1, samplingState.value.elapsedSeconds);
   const capturedEvents = [...realtimeDetection.value.events];
@@ -1809,6 +1915,7 @@ async function endSampling() {
     round.uploadErrorMessage = '本轮未采集到可用转写内容，请重新采样。';
     roundServiceError.value = round.uploadErrorMessage;
     isEndingSampling.value = false;
+    closeStageLoading('samplingUpload');
     return;
   }
 
@@ -1819,6 +1926,7 @@ async function endSampling() {
       '未生成可上传的音视频片段，请检查浏览器录制能力后重试。';
     roundServiceError.value = round.uploadErrorMessage;
     isEndingSampling.value = false;
+    closeStageLoading('samplingUpload');
     return;
   }
 
@@ -1843,6 +1951,7 @@ async function endSampling() {
     roundServiceError.value = round.uploadErrorMessage;
   } finally {
     isEndingSampling.value = false;
+    closeStageLoading('samplingUpload');
   }
 }
 
@@ -1854,6 +1963,7 @@ async function enterNextRound() {
 
   isRequestingGuidance.value = true;
   roundServiceError.value = '';
+  openStageLoading('nextRound');
 
   try {
     const nextRoundNumber = round.roundNumber + 1;
@@ -1881,6 +1991,7 @@ async function enterNextRound() {
     );
   } finally {
     isRequestingGuidance.value = false;
+    closeStageLoading('nextRound');
   }
 }
 
@@ -1900,6 +2011,7 @@ async function enterJudgementStage() {
 
   isRequestingGuidance.value = true;
   roundServiceError.value = '';
+  openStageLoading('judgementBriefing');
 
   try {
     const response = await requestFollowupGuidance(
@@ -1921,6 +2033,7 @@ async function enterJudgementStage() {
     );
   } finally {
     isRequestingGuidance.value = false;
+    closeStageLoading('judgementBriefing');
   }
 }
 
@@ -2298,6 +2411,7 @@ function resetCVoiceRecording() {
 onBeforeUnmount(() => {
   stopSamplingResources();
   stopCVoiceRuntime();
+  closeStageLoading();
 });
 </script>
 
@@ -2548,9 +2662,9 @@ onBeforeUnmount(() => {
           <div class="stage-card__progress-head">
             <div>
               <p class="section-eyebrow">Progress Track</p>
-              <h4>三阶段流程锁定推进</h4>
+              <h4>三阶段流程</h4>
             </div>
-            <span class="progress-note">仅完成上一阶段后才会解锁下一阶段</span>
+            <span class="progress-note">上一阶段完成后解锁下一阶段</span>
           </div>
 
           <div class="progress-track">
@@ -2560,16 +2674,14 @@ onBeforeUnmount(() => {
               class="progress-step"
               :class="`is-${stageStatus(stage.id)}`"
             >
-              <div class="progress-step__top">
-                <span class="progress-step__index">{{ index + 1 }}</span>
-                <span class="progress-step__state">{{
-                  stageStatusLabel(stage.id)
-                }}</span>
-              </div>
+              <span class="progress-step__index">{{ index + 1 }}</span>
               <div class="progress-step__copy">
                 <strong>{{ stage.label }}</strong>
                 <p>{{ stage.helper }}</p>
               </div>
+              <span class="progress-step__state">{{
+                stageStatusLabel(stage.id)
+              }}</span>
             </article>
           </div>
         </div>
@@ -2580,7 +2692,7 @@ onBeforeUnmount(() => {
               <p class="section-eyebrow">Stage 01</p>
               <h3>首轮策略生成</h3>
               <p class="section-copy">
-                先读取当前对象画像，再生成首轮问题包。只有生成问题后，才能进入后续问询采样阶段。
+                读取对象画像并生成首轮问题包，完成后解锁采样问询。
               </p>
             </div>
 
@@ -2596,7 +2708,7 @@ onBeforeUnmount(() => {
           </header>
 
           <div class="strategy-layout">
-            <section class="profile-panel">
+            <section class="profile-panel profile-panel--compact">
               <div class="profile-panel__identity">
                 <div class="profile-avatar">{{ passengerProfile.alias }}</div>
                 <div>
@@ -2632,7 +2744,10 @@ onBeforeUnmount(() => {
                 </div>
               </div>
 
-              <p class="profile-summary">{{ passengerProfile.summary }}</p>
+              <div class="profile-insight">
+                <span class="meta-label">风险摘要</span>
+                <p class="profile-summary">{{ passengerProfile.summary }}</p>
+              </div>
 
               <div class="tag-row">
                 <span
@@ -2672,7 +2787,7 @@ onBeforeUnmount(() => {
 
               <div
                 v-if="strategyRiskAssessment || strategyOperatorNote"
-                class="summary-stack"
+                class="summary-stack summary-stack--dense"
               >
                 <div v-if="strategyRiskAssessment" class="summary-item">
                   <span class="meta-label">风险预评估</span>
@@ -2720,7 +2835,10 @@ onBeforeUnmount(() => {
                 </div>
               </div>
 
-              <div v-if="strategyGenerated" class="question-list">
+              <div
+                v-if="strategyGenerated"
+                class="question-list question-list--scroll"
+              >
                 <article
                   v-for="question in generatedQuestions"
                   :key="question.id"
@@ -2750,21 +2868,17 @@ onBeforeUnmount(() => {
                 <button
                   class="primary-action"
                   type="button"
-                  :disabled="isGeneratingStrategy"
+                  :disabled="
+                    isGeneratingStrategy || Boolean(activeStageLoading)
+                  "
                   @click="generateStrategy"
                 >
-                  {{
-                    isGeneratingStrategy
-                      ? '生成中...'
-                      : strategyGenerated
-                        ? '重新生成策略'
-                        : '生成策略'
-                  }}
+                  {{ strategyGenerated ? '重新生成策略' : '生成策略' }}
                 </button>
                 <button
                   class="secondary-action"
                   type="button"
-                  :disabled="!canEnterInterview"
+                  :disabled="!canEnterInterview || Boolean(activeStageLoading)"
                   @click="enterInterviewStage"
                 >
                   进入继续
@@ -2780,9 +2894,8 @@ onBeforeUnmount(() => {
               <p class="section-eyebrow">Stage 02</p>
               <h3>智能辅助问询</h3>
               <p class="section-copy">
-                当前阶段支持真实摄像头与话筒采样，语音转文字仍由前端 mock
-                脚本流实时注入；结束采样后会把本轮真实音视频窗口上传到
-                AI-Service，并用返回结果驱动下一轮追问和人审前摘要。
+                真实媒体采样与 mock
+                转写同步展示，结束后上传窗口摘要并驱动下一轮。
               </p>
             </div>
 
@@ -2800,7 +2913,7 @@ onBeforeUnmount(() => {
           </header>
 
           <div v-if="currentRound" class="interview-layout">
-            <section class="video-panel">
+            <section class="video-panel video-panel--capture">
               <div class="video-panel__head">
                 <div>
                   <p class="section-eyebrow">Live Capture</p>
@@ -2811,6 +2924,37 @@ onBeforeUnmount(() => {
                     samplingState.permissionGranted
                       ? '媒体权限已授权'
                       : '等待授权'
+                  }}
+                </span>
+              </div>
+
+              <div class="capture-toolbar">
+                <button
+                  class="primary-action capture-action"
+                  :class="{ 'is-recording': samplingState.phase === 'active' }"
+                  type="button"
+                  :disabled="
+                    samplingState.phase === 'active'
+                      ? isEndingSampling
+                      : !canStartSampling
+                  "
+                  @click="
+                    samplingState.phase === 'active'
+                      ? endSampling()
+                      : startSampling()
+                  "
+                >
+                  {{
+                    samplingState.phase === 'active' ? '结束采样' : '开始采样'
+                  }}
+                </button>
+                <span class="capture-toolbar__hint">
+                  {{
+                    samplingState.phase === 'active'
+                      ? `采样中 · ${formatDuration(samplingState.elapsedSeconds)}`
+                      : samplingState.phase === 'ended'
+                        ? '本轮采样已完成'
+                        : '等待开始采样'
                   }}
                 </span>
               </div>
@@ -3051,32 +3195,9 @@ onBeforeUnmount(() => {
                   MP4/H.264。
                 </p>
               </div>
-
-              <div class="action-row action-row--split">
-                <button
-                  class="primary-action"
-                  type="button"
-                  :disabled="!canStartSampling"
-                  @click="startSampling"
-                >
-                  {{
-                    samplingState.phase === 'active' ? '采样进行中' : '开始采样'
-                  }}
-                </button>
-                <button
-                  class="secondary-action"
-                  type="button"
-                  :disabled="
-                    samplingState.phase !== 'active' || isEndingSampling
-                  "
-                  @click="endSampling"
-                >
-                  {{ isEndingSampling ? '结束采样中...' : '结束采样' }}
-                </button>
-              </div>
             </section>
 
-            <section class="transcript-panel">
+            <section class="transcript-panel transcript-panel--round">
               <div class="transcript-panel__head">
                 <div>
                   <p class="section-eyebrow">Round Focus</p>
@@ -3087,7 +3208,49 @@ onBeforeUnmount(() => {
 
               <p class="workspace-summary">{{ currentRound.strategyNote }}</p>
 
-              <div class="current-questions">
+              <div class="round-actions round-actions--compact">
+                <div class="round-actions__copy">
+                  <strong>{{
+                    currentRound.completed ? '本轮已完成' : '本轮未完成'
+                  }}</strong>
+                  <span>
+                    {{
+                      currentRound.completed
+                        ? currentRound.summary ||
+                          '本轮已结束，等待窗口摘要上传完成后解锁下一步。'
+                        : '完成采样并等待摘要上传后，可解锁下一轮或进入人工判断。'
+                    }}
+                  </span>
+                </div>
+
+                <div class="action-row">
+                  <button
+                    class="secondary-action"
+                    type="button"
+                    :disabled="!canAdvanceRound || Boolean(activeStageLoading)"
+                    @click="enterNextRound"
+                  >
+                    进入下一轮
+                  </button>
+                  <button
+                    class="primary-action"
+                    type="button"
+                    :disabled="
+                      !canEnterJudgement || Boolean(activeStageLoading)
+                    "
+                    @click="enterJudgementStage"
+                  >
+                    进入人工辅助判断
+                  </button>
+                </div>
+              </div>
+
+              <div class="panel-subhead">
+                <strong>当前问题</strong>
+                <span>{{ currentRound.questions.length }} 条</span>
+              </div>
+
+              <div class="current-questions current-questions--scroll">
                 <article
                   v-for="question in currentRound.questions"
                   :key="question.id"
@@ -3099,7 +3262,12 @@ onBeforeUnmount(() => {
                 </article>
               </div>
 
-              <div class="transcript-stream">
+              <div class="panel-subhead">
+                <strong>实时转写</strong>
+                <span>{{ currentRound.transcripts.length }} 条</span>
+              </div>
+
+              <div class="transcript-stream transcript-stream--compact">
                 <article
                   v-for="entry in currentRound.transcripts"
                   :key="entry.id"
@@ -3128,7 +3296,9 @@ onBeforeUnmount(() => {
                 {{ samplingState.errorMessage }}
               </div>
 
-              <div class="summary-stack summary-stack--compact">
+              <div
+                class="summary-stack summary-stack--compact round-summary-stack"
+              >
                 <div class="summary-item">
                   <span class="meta-label">窗口上传</span>
                   <div class="summary-item__inline">
@@ -3169,47 +3339,6 @@ onBeforeUnmount(() => {
 
               <div v-if="roundServiceError" class="inline-alert">
                 {{ roundServiceError }}
-              </div>
-
-              <div class="round-actions">
-                <div class="round-actions__copy">
-                  <strong>{{
-                    currentRound.completed ? '本轮已完成' : '本轮未完成'
-                  }}</strong>
-                  <span>
-                    {{
-                      currentRound.completed
-                        ? currentRound.summary ||
-                          '本轮已结束，等待窗口摘要上传完成后解锁下一步。'
-                        : '请先完成采样并结束本轮，随后等待窗口摘要上传完成，才能解锁下一轮或进入人工辅助判断。'
-                    }}
-                  </span>
-                </div>
-
-                <div class="action-row">
-                  <button
-                    class="secondary-action"
-                    type="button"
-                    :disabled="!canAdvanceRound"
-                    @click="enterNextRound"
-                  >
-                    {{
-                      isRequestingGuidance ? '生成下一轮中...' : '进入下一轮'
-                    }}
-                  </button>
-                  <button
-                    class="primary-action"
-                    type="button"
-                    :disabled="!canEnterJudgement"
-                    @click="enterJudgementStage"
-                  >
-                    {{
-                      isRequestingGuidance
-                        ? '整理摘要中...'
-                        : '进入人工辅助判断'
-                    }}
-                  </button>
-                </div>
               </div>
             </section>
           </div>
@@ -3272,9 +3401,7 @@ onBeforeUnmount(() => {
               <p class="section-eyebrow">Stage 03</p>
               <h3>人工辅助判断</h3>
               <p class="section-copy">
-                第二阶段问询达到要求后，最终判定必须由检查员完成。页面会展示
-                AI-Service
-                汇总的多模态摘要作为辅助线索，但最终结论仍需由检查员负责。
+                AI-Service 摘要作为辅助线索，最终结论由检查员判定并归档。
               </p>
             </div>
 
@@ -3287,7 +3414,7 @@ onBeforeUnmount(() => {
           </header>
 
           <div class="judgement-layout">
-            <section class="workspace-panel">
+            <section class="workspace-panel workspace-panel--judgement">
               <div class="workspace-panel__head">
                 <div>
                   <p class="section-eyebrow">Decision</p>
@@ -3341,7 +3468,7 @@ onBeforeUnmount(() => {
               </div>
             </section>
 
-            <section class="profile-panel">
+            <section class="profile-panel digest-panel">
               <div class="workspace-panel__head">
                 <div>
                   <p class="section-eyebrow">AI-Service Digest</p>
@@ -3352,20 +3479,22 @@ onBeforeUnmount(() => {
                 }}</span>
               </div>
 
-              <div v-if="judgementBriefing" class="summary-stack">
-                <div class="summary-item">
-                  <span class="meta-label">对象</span>
-                  <strong
-                    >{{ passengerProfile.name }} /
-                    {{ passengerProfile.documentId }}</strong
-                  >
-                </div>
-                <div class="summary-item">
-                  <span class="meta-label">已完成轮次</span>
-                  <strong
-                    >{{ completedRounds.length }} 轮 ·
-                    {{ formatDuration(totalSampleDuration) }}</strong
-                  >
+              <div v-if="judgementBriefing" class="summary-stack digest-stack">
+                <div class="digest-kpis">
+                  <div class="summary-item">
+                    <span class="meta-label">对象</span>
+                    <strong
+                      >{{ passengerProfile.name }} /
+                      {{ passengerProfile.documentId }}</strong
+                    >
+                  </div>
+                  <div class="summary-item">
+                    <span class="meta-label">已完成轮次</span>
+                    <strong
+                      >{{ completedRounds.length }} 轮 ·
+                      {{ formatDuration(totalSampleDuration) }}</strong
+                    >
+                  </div>
                 </div>
                 <div class="summary-item">
                   <span class="meta-label">AI 综合摘要</span>
@@ -3503,6 +3632,41 @@ onBeforeUnmount(() => {
           </div>
         </template>
       </article>
+    </Transition>
+
+    <Transition name="stage-loading">
+      <div
+        v-if="activeStageLoading"
+        class="stage-loading"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="activeStageLoading.title"
+      >
+        <div class="stage-loading__panel" role="status" aria-live="polite">
+          <div class="stage-loading__visual" aria-hidden="true">
+            <span class="stage-loading__ring"></span>
+            <span class="stage-loading__core"></span>
+            <span class="stage-loading__spark stage-loading__spark--a"></span>
+            <span class="stage-loading__spark stage-loading__spark--b"></span>
+            <span class="stage-loading__spark stage-loading__spark--c"></span>
+          </div>
+
+          <div class="stage-loading__copy">
+            <p class="section-eyebrow">{{ activeStageLoading.eyebrow }}</p>
+            <h4>{{ activeStageLoading.title }}</h4>
+            <p>{{ activeStageLoading.detail }}</p>
+          </div>
+
+          <div class="stage-loading__phrase">
+            <span :key="activeStageLoadingPhrase">
+              {{ activeStageLoadingPhrase }}
+            </span>
+            <i aria-hidden="true"></i>
+            <i aria-hidden="true"></i>
+            <i aria-hidden="true"></i>
+          </div>
+        </div>
+      </div>
     </Transition>
   </section>
 </template>
@@ -3683,6 +3847,15 @@ onBeforeUnmount(() => {
   color: var(--text-main);
 }
 
+.stage-card h3 {
+  font-size: 1.18rem;
+}
+
+.stage-card__head {
+  align-items: center;
+  padding-bottom: 2px;
+}
+
 .section-eyebrow,
 .meta-label {
   display: block;
@@ -3709,12 +3882,12 @@ onBeforeUnmount(() => {
 .empty-panel span,
 .video-stage__placeholder span {
   color: var(--text-muted);
-  line-height: 1.6;
+  line-height: 1.48;
 }
 
 .section-copy {
-  margin-top: 14px;
-  max-width: 760px;
+  margin-top: 6px;
+  max-width: 680px;
 }
 
 .workflow-hero__meta,
@@ -3738,8 +3911,8 @@ onBeforeUnmount(() => {
 .judgement-pill {
   display: inline-flex;
   align-items: center;
-  min-height: 36px;
-  padding: 0 14px;
+  min-height: 32px;
+  padding: 0 12px;
   border-radius: 999px;
   font-size: 0.82rem;
   font-weight: 700;
@@ -3764,45 +3937,48 @@ onBeforeUnmount(() => {
 }
 
 .stage-card {
-  --stage-card-padding: 28px;
+  --stage-card-padding: 20px;
+  position: relative;
   padding: var(--stage-card-padding);
   display: grid;
-  gap: 24px;
-  min-height: 740px;
+  gap: 16px;
+  min-height: 0;
 }
 
 .stage-card__progress {
   margin: calc(var(--stage-card-padding) * -1)
     calc(var(--stage-card-padding) * -1) 0;
-  padding: 22px var(--stage-card-padding) 20px;
+  padding: 14px var(--stage-card-padding);
   border-bottom: 1px solid rgba(157, 189, 202, 0.24);
   background:
     linear-gradient(
       180deg,
-      rgba(230, 244, 248, 0.9),
+      rgba(230, 244, 248, 0.82),
       rgba(255, 255, 255, 0.72)
     ),
     rgba(248, 252, 253, 0.94);
 }
 
 .stage-card__progress-head h4 {
-  font-size: 1.1rem;
+  font-size: 1rem;
 }
 
 .progress-track {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
-  margin-top: 18px;
+  gap: 10px;
+  margin-top: 12px;
 }
 
 .progress-step {
   position: relative;
   display: grid;
-  gap: 12px;
-  min-height: 128px;
-  padding: 18px 16px 16px;
-  border-radius: 22px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 68px;
+  padding: 10px 12px;
+  border-radius: 16px;
   background: rgba(255, 255, 255, 0.54);
   border: 1px solid rgba(157, 189, 202, 0.26);
 }
@@ -3810,11 +3986,12 @@ onBeforeUnmount(() => {
 .progress-step::after {
   content: '';
   position: absolute;
-  top: 38px;
-  left: calc(100% - 6px);
-  width: 20px;
+  top: 50%;
+  left: calc(100% - 3px);
+  width: 10px;
   height: 2px;
   background: rgba(157, 189, 202, 0.42);
+  transform: translateY(-50%);
 }
 
 .progress-step:last-child::after {
@@ -3831,27 +4008,37 @@ onBeforeUnmount(() => {
 .progress-step__index {
   display: grid;
   place-items: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 14px;
+  width: 32px;
+  height: 32px;
+  border-radius: 11px;
   background: rgba(11, 114, 136, 0.08);
   color: var(--accent-strong);
   font-weight: 800;
+  font-size: 0.92rem;
 }
 
 .progress-step__copy strong {
   display: block;
+  overflow: hidden;
   color: var(--text-main);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .progress-step__copy p {
-  margin-top: 4px;
+  margin-top: 2px;
+  overflow: hidden;
+  font-size: 0.8rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .progress-step__state {
+  align-self: start;
   font-size: 0.78rem;
   font-weight: 700;
   color: var(--text-muted);
+  white-space: nowrap;
 }
 
 .progress-step.is-active {
@@ -3861,7 +4048,7 @@ onBeforeUnmount(() => {
     rgba(255, 255, 255, 0.98)
   );
   border-color: rgba(11, 114, 136, 0.28);
-  box-shadow: 0 16px 30px rgba(11, 114, 136, 0.12);
+  box-shadow: 0 10px 22px rgba(11, 114, 136, 0.1);
 }
 
 .progress-step.is-active .progress-step__index {
@@ -3906,7 +4093,7 @@ onBeforeUnmount(() => {
 .judgement-layout,
 .completion-layout {
   display: grid;
-  gap: 20px;
+  gap: 14px;
 }
 
 .profile-panel,
@@ -3918,7 +4105,7 @@ onBeforeUnmount(() => {
 .timeline-strip,
 .analysis-column,
 .completion-panel {
-  border-radius: 24px;
+  border-radius: 18px;
   background: var(--surface-subtle);
   border: 1px solid rgba(157, 189, 202, 0.26);
 }
@@ -3929,14 +4116,17 @@ onBeforeUnmount(() => {
 .transcript-panel,
 .history-panel,
 .analysis-column {
-  padding: 22px;
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  padding: 16px;
 }
 
 .video-panel,
 .sampling-console,
 .audio-meter {
   display: grid;
-  gap: 18px;
+  gap: 12px;
 }
 
 .profile-panel__identity,
@@ -3950,22 +4140,22 @@ onBeforeUnmount(() => {
 .profile-panel__identity {
   grid-template-columns: auto 1fr;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
 }
 
 .profile-avatar {
   display: grid;
   place-items: center;
-  width: 68px;
-  height: 68px;
-  border-radius: 22px;
+  width: 54px;
+  height: 54px;
+  border-radius: 16px;
   background: linear-gradient(
     135deg,
     rgba(11, 114, 136, 0.16),
     rgba(32, 168, 197, 0.24)
   );
   color: var(--accent-strong);
-  font-size: 1.05rem;
+  font-size: 0.96rem;
   font-weight: 800;
 }
 
@@ -3980,8 +4170,23 @@ onBeforeUnmount(() => {
 
 .profile-grid {
   display: grid;
-  gap: 14px;
-  margin-top: 18px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 0;
+}
+
+.profile-grid div,
+.profile-insight {
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(157, 189, 202, 0.16);
+}
+
+.profile-insight {
+  display: grid;
+  gap: 4px;
 }
 
 .profile-grid strong,
@@ -3999,11 +4204,11 @@ onBeforeUnmount(() => {
 }
 
 .profile-summary {
-  margin-top: 18px;
+  margin: 0;
 }
 
 .workspace-summary {
-  margin-top: 12px;
+  margin-top: 4px;
 }
 
 .question-list,
@@ -4012,17 +4217,29 @@ onBeforeUnmount(() => {
 .history-list,
 .summary-stack {
   display: grid;
-  gap: 14px;
+  gap: 10px;
 }
 
 .summary-stack--compact {
-  margin-top: 14px;
+  margin-top: 8px;
+}
+
+.summary-stack--dense {
+  gap: 8px;
+}
+
+.stage-card .summary-item {
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(157, 189, 202, 0.16);
 }
 
 .question-item,
 .question-brief {
-  padding: 16px;
-  border-radius: 18px;
+  padding: 12px;
+  border-radius: 14px;
   background: #ffffff;
   border: 1px solid rgba(157, 189, 202, 0.24);
 }
@@ -4046,28 +4263,67 @@ onBeforeUnmount(() => {
   color: var(--text-muted);
 }
 
+.question-list--scroll,
+.current-questions--scroll,
+.digest-stack,
+.history-list {
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.current-questions--scroll {
+  max-height: 260px;
+}
+
+.digest-stack {
+  max-height: 500px;
+}
+
+.round-summary-stack {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.panel-subhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 2px;
+}
+
+.panel-subhead strong {
+  color: var(--text-main);
+}
+
+.panel-subhead span {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
 .empty-panel {
   display: grid;
   gap: 8px;
   place-items: center;
-  min-height: 220px;
-  padding: 24px;
+  min-height: 148px;
+  padding: 18px;
   text-align: center;
-  border-radius: 24px;
+  border-radius: 18px;
   border: 1px dashed rgba(11, 114, 136, 0.24);
   background: rgba(255, 255, 255, 0.76);
 }
 
 .empty-panel--compact {
-  min-height: 160px;
+  min-height: 104px;
 }
 
 .primary-action,
 .secondary-action,
 .verdict-button {
-  min-height: 46px;
-  padding: 0 18px;
-  border-radius: 14px;
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 12px;
   font-weight: 700;
   cursor: pointer;
   transition:
@@ -4120,12 +4376,12 @@ onBeforeUnmount(() => {
 .tag-chip {
   display: inline-flex;
   align-items: center;
-  min-height: 34px;
-  padding: 0 12px;
+  min-height: 28px;
+  padding: 0 10px;
   border-radius: 999px;
   background: rgba(91, 113, 121, 0.09);
   color: var(--text-main);
-  font-size: 0.84rem;
+  font-size: 0.8rem;
   font-weight: 600;
 }
 
@@ -4133,10 +4389,37 @@ onBeforeUnmount(() => {
   cursor: default;
 }
 
+.capture-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(157, 189, 202, 0.18);
+}
+
+.capture-action {
+  min-width: 128px;
+}
+
+.capture-action.is-recording {
+  background: linear-gradient(135deg, var(--alert), #d96d57);
+  box-shadow: 0 14px 28px rgba(182, 78, 61, 0.18);
+}
+
+.capture-toolbar__hint {
+  color: var(--text-muted);
+  font-size: 0.84rem;
+  font-weight: 700;
+  text-align: right;
+}
+
 .video-stage {
   position: relative;
-  min-height: 360px;
-  border-radius: 24px;
+  min-height: 286px;
+  border-radius: 18px;
   background:
     radial-gradient(
       circle at top left,
@@ -4150,7 +4433,7 @@ onBeforeUnmount(() => {
 .video-stage__feed {
   width: 100%;
   height: 100%;
-  min-height: 360px;
+  min-height: 286px;
   object-fit: cover;
   transform: scaleX(-1);
 }
@@ -4160,7 +4443,7 @@ onBeforeUnmount(() => {
   inset: 0;
   width: 100%;
   height: 100%;
-  min-height: 360px;
+  min-height: 286px;
   pointer-events: none;
   transform: scaleX(-1);
 }
@@ -4200,8 +4483,8 @@ onBeforeUnmount(() => {
   z-index: 2;
   display: grid;
   gap: 4px;
-  padding: 12px 14px;
-  border-radius: 18px;
+  padding: 10px 12px;
+  border-radius: 14px;
   background: rgba(10, 20, 24, 0.48);
   color: #ffffff;
   backdrop-filter: blur(12px);
@@ -4255,8 +4538,8 @@ onBeforeUnmount(() => {
 }
 
 .sampling-console {
-  padding: 18px;
-  border-radius: 22px;
+  padding: 14px;
+  border-radius: 16px;
   background:
     linear-gradient(
       180deg,
@@ -4272,25 +4555,25 @@ onBeforeUnmount(() => {
 .console-metrics,
 .face-cue-grid {
   display: grid;
-  gap: 12px;
+  gap: 8px;
 }
 
 .sampling-console__stats {
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
 }
 
 .console-stat,
 .console-summary,
 .console-entry {
-  padding: 14px 16px;
-  border-radius: 18px;
+  padding: 10px 12px;
+  border-radius: 14px;
   border: 1px solid rgba(157, 189, 202, 0.18);
   background: rgba(255, 255, 255, 0.86);
 }
 
 .console-stat {
   display: grid;
-  gap: 6px;
+  gap: 3px;
 }
 
 .console-stat span,
@@ -4308,14 +4591,14 @@ onBeforeUnmount(() => {
 }
 
 .sampling-console__detectors {
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(122px, 1fr));
 }
 
 .detector-chip {
   display: grid;
-  gap: 6px;
-  padding: 14px 16px;
-  border-radius: 18px;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 14px;
   border: 1px solid rgba(157, 189, 202, 0.18);
   background: rgba(255, 255, 255, 0.88);
 }
@@ -4343,7 +4626,7 @@ onBeforeUnmount(() => {
 
 .console-summary {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .console-summary p,
@@ -4355,18 +4638,18 @@ onBeforeUnmount(() => {
 
 .face-cue-panel {
   display: grid;
-  gap: 12px;
+  gap: 8px;
 }
 
 .face-cue-grid {
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
 }
 
 .face-cue-card {
   display: grid;
-  gap: 10px;
-  padding: 14px 16px;
-  border-radius: 18px;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 14px;
   border: 1px solid rgba(157, 189, 202, 0.18);
   background: rgba(255, 255, 255, 0.88);
 }
@@ -4419,20 +4702,20 @@ onBeforeUnmount(() => {
 }
 
 .console-metrics {
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
 }
 
 .console-stream {
   display: grid;
-  gap: 12px;
-  max-height: 360px;
+  gap: 8px;
+  max-height: 220px;
   overflow-y: auto;
   padding-right: 4px;
 }
 
 .console-entry {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .console-entry--event {
@@ -4460,16 +4743,16 @@ onBeforeUnmount(() => {
   grid-template-columns: repeat(12, minmax(0, 1fr));
   align-items: end;
   gap: 6px;
-  min-height: 84px;
-  padding: 14px;
-  border-radius: 18px;
+  min-height: 62px;
+  padding: 10px;
+  border-radius: 14px;
   background: #ffffff;
   border: 1px solid rgba(157, 189, 202, 0.22);
 }
 
 .audio-meter__bar {
   display: block;
-  height: 56px;
+  height: 42px;
   border-radius: 999px;
   background: linear-gradient(
     180deg,
@@ -4484,14 +4767,10 @@ onBeforeUnmount(() => {
   margin: 0;
 }
 
-.action-row--split {
-  justify-content: flex-start;
-}
-
 .transcript-stream {
   display: grid;
-  gap: 14px;
-  max-height: 420px;
+  gap: 10px;
+  max-height: 300px;
   overflow-y: auto;
   padding-right: 4px;
 }
@@ -4504,8 +4783,8 @@ onBeforeUnmount(() => {
 
 .transcript-entry p {
   margin: 0;
-  padding: 14px 16px;
-  border-radius: 18px;
+  padding: 10px 12px;
+  border-radius: 14px;
 }
 
 .transcript-entry--interviewer p {
@@ -4533,15 +4812,23 @@ onBeforeUnmount(() => {
 }
 
 .inline-alert {
-  padding: 14px 16px;
-  border-radius: 18px;
+  padding: 10px 12px;
+  border-radius: 14px;
   background: rgba(182, 78, 61, 0.1);
   color: var(--alert);
 }
 
 .round-actions {
-  padding-top: 12px;
+  align-items: center;
+  padding-top: 10px;
   border-top: 1px solid rgba(157, 189, 202, 0.24);
+}
+
+.round-actions--compact {
+  padding: 12px;
+  border: 1px solid rgba(157, 189, 202, 0.18);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.68);
 }
 
 .round-actions__copy {
@@ -4551,9 +4838,9 @@ onBeforeUnmount(() => {
 
 .history-item {
   display: grid;
-  gap: 10px;
-  padding: 16px;
-  border-radius: 18px;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 14px;
   background: #ffffff;
   border: 1px solid rgba(157, 189, 202, 0.22);
 }
@@ -4671,8 +4958,8 @@ onBeforeUnmount(() => {
 
 .verdict-grid {
   display: grid;
-  gap: 12px;
-  margin-top: 16px;
+  gap: 10px;
+  margin-top: 0;
 }
 
 .verdict-button {
@@ -4699,8 +4986,8 @@ onBeforeUnmount(() => {
 
 .reason-box {
   display: grid;
-  gap: 10px;
-  margin-top: 18px;
+  gap: 8px;
+  margin-top: 0;
 }
 
 .reason-box span {
@@ -4709,9 +4996,9 @@ onBeforeUnmount(() => {
 }
 
 .reason-box textarea {
-  min-height: 180px;
-  padding: 16px;
-  border-radius: 20px;
+  min-height: 132px;
+  padding: 12px;
+  border-radius: 14px;
   border: 1px solid rgba(157, 189, 202, 0.3);
   background: #ffffff;
   color: var(--text-main);
@@ -4725,28 +5012,34 @@ onBeforeUnmount(() => {
 }
 
 .reason-meta {
-  margin-top: 12px;
+  margin-top: 0;
 }
 
 .evidence-list,
 .warning-list {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .evidence-item,
 .warning-item {
-  padding: 14px 16px;
-  border-radius: 18px;
+  padding: 10px 12px;
+  border-radius: 14px;
   background: #ffffff;
   border: 1px solid rgba(157, 189, 202, 0.22);
 }
 
 .summary-item--warning {
-  padding: 14px 16px;
-  border-radius: 20px;
+  padding: 10px 12px;
+  border-radius: 14px;
   background: rgba(255, 247, 233, 0.92);
   border: 1px solid rgba(192, 123, 25, 0.22);
+}
+
+.digest-kpis {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .warning-item {
@@ -4816,6 +5109,246 @@ onBeforeUnmount(() => {
   transform: translateY(10px);
 }
 
+.stage-loading {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  min-height: 100vh;
+  background:
+    radial-gradient(
+      circle at center,
+      rgba(255, 255, 255, 0.74),
+      transparent 46%
+    ),
+    rgba(236, 247, 250, 0.72);
+  backdrop-filter: blur(12px);
+}
+
+.stage-loading__panel {
+  display: grid;
+  justify-items: center;
+  gap: 18px;
+  width: min(420px, 100%);
+  padding: 28px;
+  border-radius: 22px;
+  text-align: center;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.96),
+      rgba(241, 250, 252, 0.94)
+    ),
+    #ffffff;
+  border: 1px solid rgba(157, 189, 202, 0.32);
+  box-shadow:
+    0 24px 60px rgba(14, 40, 48, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+
+.stage-loading__visual {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 86px;
+  height: 86px;
+}
+
+.stage-loading__ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 90deg,
+    rgba(11, 114, 136, 0),
+    rgba(32, 168, 197, 0.9),
+    rgba(35, 125, 77, 0.7),
+    rgba(11, 114, 136, 0)
+  );
+  animation: stage-loading-spin 1.2s linear infinite;
+  -webkit-mask: radial-gradient(circle, transparent 57%, #000 59%);
+  mask: radial-gradient(circle, transparent 57%, #000 59%);
+}
+
+.stage-loading__core {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background:
+    radial-gradient(
+      circle at 34% 30%,
+      rgba(255, 255, 255, 0.95),
+      transparent 28%
+    ),
+    linear-gradient(135deg, var(--accent), var(--accent-bright));
+  box-shadow:
+    0 0 0 10px rgba(11, 114, 136, 0.08),
+    0 14px 28px rgba(11, 114, 136, 0.2);
+  animation: stage-loading-pulse 1.4s ease-in-out infinite;
+}
+
+.stage-loading__spark {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 0 16px rgba(32, 168, 197, 0.7);
+  animation: stage-loading-float 1.8s ease-in-out infinite;
+}
+
+.stage-loading__spark--a {
+  top: 8px;
+  right: 16px;
+}
+
+.stage-loading__spark--b {
+  bottom: 10px;
+  left: 14px;
+  animation-delay: 0.24s;
+}
+
+.stage-loading__spark--c {
+  right: 6px;
+  bottom: 22px;
+  animation-delay: 0.48s;
+}
+
+.stage-loading__copy {
+  display: grid;
+  gap: 6px;
+}
+
+.stage-loading__copy h4 {
+  margin: 0;
+  color: var(--text-main);
+  font-size: 1.2rem;
+}
+
+.stage-loading__copy p:last-child {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.stage-loading__phrase {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 38px;
+  padding: 0 16px;
+  border-radius: 999px;
+  background: rgba(11, 114, 136, 0.08);
+  color: var(--accent-strong);
+  font-weight: 800;
+}
+
+.stage-loading__phrase span {
+  animation: stage-loading-phrase 1.4s ease-in-out infinite;
+}
+
+.stage-loading__phrase i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: stage-loading-dot 1s ease-in-out infinite;
+}
+
+.stage-loading__phrase i:nth-of-type(2) {
+  animation-delay: 0.16s;
+}
+
+.stage-loading__phrase i:nth-of-type(3) {
+  animation-delay: 0.32s;
+}
+
+.stage-loading-enter-active,
+.stage-loading-leave-active {
+  transition:
+    opacity 0.22s ease,
+    backdrop-filter 0.22s ease;
+}
+
+.stage-loading-enter-active .stage-loading__panel,
+.stage-loading-leave-active .stage-loading__panel {
+  transition:
+    opacity 0.22s ease,
+    transform 0.22s ease;
+}
+
+.stage-loading-enter-from,
+.stage-loading-leave-to {
+  opacity: 0;
+  backdrop-filter: blur(0);
+}
+
+.stage-loading-enter-from .stage-loading__panel,
+.stage-loading-leave-to .stage-loading__panel {
+  opacity: 0;
+  transform: translateY(12px) scale(0.98);
+}
+
+@keyframes stage-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes stage-loading-pulse {
+  0%,
+  100% {
+    transform: scale(0.96);
+  }
+
+  50% {
+    transform: scale(1.08);
+  }
+}
+
+@keyframes stage-loading-float {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.42;
+  }
+
+  50% {
+    transform: translateY(-8px);
+    opacity: 1;
+  }
+}
+
+@keyframes stage-loading-phrase {
+  0%,
+  100% {
+    opacity: 0.72;
+    transform: translateY(1px);
+  }
+
+  50% {
+    opacity: 1;
+    transform: translateY(-1px);
+  }
+}
+
+@keyframes stage-loading-dot {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.36;
+  }
+
+  40% {
+    transform: translateY(-5px);
+    opacity: 1;
+  }
+}
+
 @media (min-width: 960px) {
   .c-demo-grid {
     grid-template-columns: minmax(260px, 0.85fr) minmax(300px, 1fr) minmax(
@@ -4826,12 +5359,20 @@ onBeforeUnmount(() => {
 
   .strategy-layout,
   .judgement-layout {
-    grid-template-columns: minmax(320px, 0.95fr) minmax(360px, 1.2fr);
+    grid-template-columns: minmax(300px, 0.82fr) minmax(420px, 1.18fr);
   }
 
   .interview-layout {
-    grid-template-columns: minmax(340px, 0.95fr) minmax(420px, 1.2fr);
+    grid-template-columns: minmax(420px, 0.92fr) minmax(430px, 1.08fr);
     align-items: start;
+  }
+
+  .verdict-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .history-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .analysis-columns {
@@ -4884,12 +5425,12 @@ onBeforeUnmount(() => {
 
 @media (max-width: 719px) {
   .stage-card {
-    --stage-card-padding: 20px;
+    --stage-card-padding: 16px;
   }
 
   .stage-card,
   .workflow-hero {
-    padding: 20px;
+    padding: 16px;
   }
 
   .stage-card__progress {
@@ -4908,14 +5449,20 @@ onBeforeUnmount(() => {
 
   .progress-step {
     gap: 10px;
-    padding: 14px 12px 12px;
-    border-radius: 18px;
+    grid-template-columns: auto minmax(0, 1fr);
+    padding: 10px;
+    border-radius: 14px;
+  }
+
+  .progress-step__state {
+    grid-column: 2;
+    justify-self: start;
   }
 
   .progress-step__index {
-    width: 36px;
-    height: 36px;
-    border-radius: 12px;
+    width: 30px;
+    height: 30px;
+    border-radius: 10px;
   }
 
   .progress-step__copy strong {
@@ -4925,7 +5472,26 @@ onBeforeUnmount(() => {
   .video-stage,
   .video-stage__feed,
   .video-stage__canvas {
-    min-height: 280px;
+    min-height: 240px;
+  }
+
+  .profile-grid,
+  .digest-kpis,
+  .round-summary-stack {
+    grid-template-columns: 1fr;
+  }
+
+  .capture-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .capture-action {
+    width: 100%;
+  }
+
+  .capture-toolbar__hint {
+    text-align: left;
   }
 
   .action-row,
