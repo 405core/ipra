@@ -53,19 +53,7 @@ py -3.12 -m venv apps\ai-service\.venv
 & ".\apps\ai-service\.venv\Scripts\python.exe" apps\ai-service\app\startup\check_env.py
 ```
 
-业务 LLM 当前默认使用 mock 模式；如需使用本地 Qwen2.5-3B-Instruct，将 provider 改为 `transformers_local` 并配置模型目录。
-
-```text
-BUSINESS_LLM_PROVIDER=mock
-BUSINESS_LLM_MODEL=mock-business-llm
-BUSINESS_LLM_MODEL_PATH=../../models/business-llm/modelscope/Qwen2.5-3B-Instruct
-BUSINESS_LLM_TIMEOUT_SECONDS=120
-BUSINESS_LLM_MAX_NEW_TOKENS=768
-BUSINESS_LLM_TORCH_DTYPE=auto
-BUSINESS_LLM_DEVICE_MAP=auto
-```
-
-本地 Qwen2.5-3B-Instruct 配置示例：
+业务 LLM 默认使用本地 Qwen2.5-3B-Instruct；如只做 schema 联调，可将 provider 改为 `mock`。
 
 ```text
 BUSINESS_LLM_PROVIDER=transformers_local
@@ -75,6 +63,13 @@ BUSINESS_LLM_TIMEOUT_SECONDS=300
 BUSINESS_LLM_MAX_NEW_TOKENS=768
 BUSINESS_LLM_TORCH_DTYPE=auto
 BUSINESS_LLM_DEVICE_MAP=auto
+```
+
+Mock 配置示例：
+
+```text
+BUSINESS_LLM_PROVIDER=mock
+BUSINESS_LLM_MODEL=mock-business-llm
 ```
 
 ## 启动服务
