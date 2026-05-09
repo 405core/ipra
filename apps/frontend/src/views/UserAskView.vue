@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
 import {
   requestFirstRoundStrategy,
   requestFollowupGuidance,
+  resolveAiServiceWebSocketUrl,
   uploadHumanOmniWindow,
   type ActionObservationPayload,
   type AsrPayload,
@@ -11,17 +12,10 @@ import {
   type MultimodalAssessmentPayload,
   type PassengerProfilePayload,
   type QuestionAnswerPayload,
+  type RealtimeAsrEvent,
   type RiskAssessmentPayload,
   type TripProfilePayload,
 } from '../app/ai-service';
-import {
-  createCInquirySession,
-  submitCInquiryTurn,
-  transcribeCInquiryAnswer,
-  type CAsrResponse,
-  type CInquirySessionPayload,
-  type CInquiryTurnResponse,
-} from '../app/c-inquiry-service';
 import {
   createIdleRealtimeDetectionState,
   createRealtimeDetectionController,
@@ -37,10 +31,12 @@ type TranscriptRole = 'system' | 'interviewer' | 'subject';
 type SamplingPhase = 'idle' | 'active' | 'ended' | 'error';
 type RoundUploadState = 'idle' | 'uploading' | 'uploaded' | 'error';
 type FinalJudgement = 'concealment' | 'falseStatement' | 'clear';
-type CVoiceRecorderPhase =
+type SpeechRecognitionPhase =
   | 'idle'
-  | 'recording'
-  | 'recorded'
+  | 'connecting'
+  | 'listening'
+  | 'stopping'
+  | 'ended'
   | 'unsupported'
   | 'error';
 
@@ -66,13 +62,6 @@ interface StrategyQuestion {
   objective: string;
 }
 
-interface TranscriptSeed {
-  speaker: string;
-  role: TranscriptRole;
-  text: string;
-  delayMs: number;
-}
-
 interface TranscriptEntry {
   id: string;
   speaker: string;
@@ -89,7 +78,6 @@ interface InterviewRound {
   strategyNote: string;
   signal: string;
   questions: StrategyQuestion[];
-  transcriptScript: TranscriptSeed[];
   transcripts: TranscriptEntry[];
   completed: boolean;
   durationSeconds: number;
@@ -115,18 +103,6 @@ interface StageItem {
   id: WorkflowStage;
   label: string;
   helper: string;
-}
-
-interface FollowUpTheme {
-  title: string;
-  focus: string;
-  strategyNote: (cue: string) => string;
-  signal: (cue: string) => string;
-  questions: (
-    cue: string,
-    roundNumber: number,
-  ) => Array<Omit<StrategyQuestion, 'id'>>;
-  transcript: (cue: string, roundNumber: number) => TranscriptSeed[];
 }
 
 interface WindowWithWebkitAudioContext extends Window {
@@ -287,183 +263,6 @@ const strategyBlueprints = [
   },
 ];
 
-const followUpThemes: FollowUpTheme[] = [
-  {
-    title: '设备空窗复核',
-    focus: '围绕终端空窗与异常上报追问',
-    strategyNote: (cue) =>
-      `上一轮对象提到“${cue}”，系统推断需要继续核验终端卡顿与上报链路是否闭环。`,
-    signal: (cue) => `围绕“${cue}”的说明仍存在设备日志闭环缺口。`,
-    questions: (cue, roundNumber) => [
-      {
-        title: `第 ${roundNumber} 轮 · 上报节点`,
-        prompt: `上一轮您提到“${cue}”，请明确说明您是否在 10:45 至 10:50 期间向任何人报告过这一异常。`,
-        objective: '核对异常上报对象与时间点。',
-      },
-      {
-        title: '操作路径还原',
-        prompt:
-          '如果终端当时无法使用，请具体说明您改用了什么替代动作，是否离开过货架、工作台或扫描区。',
-        objective: '复原设备异常后的真实行为路径。',
-      },
-      {
-        title: '时长校验',
-        prompt:
-          '请量化您感知到的异常持续时间，是几秒、几十秒还是接近数分钟？为什么这样判断？',
-        objective: '验证对象对异常持续时长的稳定性。',
-      },
-    ],
-    transcript: (cue) => [
-      {
-        speaker: '系统',
-        role: 'system',
-        text: `第二轮追问已生成，重点复核“${cue}”与设备空窗的对应关系。`,
-        delayMs: 800,
-      },
-      {
-        speaker: '问询员',
-        role: 'interviewer',
-        text: `上一轮您提到“${cue}”，请先说明您当时有没有向值班员上报。`,
-        delayMs: 1800,
-      },
-      {
-        speaker: '张伟',
-        role: 'subject',
-        text: '没有正式上报，我当时以为只是短暂卡顿，想着等几秒恢复后再继续，所以没有离开工位。',
-        delayMs: 3800,
-      },
-      {
-        speaker: '问询员',
-        role: 'interviewer',
-        text: '如果只是短暂卡顿，为什么设备日志会形成接近 5 分钟的完整空窗？',
-        delayMs: 6200,
-      },
-      {
-        speaker: '张伟',
-        role: 'subject',
-        text: '我记得自己其实去旁边看过一次照明配电箱，大概几十秒，但没想到会影响这么久。',
-        delayMs: 8600,
-      },
-    ],
-  },
-  {
-    title: '现场同伴交叉核验',
-    focus: '围绕旁证对象、同伴接触与区域移动追问',
-    strategyNote: (cue) =>
-      `系统基于“${cue}”判断对象可能隐去了现场旁证信息，需要继续核对共同在场人员与交接动作。`,
-    signal: () => '对象开始补充新的在场人员信息，说明前述描述存在遗漏。',
-    questions: (cue, roundNumber) => [
-      {
-        title: `第 ${roundNumber} 轮 · 共同在场人员`,
-        prompt: `关于“${cue}”，请逐一说明在您附近的同事、设备管理员或保洁人员分别在做什么。`,
-        objective: '识别可交叉验证的旁证对象。',
-      },
-      {
-        title: '工位离开说明',
-        prompt:
-          '您是否曾离开工位、走到配电箱、通道口或监控盲区附近？请说明每次移动的原因与停留时长。',
-        objective: '核验位置变动与监控断点是否相关。',
-      },
-      {
-        title: '交接物品核实',
-        prompt:
-          '那段时间您是否接触过备用工牌、扫码枪、手写清单或临时记录表？这些物品是谁提供的？',
-        objective: '追踪潜在交接痕迹。',
-      },
-    ],
-    transcript: (cue) => [
-      {
-        speaker: '系统',
-        role: 'system',
-        text: `新一轮策略已切换到现场旁证复核，重点围绕“${cue}”展开。`,
-        delayMs: 700,
-      },
-      {
-        speaker: '问询员',
-        role: 'interviewer',
-        text: `您刚才提到“${cue}”，那当时附近还有谁能证明您确实在原工位？`,
-        delayMs: 2000,
-      },
-      {
-        speaker: '张伟',
-        role: 'subject',
-        text: '我记得赵强从通道口经过了一次，他手里拿着备用扫码枪，但我们没有正式交接。',
-        delayMs: 4200,
-      },
-      {
-        speaker: '问询员',
-        role: 'interviewer',
-        text: '您为什么先前没有提到赵强和备用扫码枪？这与终端空窗有什么关系？',
-        delayMs: 6500,
-      },
-      {
-        speaker: '张伟',
-        role: 'subject',
-        text: '因为我当时只是短暂看了一眼，没有真正接过去，后来想起来才觉得可能和设备异常有关。',
-        delayMs: 9000,
-      },
-    ],
-  },
-  {
-    title: '路径与权限追踪',
-    focus: '围绕移动路径、权限物品与异常行为链追问',
-    strategyNote: (cue) =>
-      `系统从“${cue}”推导出需要继续核验对象是否接触过替代设备或进入过非固定作业区域。`,
-    signal: () => '移动路径描述与工位停留说法出现张力，需要人工重点复核。',
-    questions: (cue, roundNumber) => [
-      {
-        title: `第 ${roundNumber} 轮 · 路径地图`,
-        prompt: `请以“${cue}”为起点，逐步说明您之后的移动路径，包含通道、货架编号和停留点。`,
-        objective: '要求对象给出可比对的空间轨迹。',
-      },
-      {
-        title: '替代设备来源',
-        prompt:
-          '如果您接触过备用扫码枪或纸质清单，请明确说明来源、接触时长，以及为何没有留下正式交接记录。',
-        objective: '核对替代操作是否符合流程。',
-      },
-      {
-        title: '权限边界说明',
-        prompt:
-          '您是否进入过非本人负责的区域、配电箱附近或监控盲区？若进入过，请说明原因和谁允许您这样做。',
-        objective: '检查权限边界与行动动机。',
-      },
-    ],
-    transcript: (cue) => [
-      {
-        speaker: '系统',
-        role: 'system',
-        text: `系统已将重点切换至路径与权限追踪，继续围绕“${cue}”核验。`,
-        delayMs: 900,
-      },
-      {
-        speaker: '问询员',
-        role: 'interviewer',
-        text: `请从“${cue}”开始，把您之后经过的区域和停留点完整复述出来。`,
-        delayMs: 2200,
-      },
-      {
-        speaker: '张伟',
-        role: 'subject',
-        text: '我先走到西侧通道口，又靠近过配电箱附近，之后回到货架前，但没有进入限制区域。',
-        delayMs: 4600,
-      },
-      {
-        speaker: '问询员',
-        role: 'interviewer',
-        text: '如果只是靠近配电箱，为何监控断点后您的位置在日志里仍然缺失？',
-        delayMs: 7000,
-      },
-      {
-        speaker: '张伟',
-        role: 'subject',
-        text: '可能是我在那里停留得比记忆中更久，但我没有想隐瞒，只是记不清具体秒数。',
-        delayMs: 9800,
-      },
-    ],
-  },
-];
-
 const currentStage = ref<WorkflowStage>('strategy');
 const sessionId = ref(createSessionId());
 const strategySummary = ref('');
@@ -485,23 +284,8 @@ const judgementBriefing = ref<JudgementBriefing | null>(null);
 const isArchived = ref(false);
 const archivedAt = ref('');
 const archiveCode = ref('IPRA-ASK-20260503-014');
-const cMaxRounds = ref(3);
-const cSession = ref<CInquirySessionPayload | null>(null);
-const cTurnResponse = ref<CInquiryTurnResponse | null>(null);
-const cAsrResponse = ref<CAsrResponse | null>(null);
-const cTranscriptInput = ref(
-  '朋友介绍我去当地赌场附近旅游，费用先用现金支付。',
-);
-const cStatusMessage = ref('尚未创建 C 模块会话，可直接使用下方示例文本验证。');
-const cErrorMessage = ref('');
-const cIsCreatingSession = ref(false);
-const cIsSubmittingAnswer = ref(false);
-const cRecorderPhase = ref<CVoiceRecorderPhase>('idle');
-const cRecorderMessage = ref(
-  '可选：录一段回答音频，后端 mock ASR 会读取音频元信息。',
-);
-const cRecordedAudio = ref<Blob | null>(null);
-const cRecordedDurationMs = ref(0);
+const speechRecognitionPhase = ref<SpeechRecognitionPhase>('idle');
+const speechRecognitionMessage = ref('等待开始采样。');
 
 const videoElement = ref<HTMLVideoElement | null>(null);
 const overlayCanvas = ref<HTMLCanvasElement | null>(null);
@@ -516,19 +300,24 @@ let analyserNode: AnalyserNode | null = null;
 let audioSourceNode: MediaStreamAudioSourceNode | null = null;
 let meterFrameId: number | null = null;
 let elapsedIntervalId: number | null = null;
-let transcriptTimeoutIds: number[] = [];
 let samplingStartedAt = 0;
 let realtimeDetectionController: RealtimeDetectionController | null = null;
 let mediaRecorder: MediaRecorder | null = null;
 let recordedChunks: Blob[] = [];
 let recordingMimeType = '';
-let cVoiceRecorder: MediaRecorder | null = null;
-let cVoiceStream: MediaStream | null = null;
-let cVoiceChunks: Blob[] = [];
-let cVoiceMimeType = '';
-let cVoiceStartedAt = 0;
-let cVoiceTimerId: number | null = null;
-let cVoiceDiscardRecording = false;
+let asrWebSocket: WebSocket | null = null;
+let asrProcessorNode: ScriptProcessorNode | null = null;
+let asrPcmByteQueue: number[] = [];
+let asrStableSegments = new Map<number, string>();
+let asrInterimSegments = new Map<number, string>();
+let speechRecognitionEntryId = '';
+let speechFinalTranscript = '';
+let speechInterimTranscript = '';
+let isStoppingSpeechRecognition = false;
+let speechRecognitionHadError = false;
+let speechRecognitionFatalError = false;
+const ASR_TARGET_SAMPLE_RATE = 16000;
+const ASR_FRAME_BYTES = 1280;
 const MP4_H264_MIME_TYPES = [
   'video/mp4;codecs=avc1.64001F,mp4a.40.2',
   'video/mp4;codecs=avc1.4D401F,mp4a.40.2',
@@ -681,44 +470,22 @@ const keyEvidenceTags = computed(() => {
   return tags.slice(0, 4);
 });
 
-const cInquiryHistory = computed(
-  () => cTurnResponse.value?.history || cSession.value?.history || [],
-);
-
-const cLatestRiskHints = computed(() => cTurnResponse.value?.riskHints || []);
-
-const cCanSubmitAnswer = computed(() => {
-  if (cIsCreatingSession.value || cIsSubmittingAnswer.value) {
-    return false;
-  }
-
-  if (cSession.value?.status === 'completed') {
-    return false;
-  }
-
-  return Boolean(cTranscriptInput.value.trim() || cRecordedAudio.value);
-});
-
-const cRoundLabel = computed(() => {
-  if (!cSession.value) {
-    return '未创建';
-  }
-
-  return `${cSession.value.currentRound}/${cSession.value.maxRounds}`;
-});
-
-const cRecorderPhaseLabel = computed(() => {
-  switch (cRecorderPhase.value) {
-    case 'recording':
-      return `录音中 ${formatDuration(Math.ceil(cRecordedDurationMs.value / 1000))}`;
-    case 'recorded':
-      return `已录制 ${formatDuration(Math.ceil(cRecordedDurationMs.value / 1000))}`;
+const speechRecognitionLabel = computed(() => {
+  switch (speechRecognitionPhase.value) {
+    case 'connecting':
+      return '讯飞 ASR 连接中';
+    case 'listening':
+      return '讯飞实时转写中';
+    case 'stopping':
+      return '正在停止转写';
+    case 'ended':
+      return '转写已结束';
     case 'unsupported':
-      return '浏览器不支持';
+      return '浏览器不支持音频流转写';
     case 'error':
-      return '录音失败';
+      return '实时转写异常';
     default:
-      return '未录音';
+      return '等待转写';
   }
 });
 
@@ -939,48 +706,6 @@ function createStrategyQuestionFromApi(
   } satisfies StrategyQuestion;
 }
 
-function createOpeningTranscriptScript(questions: StrategyQuestion[]) {
-  const primaryPrompt =
-    questions[0]?.prompt ||
-    '请先按时间顺序复述 10:40 到 10:50 之间您在西区仓库的具体动作。';
-  const secondaryPrompt =
-    questions[1]?.prompt ||
-    '那为什么 10:45 到 10:50 之间没有任何终端操作记录？';
-
-  return [
-    {
-      speaker: '系统',
-      role: 'system',
-      text: '首轮采样已启动，视频流与话筒输入正在同步记录，并等待 HumanOmni 窗口摘要。',
-      delayMs: 700,
-    },
-    {
-      speaker: '问询员',
-      role: 'interviewer',
-      text: primaryPrompt,
-      delayMs: 1800,
-    },
-    {
-      speaker: passengerProfile.alias,
-      role: 'subject',
-      text: '10:40 左右我在西区货架做常规清点，后面终端突然像卡住了一样，我就停了一下。',
-      delayMs: 4000,
-    },
-    {
-      speaker: '问询员',
-      role: 'interviewer',
-      text: secondaryPrompt,
-      delayMs: 6300,
-    },
-    {
-      speaker: passengerProfile.alias,
-      role: 'subject',
-      text: '我记得灯闪了一下，可能顺手去看了下附近情况，但我当时没觉得这是严重异常。',
-      delayMs: 9000,
-    },
-  ] satisfies TranscriptSeed[];
-}
-
 function buildOpeningRound() {
   return {
     id: 'round-1',
@@ -997,7 +722,6 @@ function buildOpeningRound() {
       strategyRiskAssessment.value?.summary ||
       '对象需先对 10:45 至 10:50 的时间线和设备空窗给出稳定说明。',
     questions: generatedQuestions.value.map((question) => ({ ...question })),
-    transcriptScript: createOpeningTranscriptScript(generatedQuestions.value),
     transcripts: [],
     completed: false,
     durationSeconds: 0,
@@ -1030,56 +754,9 @@ function getRoundCue(round?: InterviewRound | null) {
   return round.questions[0]?.title || round.focus;
 }
 
-function createFollowupTranscriptScript(
-  roundNumber: number,
-  focus: string,
-  questions: StrategyQuestion[],
-  previousRound: InterviewRound,
-  operatorNote: string,
-) {
-  const cue = getRoundCue(previousRound);
-  const primaryPrompt = questions[0]?.prompt || `请继续说明 ${focus}。`;
-  const secondaryPrompt =
-    questions[1]?.prompt || '请补充上一轮中遗漏的关键时间节点。';
-
-  return [
-    {
-      speaker: '系统',
-      role: 'system',
-      text: `第 ${roundNumber} 轮追问已生成，重点关注 ${focus}。${operatorNote ? ` 提示：${operatorNote}` : ''}`,
-      delayMs: 700,
-    },
-    {
-      speaker: '问询员',
-      role: 'interviewer',
-      text: primaryPrompt,
-      delayMs: 1900,
-    },
-    {
-      speaker: passengerProfile.alias,
-      role: 'subject',
-      text: `关于“${cue}”，我需要补充的是当时情况比上一轮更复杂，我前面漏掉了部分细节。`,
-      delayMs: 4300,
-    },
-    {
-      speaker: '问询员',
-      role: 'interviewer',
-      text: secondaryPrompt,
-      delayMs: 6700,
-    },
-    {
-      speaker: passengerProfile.alias,
-      role: 'subject',
-      text: `我当时主要围绕${focus}处理，相关动作和停留时间可能和我最初描述不完全一致。`,
-      delayMs: 9300,
-    },
-  ] satisfies TranscriptSeed[];
-}
-
 function buildFollowUpRoundFromResponse(
   response: FollowupGuidanceResponse,
   roundNumber: number,
-  previousRound: InterviewRound,
 ) {
   const questions = response.followupGuidance.map((item, index) =>
     createStrategyQuestion(
@@ -1112,13 +789,6 @@ function buildFollowUpRoundFromResponse(
       response.warnings[0] ||
       '继续采样以获取更多线索。',
     questions,
-    transcriptScript: createFollowupTranscriptScript(
-      roundNumber,
-      focus,
-      questions,
-      previousRound,
-      response.operatorNote,
-    ),
     transcripts: [],
     completed: false,
     durationSeconds: 0,
@@ -1167,10 +837,16 @@ function updateCurrentRoundSummary(round: InterviewRound) {
 }
 
 function collectSubjectTranscript(round: InterviewRound) {
+  const realtimeAsrText = round.asrText.trim();
+  if (realtimeAsrText) {
+    return realtimeAsrText;
+  }
+
   return round.transcripts
     .filter((entry) => entry.role === 'subject')
     .map((entry) => entry.text)
-    .join(' ');
+    .join(' ')
+    .trim();
 }
 
 function buildQaHistory() {
@@ -1192,10 +868,14 @@ function buildQaHistory() {
 function buildRoundAsrPayload(round: InterviewRound): AsrPayload {
   const text = collectSubjectTranscript(round);
   if (!text) {
+    const status =
+      speechRecognitionPhase.value === 'error' || speechRecognitionHadError
+        ? 'error'
+        : 'not_connected';
     return {
-      status: 'not_connected',
-      provider: 'frontend-mock',
-      model: 'frontend-mock-transcript',
+      status,
+      provider: 'iflytek-rtasr-llm',
+      model: 'rtasr-llm',
       language: 'zh-CN',
       text: '',
       segments: [],
@@ -1205,8 +885,8 @@ function buildRoundAsrPayload(round: InterviewRound): AsrPayload {
 
   return {
     status: 'provided',
-    provider: 'frontend-mock',
-    model: 'frontend-mock-transcript',
+    provider: 'iflytek-rtasr-llm',
+    model: 'rtasr-llm',
     language: 'zh-CN',
     text,
     segments: [
@@ -1303,13 +983,6 @@ function buildSummarizeWindowFormData(round: InterviewRound, file: File) {
   return formData;
 }
 
-function clearTranscriptTimers() {
-  transcriptTimeoutIds.forEach((timeoutId) => {
-    window.clearTimeout(timeoutId);
-  });
-  transcriptTimeoutIds = [];
-}
-
 function stopElapsedTimer() {
   if (elapsedIntervalId !== null) {
     window.clearInterval(elapsedIntervalId);
@@ -1399,6 +1072,8 @@ function forceStopMediaRecorder() {
 }
 
 function releaseMediaStream() {
+  stopAsrAudioProcessing();
+
   if (mediaStream) {
     mediaStream.getTracks().forEach((track) => track.stop());
     mediaStream = null;
@@ -1425,7 +1100,7 @@ function releaseMediaStream() {
 }
 
 function stopSamplingRuntime() {
-  clearTranscriptTimers();
+  stopSpeechRecognition();
   stopElapsedTimer();
   stopMeterLoop();
   realtimeDetectionController?.stop();
@@ -1615,33 +1290,6 @@ function stopMediaRecorder(round: InterviewRound): Promise<File | null> {
   });
 }
 
-function scheduleMockTranscripts(round: InterviewRound) {
-  clearTranscriptTimers();
-  round.transcripts = [];
-  round.summary = '';
-
-  round.transcriptScript.forEach((seed, index) => {
-    const timeoutId = window.setTimeout(() => {
-      if (
-        currentRound.value?.id !== round.id ||
-        samplingState.value.phase !== 'active'
-      ) {
-        return;
-      }
-
-      round.transcripts.push({
-        id: `${round.id}-transcript-${index + 1}`,
-        speaker: seed.speaker,
-        role: seed.role,
-        time: formatTranscriptTime(samplingState.value.elapsedSeconds),
-        text: seed.text,
-      });
-    }, seed.delayMs);
-
-    transcriptTimeoutIds.push(timeoutId);
-  });
-}
-
 async function generateStrategy() {
   if (isGeneratingStrategy.value) {
     return;
@@ -1713,6 +1361,8 @@ async function startSampling() {
   round.actionObservations = [];
   round.recordedFileName = '';
   round.asrText = '';
+  round.transcripts = [];
+  resetSpeechRecognitionState('等待语音输入。');
 
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -1752,7 +1402,7 @@ async function startSampling() {
 
     await startMediaRecorder(stream);
     startElapsedTimer();
-    scheduleMockTranscripts(round);
+    startSpeechRecognition(round);
     void startRealtimeDetection();
   } catch (error) {
     stopSamplingResources();
@@ -1777,11 +1427,11 @@ async function endSampling() {
 
   isEndingSampling.value = true;
   roundServiceError.value = '';
+  stopSpeechRecognition();
 
   const collectedDuration = Math.max(1, samplingState.value.elapsedSeconds);
   const capturedEvents = [...realtimeDetection.value.events];
   round.durationSeconds = collectedDuration;
-  round.completed = round.transcripts.length > 0;
   round.asrText = collectSubjectTranscript(round);
   round.actionObservations = buildActionObservations(round, capturedEvents);
   updateCurrentRoundSummary(round);
@@ -1797,31 +1447,30 @@ async function endSampling() {
     );
   } finally {
     stopSamplingRuntime();
-    samplingState.value = {
-      ...createIdleSamplingState(),
-      phase: round.completed ? 'ended' : 'idle',
-      permissionGranted: true,
-    };
-  }
-
-  if (!round.completed) {
-    round.uploadState = 'error';
-    round.uploadErrorMessage = '本轮未采集到可用转写内容，请重新采样。';
-    roundServiceError.value = round.uploadErrorMessage;
-    isEndingSampling.value = false;
-    return;
   }
 
   if (!recordedFile) {
+    round.completed = false;
     round.uploadState = 'error';
     round.uploadErrorMessage =
       round.uploadErrorMessage ||
       '未生成可上传的音视频片段，请检查浏览器录制能力后重试。';
     roundServiceError.value = round.uploadErrorMessage;
+    samplingState.value = {
+      ...createIdleSamplingState(),
+      phase: 'idle',
+      permissionGranted: true,
+    };
     isEndingSampling.value = false;
     return;
   }
 
+  round.completed = true;
+  samplingState.value = {
+    ...createIdleSamplingState(),
+    phase: 'ended',
+    permissionGranted: true,
+  };
   round.uploadState = 'uploading';
   round.uploadErrorMessage = '';
 
@@ -1865,11 +1514,7 @@ async function enterNextRound() {
       throw new Error('AI-Service 未返回下一轮追问建议。');
     }
 
-    const nextRound = buildFollowUpRoundFromResponse(
-      response,
-      nextRoundNumber,
-      round,
-    );
+    const nextRound = buildFollowUpRoundFromResponse(response, nextRoundNumber);
     rounds.value.push(nextRound);
     currentRoundId.value = nextRound.id;
     resetSamplingIndicators();
@@ -2029,275 +1674,318 @@ function faceCueLevelClass(value: number) {
   return 'face-cue-card--idle';
 }
 
-function buildCInquiryPassenger() {
-  return {
-    name: passengerProfile.alias,
-    documentId: passengerProfile.documentId,
-    destination: deriveDestination(),
-    purpose: mockedTripSupplement.purposeDeclared,
-    riskLevel: passengerProfile.riskLabel,
-  };
+function resetSpeechRecognitionState(message = '等待开始采样。') {
+  speechRecognitionPhase.value = 'idle';
+  speechRecognitionMessage.value = message;
+  speechRecognitionEntryId = '';
+  speechFinalTranscript = '';
+  speechInterimTranscript = '';
+  isStoppingSpeechRecognition = false;
+  speechRecognitionHadError = false;
+  speechRecognitionFatalError = false;
+  asrPcmByteQueue = [];
+  asrStableSegments = new Map<number, string>();
+  asrInterimSegments = new Map<number, string>();
 }
 
-function buildCInitialQuestion() {
-  return (
-    generatedQuestions.value[0]?.prompt ||
-    `${passengerProfile.alias}，请说明本次前往${deriveDestination()}的主要目的、停留时间和费用来源。`
+function upsertSpeechTranscript(round: InterviewRound) {
+  const transcript = [speechFinalTranscript, speechInterimTranscript]
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+
+  round.asrText = transcript;
+  if (!transcript) {
+    return;
+  }
+
+  const existingEntry = speechRecognitionEntryId
+    ? round.transcripts.find((entry) => entry.id === speechRecognitionEntryId)
+    : null;
+
+  if (existingEntry) {
+    existingEntry.text = transcript;
+    existingEntry.time = formatTranscriptTime(
+      samplingState.value.elapsedSeconds,
+    );
+    return;
+  }
+
+  const entry = {
+    id: `${round.id}-speech-transcript`,
+    speaker: passengerProfile.alias,
+    role: 'subject',
+    time: formatTranscriptTime(samplingState.value.elapsedSeconds),
+    text: transcript,
+  } satisfies TranscriptEntry;
+
+  round.transcripts.push(entry);
+  speechRecognitionEntryId = entry.id;
+}
+
+function promoteSpeechInterimTranscript(round: InterviewRound) {
+  const interimTranscript = speechInterimTranscript.trim();
+  if (!interimTranscript) {
+    return;
+  }
+
+  speechFinalTranscript =
+    `${speechFinalTranscript} ${interimTranscript}`.trim();
+  speechInterimTranscript = '';
+  upsertSpeechTranscript(round);
+}
+
+function rebuildStreamingAsrTranscript(round: InterviewRound) {
+  speechFinalTranscript = [...asrStableSegments.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([, text]) => text)
+    .join(' ')
+    .trim();
+  speechInterimTranscript = [...asrInterimSegments.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([, text]) => text)
+    .join(' ')
+    .trim();
+  upsertSpeechTranscript(round);
+}
+
+function handleStreamingAsrEvent(
+  event: RealtimeAsrEvent,
+  round: InterviewRound,
+) {
+  if (
+    currentRound.value?.id !== round.id ||
+    samplingState.value.phase !== 'active'
+  ) {
+    return;
+  }
+
+  if (event.type === 'status') {
+    speechRecognitionMessage.value =
+      event.status === 'connected'
+        ? '讯飞实时转写已连接。'
+        : event.message || '讯飞实时转写状态已更新。';
+    return;
+  }
+
+  if (event.type === 'error') {
+    speechRecognitionHadError = true;
+    speechRecognitionPhase.value = 'error';
+    speechRecognitionMessage.value = event.message || '讯飞实时转写异常。';
+    return;
+  }
+
+  const text = event.text?.trim();
+  if (!text) {
+    speechRecognitionMessage.value = '未识别到有效文本，继续监听。';
+    return;
+  }
+
+  const segmentId = event.segmentId ?? Date.now();
+  if (event.isFinal) {
+    asrInterimSegments.delete(segmentId);
+    asrStableSegments.set(segmentId, text);
+  } else {
+    asrInterimSegments.set(segmentId, text);
+  }
+  speechRecognitionMessage.value = event.isFinal
+    ? '讯飞转写已更新。'
+    : '正在接收讯飞转写结果。';
+  rebuildStreamingAsrTranscript(round);
+}
+
+function downsampleToPcm16(
+  input: Float32Array,
+  sourceSampleRate: number,
+  targetSampleRate = ASR_TARGET_SAMPLE_RATE,
+) {
+  if (sourceSampleRate === targetSampleRate) {
+    return floatToPcm16(input);
+  }
+
+  const ratio = sourceSampleRate / targetSampleRate;
+  const outputLength = Math.max(1, Math.floor(input.length / ratio));
+  const output = new Float32Array(outputLength);
+  for (let index = 0; index < outputLength; index += 1) {
+    output[index] =
+      input[Math.min(input.length - 1, Math.floor(index * ratio))];
+  }
+  return floatToPcm16(output);
+}
+
+function floatToPcm16(input: Float32Array) {
+  const output = new Int16Array(input.length);
+  for (let index = 0; index < input.length; index += 1) {
+    const sample = Math.max(-1, Math.min(1, input[index]));
+    output[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+  }
+  return output;
+}
+
+function pcm16ToBytes(input: Int16Array) {
+  const bytes: number[] = [];
+  input.forEach((sample) => {
+    bytes.push(sample & 0xff, (sample >> 8) & 0xff);
+  });
+  return bytes;
+}
+
+function sendAsrAudioFrame(frameBytes: number[]) {
+  if (!asrWebSocket || asrWebSocket.readyState !== WebSocket.OPEN) {
+    return;
+  }
+  asrWebSocket.send(new Uint8Array(frameBytes).buffer);
+}
+
+function queueAsrPcmFrame(pcm16: Int16Array) {
+  asrPcmByteQueue.push(...pcm16ToBytes(pcm16));
+  while (asrPcmByteQueue.length >= ASR_FRAME_BYTES) {
+    const frame = asrPcmByteQueue.splice(0, ASR_FRAME_BYTES);
+    sendAsrAudioFrame(frame);
+  }
+}
+
+function startAsrAudioProcessing() {
+  if (!audioContext || !audioSourceNode || !asrWebSocket) {
+    return;
+  }
+
+  stopAsrAudioProcessing();
+  const processor = audioContext.createScriptProcessor(4096, 1, 1);
+  processor.onaudioprocess = (event) => {
+    const input = event.inputBuffer.getChannelData(0);
+    const output = event.outputBuffer.getChannelData(0);
+    output.fill(0);
+    const pcm16 = downsampleToPcm16(input, audioContext!.sampleRate);
+    queueAsrPcmFrame(pcm16);
+  };
+  audioSourceNode.connect(processor);
+  processor.connect(audioContext.destination);
+  asrProcessorNode = processor;
+}
+
+function stopAsrAudioProcessing() {
+  if (!asrProcessorNode) {
+    return;
+  }
+
+  asrProcessorNode.onaudioprocess = null;
+  asrProcessorNode.disconnect();
+  asrProcessorNode = null;
+}
+
+function startSpeechRecognition(round: InterviewRound) {
+  if (typeof WebSocket === 'undefined') {
+    speechRecognitionPhase.value = 'unsupported';
+    speechRecognitionMessage.value = '当前浏览器不支持 WebSocket 音频转写。';
+    return;
+  }
+
+  if (!audioContext || !audioSourceNode) {
+    speechRecognitionPhase.value = 'unsupported';
+    speechRecognitionMessage.value = '当前浏览器无法建立音频处理链。';
+    return;
+  }
+
+  stopSpeechRecognition({ reset: false });
+  speechRecognitionEntryId = '';
+  speechFinalTranscript = '';
+  speechInterimTranscript = '';
+  speechRecognitionHadError = false;
+  speechRecognitionFatalError = false;
+  asrPcmByteQueue = [];
+  asrStableSegments = new Map<number, string>();
+  asrInterimSegments = new Map<number, string>();
+
+  const socket = new WebSocket(
+    resolveAiServiceWebSocketUrl('/v1/asr/iflytek/realtime'),
   );
-}
+  asrWebSocket = socket;
+  speechRecognitionPhase.value = 'connecting';
+  speechRecognitionMessage.value = '正在连接讯飞实时转写。';
 
-function buildCSignals() {
-  const events = realtimeDetection.value.events
-    .filter((event) => event.tone === 'warn' || event.tone === 'alert')
-    .slice(-2);
-
-  return events.map((event) => ({
-    source: 'frontend-mediapipe',
-    label: event.title,
-    severity: event.tone === 'alert' ? 0.86 : 0.72,
-    at: event.displayTime,
-  }));
-}
-
-function syncCSessionFromTurn(response: CInquiryTurnResponse) {
-  cTurnResponse.value = response;
-
-  if (!cSession.value) {
-    return;
-  }
-
-  cSession.value = {
-    ...cSession.value,
-    currentRound: response.currentRound,
-    currentQuestion: response.currentQuestion,
-    status: response.status,
-    history: response.history,
-    updatedAt: new Date().toISOString(),
+  socket.onopen = () => {
+    if (asrWebSocket !== socket) {
+      return;
+    }
+    speechRecognitionPhase.value = 'listening';
+    speechRecognitionMessage.value = '讯飞实时转写已启动。';
+    startAsrAudioProcessing();
   };
-}
+  socket.onmessage = (event) => {
+    const parseMessage = (rawValue: string) => {
+      const payload = JSON.parse(rawValue) as RealtimeAsrEvent;
+      handleStreamingAsrEvent(payload, round);
+    };
 
-async function createCSession(options: { resetTurn?: boolean } = {}) {
-  if (cIsCreatingSession.value) {
-    return cSession.value;
-  }
-
-  cIsCreatingSession.value = true;
-  cErrorMessage.value = '';
-
-  try {
-    const session = await createCInquirySession({
-      passenger: buildCInquiryPassenger(),
-      maxRounds: cMaxRounds.value,
-      initialQuestion: buildCInitialQuestion(),
-    });
-
-    cSession.value = session;
-    if (options.resetTurn !== false) {
-      cTurnResponse.value = null;
-      cAsrResponse.value = null;
-    }
-    cStatusMessage.value = `C 模块会话已创建：${session.sessionId}`;
-    return session;
-  } catch (error) {
-    cErrorMessage.value = normalizeErrorMessage(error, 'C 模块会话创建失败。');
-    return null;
-  } finally {
-    cIsCreatingSession.value = false;
-  }
-}
-
-async function resetCSession() {
-  cSession.value = null;
-  cTurnResponse.value = null;
-  cAsrResponse.value = null;
-  cErrorMessage.value = '';
-  cStatusMessage.value = '已重置 C 模块验证台，可重新创建会话。';
-  resetCVoiceRecording();
-}
-
-async function submitCAnswer() {
-  if (!cCanSubmitAnswer.value) {
-    return;
-  }
-
-  cIsSubmittingAnswer.value = true;
-  cErrorMessage.value = '';
-
-  try {
-    let session = cSession.value;
-    if (!session) {
-      session = await createCSession({ resetTurn: false });
-    }
-
-    if (!session) {
+    if (typeof event.data === 'string') {
+      parseMessage(event.data);
       return;
     }
 
-    const asr = await transcribeCInquiryAnswer({
-      fallbackTranscript: cTranscriptInput.value,
-      audio: cRecordedAudio.value,
-      durationMs: cRecordedDurationMs.value,
-    });
-    cAsrResponse.value = asr;
+    if (event.data instanceof Blob) {
+      event.data
+        .text()
+        .then(parseMessage)
+        .catch(() => undefined);
+    }
+  };
+  socket.onerror = () => {
+    speechRecognitionHadError = true;
+    speechRecognitionPhase.value = 'error';
+    speechRecognitionMessage.value = '讯飞实时转写连接异常。';
+  };
+  socket.onclose = (event) => {
+    stopAsrAudioProcessing();
+    if (asrWebSocket === socket) {
+      asrWebSocket = null;
+    }
 
-    const response = await submitCInquiryTurn(session.sessionId, {
-      answerTranscript: asr.transcript,
-      signals: buildCSignals(),
-    });
-    syncCSessionFromTurn(response);
+    if (isStoppingSpeechRecognition) {
+      speechRecognitionPhase.value = 'ended';
+      speechRecognitionMessage.value = '讯飞实时转写已结束。';
+      isStoppingSpeechRecognition = false;
+      return;
+    }
 
-    cStatusMessage.value = response.shouldStop
-      ? `已达到 ${response.maxRounds} 轮上限，C 模块轮次熔断已触发。`
-      : `第 ${response.currentRound} 轮已提交，C 模块已生成下一轮追问。`;
-  } catch (error) {
-    cErrorMessage.value = normalizeErrorMessage(error, 'C 模块回答提交失败。');
-  } finally {
-    cIsSubmittingAnswer.value = false;
-  }
+    if (samplingState.value.phase === 'active') {
+      speechRecognitionHadError = true;
+      speechRecognitionPhase.value = 'error';
+      const closeDetail = event.code
+        ? `（${event.code}${event.reason ? `：${event.reason}` : ''}）`
+        : '';
+      speechRecognitionMessage.value = `讯飞实时转写连接已断开${closeDetail}。`;
+    }
+  };
 }
 
-function clearCVoiceTimer() {
-  if (cVoiceTimerId !== null) {
-    window.clearInterval(cVoiceTimerId);
-    cVoiceTimerId = null;
-  }
-}
-
-function chooseCVoiceMimeType() {
-  if (
-    typeof MediaRecorder === 'undefined' ||
-    typeof MediaRecorder.isTypeSupported !== 'function'
-  ) {
-    return '';
+function stopSpeechRecognition(options: { reset?: boolean } = {}) {
+  if (currentRound.value) {
+    promoteSpeechInterimTranscript(currentRound.value);
   }
 
-  const audioTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
-  return (
-    audioTypes.find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) || ''
-  );
-}
-
-function stopCVoiceTracks() {
-  cVoiceStream?.getTracks().forEach((track) => track.stop());
-  cVoiceStream = null;
-}
-
-function stopCVoiceRuntime() {
-  clearCVoiceTimer();
-  stopCVoiceTracks();
-  cVoiceRecorder = null;
-}
-
-async function startCVoiceRecording() {
-  if (cRecorderPhase.value === 'recording') {
-    return;
+  stopAsrAudioProcessing();
+  asrPcmByteQueue = [];
+  const socket = asrWebSocket;
+  if (socket) {
+    isStoppingSpeechRecognition = true;
+    speechRecognitionPhase.value = 'stopping';
+    if (socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: 'end' }));
+    }
+    socket.close();
+    asrWebSocket = null;
   }
 
-  if (
-    typeof navigator === 'undefined' ||
-    !navigator.mediaDevices?.getUserMedia
-  ) {
-    cRecorderPhase.value = 'unsupported';
-    cRecorderMessage.value =
-      '当前浏览器不支持麦克风采集，请使用手动转写文本验证。';
-    return;
+  if (options.reset) {
+    resetSpeechRecognitionState();
   }
-
-  if (typeof MediaRecorder === 'undefined') {
-    cRecorderPhase.value = 'unsupported';
-    cRecorderMessage.value =
-      '当前浏览器不支持 MediaRecorder，请使用手动转写文本验证。';
-    return;
-  }
-
-  resetCVoiceRecording();
-
-  try {
-    cVoiceStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    cVoiceMimeType = chooseCVoiceMimeType();
-    cVoiceDiscardRecording = false;
-    cVoiceRecorder = new MediaRecorder(
-      cVoiceStream,
-      cVoiceMimeType ? { mimeType: cVoiceMimeType } : undefined,
-    );
-    cVoiceChunks = [];
-
-    cVoiceRecorder.addEventListener('dataavailable', (event) => {
-      if (event.data.size > 0) {
-        cVoiceChunks.push(event.data);
-      }
-    });
-
-    cVoiceRecorder.addEventListener('stop', () => {
-      clearCVoiceTimer();
-      if (cVoiceDiscardRecording) {
-        cVoiceDiscardRecording = false;
-        cVoiceChunks = [];
-        stopCVoiceRuntime();
-        return;
-      }
-
-      cRecordedDurationMs.value = Math.max(0, Date.now() - cVoiceStartedAt);
-      cRecordedAudio.value = cVoiceChunks.length
-        ? new Blob(cVoiceChunks, { type: cVoiceMimeType || 'audio/webm' })
-        : null;
-      cRecorderPhase.value = cRecordedAudio.value ? 'recorded' : 'idle';
-      cRecorderMessage.value = cRecordedAudio.value
-        ? `已生成 ${Math.round(cRecordedAudio.value.size / 1024)} KB 音频片段，可随本轮回答提交。`
-        : '未采集到有效音频，仍可使用手动转写文本提交。';
-      stopCVoiceRuntime();
-    });
-
-    cVoiceStartedAt = Date.now();
-    cRecordedDurationMs.value = 0;
-    cRecordedAudio.value = null;
-    cRecorderPhase.value = 'recording';
-    cRecorderMessage.value =
-      '录音进行中，结束后会把音频元信息提交给 mock ASR。';
-    cVoiceTimerId = window.setInterval(() => {
-      cRecordedDurationMs.value = Math.max(0, Date.now() - cVoiceStartedAt);
-    }, 250);
-    cVoiceRecorder.start();
-  } catch (error) {
-    stopCVoiceRuntime();
-    cRecorderPhase.value = 'error';
-    cRecorderMessage.value = normalizeErrorMessage(
-      error,
-      '麦克风调用失败，请使用手动转写文本验证。',
-    );
-  }
-}
-
-function stopCVoiceRecording() {
-  if (cVoiceRecorder?.state === 'recording') {
-    cVoiceDiscardRecording = false;
-    cVoiceRecorder.stop();
-    return;
-  }
-
-  stopCVoiceRuntime();
-}
-
-function resetCVoiceRecording() {
-  if (cVoiceRecorder?.state === 'recording') {
-    cVoiceDiscardRecording = true;
-    cVoiceRecorder.stop();
-  } else {
-    stopCVoiceRuntime();
-  }
-
-  cVoiceChunks = [];
-  cVoiceMimeType = '';
-  cRecordedAudio.value = null;
-  cRecordedDurationMs.value = 0;
-  cRecorderPhase.value = 'idle';
-  cRecorderMessage.value =
-    '可选：录一段回答音频，后端 mock ASR 会读取音频元信息。';
 }
 
 onBeforeUnmount(() => {
   stopSamplingResources();
-  stopCVoiceRuntime();
+  stopSpeechRecognition({ reset: true });
 });
 </script>
 
@@ -2309,9 +1997,7 @@ onBeforeUnmount(() => {
         <h2>辅助问询流程控制台</h2>
         <p class="section-copy">
           使用单一主工作面管理策略生成、多轮采样和人工判定。当前已对接
-          AI-Service
-          三个接口，摄像头与话筒采样为真实浏览器调用，缺失字段仅在前端做显式
-          mock 补齐。
+          AI-Service 三个接口，摄像头、话筒和实时转写随采样流程同步启动。
         </p>
       </div>
 
@@ -2326,221 +2012,6 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </header>
-
-    <section class="c-demo-panel" data-testid="c-voice-llm-demo">
-      <header class="c-demo-panel__head">
-        <div>
-          <p class="section-eyebrow">C Module Demo</p>
-          <h3>C 语音 + LLM 验证台</h3>
-          <p class="section-copy">
-            这里直接调用 Go 后端 mock 接口，验证模拟 ASR、多轮追问、风险关键词和
-            maxRounds 轮次熔断，不依赖 AI-Service 或 HumanOmni。
-          </p>
-        </div>
-
-        <div class="stage-chip-group">
-          <span
-            class="status-chip"
-            :class="
-              cSession?.status === 'completed'
-                ? 'status-chip--ended'
-                : 'status-chip--active'
-            "
-          >
-            {{ cSession ? cSession.status : 'not-started' }}
-          </span>
-          <span class="soft-chip">轮次 {{ cRoundLabel }}</span>
-        </div>
-      </header>
-
-      <div class="c-demo-grid">
-        <section class="c-demo-block">
-          <div class="c-demo-block__head">
-            <div>
-              <span class="meta-label">Session</span>
-              <strong>会话与当前问题</strong>
-            </div>
-            <label class="c-round-control">
-              <span>上限</span>
-              <input
-                v-model.number="cMaxRounds"
-                type="number"
-                min="1"
-                max="10"
-                :disabled="Boolean(cSession)"
-              />
-            </label>
-          </div>
-
-          <p class="workspace-summary">{{ cStatusMessage }}</p>
-
-          <div class="summary-stack summary-stack--compact">
-            <div class="summary-item">
-              <span class="meta-label">Session ID</span>
-              <strong>{{ cSession?.sessionId || '待创建' }}</strong>
-            </div>
-            <div class="summary-item">
-              <span class="meta-label">当前问题</span>
-              <p>{{ cSession?.currentQuestion || buildCInitialQuestion() }}</p>
-            </div>
-          </div>
-
-          <div class="action-row">
-            <button
-              class="secondary-action"
-              type="button"
-              :disabled="cIsCreatingSession || Boolean(cSession)"
-              @click="createCSession()"
-            >
-              {{ cIsCreatingSession ? '创建中...' : '创建 C 会话' }}
-            </button>
-            <button
-              class="secondary-action"
-              type="button"
-              @click="resetCSession"
-            >
-              重置验证台
-            </button>
-          </div>
-        </section>
-
-        <section class="c-demo-block">
-          <div class="c-demo-block__head">
-            <div>
-              <span class="meta-label">Mock ASR</span>
-              <strong>语音采集 / 模拟转写</strong>
-            </div>
-            <span class="soft-chip">{{ cRecorderPhaseLabel }}</span>
-          </div>
-
-          <div class="c-recorder-row">
-            <button
-              class="secondary-action"
-              type="button"
-              :disabled="cRecorderPhase === 'recording'"
-              @click="startCVoiceRecording"
-            >
-              开始录音
-            </button>
-            <button
-              class="secondary-action"
-              type="button"
-              :disabled="cRecorderPhase !== 'recording'"
-              @click="stopCVoiceRecording"
-            >
-              结束录音
-            </button>
-          </div>
-
-          <p class="workspace-summary">{{ cRecorderMessage }}</p>
-
-          <label class="c-transcript-box">
-            <span>模拟转写文本</span>
-            <textarea
-              v-model="cTranscriptInput"
-              rows="5"
-              placeholder="输入或保留一段旅客回答，用于 mock ASR 和 LLM 追问。"
-            ></textarea>
-          </label>
-
-          <div v-if="cAsrResponse" class="summary-item">
-            <span class="meta-label">ASR 返回</span>
-            <p>{{ cAsrResponse.transcript }}</p>
-            <div class="tag-row">
-              <span class="tag-chip tag-chip--passive"
-                >置信度 {{ Math.round(cAsrResponse.confidence * 100) }}%</span
-              >
-              <span class="tag-chip tag-chip--passive">{{
-                cAsrResponse.language
-              }}</span>
-              <span class="tag-chip tag-chip--passive"
-                >{{ cAsrResponse.audioBytes }} bytes</span
-              >
-            </div>
-          </div>
-
-          <button
-            class="primary-action"
-            type="button"
-            :disabled="!cCanSubmitAnswer"
-            @click="submitCAnswer"
-          >
-            {{
-              cIsSubmittingAnswer
-                ? '提交中...'
-                : cSession
-                  ? '提交本轮回答'
-                  : '创建会话并提交'
-            }}
-          </button>
-        </section>
-
-        <section class="c-demo-block">
-          <div class="c-demo-block__head">
-            <div>
-              <span class="meta-label">Mock LLM</span>
-              <strong>追问结果与熔断</strong>
-            </div>
-            <span
-              class="status-chip"
-              :class="
-                cTurnResponse?.shouldStop
-                  ? 'status-chip--ended'
-                  : 'status-chip--idle'
-              "
-            >
-              {{ cTurnResponse?.shouldStop ? 'shouldStop: true' : '等待提交' }}
-            </span>
-          </div>
-
-          <div v-if="cLatestRiskHints.length" class="tag-row">
-            <span
-              v-for="hint in cLatestRiskHints"
-              :key="hint"
-              class="tag-chip tag-chip--passive"
-            >
-              {{ hint }}
-            </span>
-          </div>
-
-          <div class="summary-stack summary-stack--compact">
-            <div class="summary-item">
-              <span class="meta-label">下一轮问题</span>
-              <p>
-                {{ cTurnResponse?.nextQuestion || '提交回答后在这里显示。' }}
-              </p>
-            </div>
-            <div class="summary-item">
-              <span class="meta-label">生成依据</span>
-              <p>
-                {{
-                  cTurnResponse?.rationale || '等待 mock LLM 返回 rationale。'
-                }}
-              </p>
-            </div>
-          </div>
-
-          <div class="c-history-list">
-            <article
-              v-for="turn in cInquiryHistory"
-              :key="`${turn.round}-${turn.createdAt}`"
-              class="history-item"
-            >
-              <div class="history-item__meta">
-                <strong>第 {{ turn.round }} 轮</strong>
-                <span>{{ turn.createdAt }}</span>
-              </div>
-              <p>{{ turn.question }}</p>
-              <p>{{ turn.answerTranscript }}</p>
-            </article>
-          </div>
-        </section>
-      </div>
-
-      <div v-if="cErrorMessage" class="inline-alert">
-        {{ cErrorMessage }}
-      </div>
-    </section>
 
     <Transition name="stage-switch" mode="out-in">
       <article :key="stageCardKey" class="stage-card">
@@ -2780,9 +2251,7 @@ onBeforeUnmount(() => {
               <p class="section-eyebrow">Stage 02</p>
               <h3>智能辅助问询</h3>
               <p class="section-copy">
-                当前阶段支持真实摄像头与话筒采样，语音转文字仍由前端 mock
-                脚本流实时注入；结束采样后会把本轮真实音视频窗口上传到
-                AI-Service，并用返回结果驱动下一轮追问和人审前摘要。
+                点击开始采样后同步记录视频、话筒输入与实时转写；结束后上传本轮窗口并生成下一轮追问。
               </p>
             </div>
 
@@ -3037,6 +2506,15 @@ onBeforeUnmount(() => {
                     formatDuration(samplingState.elapsedSeconds)
                   }}</span>
                 </div>
+                <div class="audio-meter__status">
+                  <span
+                    class="status-chip"
+                    :class="`status-chip--${speechRecognitionPhase}`"
+                  >
+                    {{ speechRecognitionLabel }}
+                  </span>
+                  <p>{{ speechRecognitionMessage }}</p>
+                </div>
                 <div class="audio-meter__bars">
                   <span
                     v-for="(bar, index) in samplingState.meterBars"
@@ -3045,11 +2523,6 @@ onBeforeUnmount(() => {
                     :style="{ transform: `scaleY(${bar})` }"
                   ></span>
                 </div>
-                <p class="audio-meter__copy">
-                  语音转文字为
-                  mock，但麦克风采样、电平反馈与摄像头视频流均为真实浏览器输入；上传片段强制为
-                  MP4/H.264。
-                </p>
               </div>
 
               <div class="action-row action-row--split">
@@ -3118,9 +2591,7 @@ onBeforeUnmount(() => {
                   class="empty-panel empty-panel--compact"
                 >
                   <strong>尚无实时转写记录</strong>
-                  <span
-                    >开始采样后，这里会按时间顺序显示 mock 语音转写内容。</span
-                  >
+                  <span>开始采样后，这里会显示问询对象的实时回答文本。</span>
                 </div>
               </div>
 
@@ -3539,19 +3010,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
-.c-demo-panel {
-  display: grid;
-  gap: 18px;
-  padding: 24px;
-  border-radius: 24px;
-  background: rgba(255, 255, 255, 0.94);
-  border: 1px solid rgba(157, 189, 202, 0.34);
-  box-shadow: var(--shadow);
-}
-
 .workflow-hero,
-.c-demo-panel__head,
-.c-demo-block__head,
 .stage-card__progress-head,
 .stage-card__head,
 .workspace-panel__head,
@@ -3579,96 +3038,6 @@ onBeforeUnmount(() => {
       rgba(255, 255, 255, 0.96)
     ),
     var(--surface-bg);
-}
-
-.c-demo-panel__head,
-.c-demo-block__head {
-  align-items: flex-start;
-}
-
-.c-demo-panel h3 {
-  margin: 6px 0 0;
-  color: var(--text-main);
-}
-
-.c-demo-grid {
-  display: grid;
-  gap: 16px;
-}
-
-.c-demo-block {
-  display: grid;
-  align-content: start;
-  gap: 16px;
-  min-width: 0;
-  padding: 18px;
-  border-radius: 20px;
-  background: var(--surface-subtle);
-  border: 1px solid rgba(157, 189, 202, 0.24);
-}
-
-.c-round-control {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 38px;
-  padding: 0 10px;
-  border-radius: 999px;
-  background: rgba(11, 114, 136, 0.08);
-  color: var(--accent-strong);
-  font-size: 0.82rem;
-  font-weight: 700;
-}
-
-.c-round-control input {
-  width: 56px;
-  min-height: 30px;
-  padding: 0 8px;
-  border-radius: 10px;
-  border: 1px solid rgba(11, 114, 136, 0.2);
-  background: #ffffff;
-  color: var(--text-main);
-}
-
-.c-recorder-row {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.c-transcript-box {
-  display: grid;
-  gap: 8px;
-}
-
-.c-transcript-box span {
-  font-weight: 700;
-  color: var(--text-main);
-}
-
-.c-transcript-box textarea {
-  width: 100%;
-  min-height: 132px;
-  padding: 14px 16px;
-  border-radius: 18px;
-  border: 1px solid rgba(157, 189, 202, 0.3);
-  background: #ffffff;
-  color: var(--text-main);
-  resize: vertical;
-}
-
-.c-transcript-box textarea:focus,
-.c-round-control input:focus {
-  outline: none;
-  border-color: rgba(11, 114, 136, 0.46);
-}
-
-.c-history-list {
-  display: grid;
-  gap: 12px;
-  max-height: 340px;
-  overflow-y: auto;
-  padding-right: 4px;
 }
 
 .workflow-hero h2,
@@ -4455,6 +3824,19 @@ onBeforeUnmount(() => {
   margin-top: 0;
 }
 
+.audio-meter__status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.audio-meter__status p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.86rem;
+}
+
 .audio-meter__bars {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
@@ -4564,6 +3946,7 @@ onBeforeUnmount(() => {
 }
 
 .status-chip--active,
+.status-chip--listening,
 .status-chip--running,
 .status-chip--partial,
 .status-chip--analysis,
@@ -4572,7 +3955,9 @@ onBeforeUnmount(() => {
   color: var(--accent-strong);
 }
 
-.status-chip--loading {
+.status-chip--loading,
+.status-chip--connecting,
+.status-chip--stopping {
   background: rgba(192, 123, 25, 0.12);
   color: var(--warn);
 }
@@ -4583,6 +3968,7 @@ onBeforeUnmount(() => {
 }
 
 .status-chip--unavailable,
+.status-chip--unsupported,
 .status-chip--error {
   background: rgba(182, 78, 61, 0.12);
   color: var(--alert);
@@ -4817,13 +4203,6 @@ onBeforeUnmount(() => {
 }
 
 @media (min-width: 960px) {
-  .c-demo-grid {
-    grid-template-columns: minmax(260px, 0.85fr) minmax(300px, 1fr) minmax(
-        320px,
-        1.15fr
-      );
-  }
-
   .strategy-layout,
   .judgement-layout {
     grid-template-columns: minmax(320px, 0.95fr) minmax(360px, 1.2fr);
@@ -4941,17 +4320,6 @@ onBeforeUnmount(() => {
   }
 
   .action-row {
-    flex-direction: column;
-  }
-
-  .c-demo-panel {
-    padding: 18px;
-  }
-
-  .c-demo-panel__head,
-  .c-demo-block__head,
-  .c-recorder-row {
-    grid-template-columns: 1fr;
     flex-direction: column;
   }
 

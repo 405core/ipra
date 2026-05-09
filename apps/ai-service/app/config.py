@@ -26,6 +26,27 @@ DEFAULT_CORS_ORIGINS = (
 )
 
 
+def load_local_env() -> None:
+    for env_file in (AI_SERVICE_ROOT / ".env", AI_SERVICE_ROOT / ".env.local"):
+        if not env_file.exists():
+            continue
+
+        for raw_line in env_file.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+
+            key, value = line.split("=", 1)
+            key = key.strip()
+            if not key or key in os.environ:
+                continue
+
+            os.environ[key] = value.strip().strip('"').strip("'")
+
+
+load_local_env()
+
+
 @dataclass(frozen=True)
 class Settings:
     model_path: Path

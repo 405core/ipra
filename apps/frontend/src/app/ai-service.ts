@@ -143,6 +143,20 @@ export interface AsrPayload {
   words: Record<string, unknown>[];
 }
 
+export interface RealtimeAsrEvent {
+  type: 'status' | 'transcript' | 'error';
+  status?: string;
+  provider?: string | null;
+  model?: string | null;
+  message?: string;
+  text?: string;
+  segmentId?: number;
+  startMs?: number;
+  endMs?: number;
+  isFinal?: boolean;
+  rawType?: string | number | null;
+}
+
 export interface FollowupGuidanceRequest {
   sessionId: string;
   roundNo: number;
@@ -193,13 +207,22 @@ function resolveRequestUrl(path: string) {
   return `${resolveAiServiceBaseUrl()}${path}`;
 }
 
+export function resolveAiServiceWebSocketUrl(path: string) {
+  const baseUrl = resolveAiServiceBaseUrl();
+  const wsBaseUrl = baseUrl.replace(/^http/i, (protocol: string) =>
+    protocol.toLowerCase() === 'https' ? 'wss' : 'ws',
+  );
+  return `${wsBaseUrl}${path}`;
+}
+
 async function readErrorMessage(response: Response) {
   const contentType = response.headers.get('content-type') || '';
 
   if (contentType.includes('application/json')) {
-    const payload = (await response.json().catch(() => null)) as
-      | { detail?: string; message?: string }
-      | null;
+    const payload = (await response.json().catch(() => null)) as {
+      detail?: string;
+      message?: string;
+    } | null;
     if (payload?.detail) {
       return payload.detail;
     }
@@ -215,7 +238,7 @@ async function readErrorMessage(response: Response) {
 
 async function requestJson<TResponse>(
   path: string,
-  init: RequestInit
+  init: RequestInit,
 ): Promise<TResponse> {
   const response = await fetch(resolveRequestUrl(path), init);
 
@@ -228,32 +251,41 @@ async function requestJson<TResponse>(
 }
 
 export async function requestFirstRoundStrategy(
-  payload: FirstRoundStrategyRequest
+  payload: FirstRoundStrategyRequest,
 ) {
-  return requestJson<FirstRoundStrategyResponse>('/v1/inquiry/first-round-strategy', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
+  return requestJson<FirstRoundStrategyResponse>(
+    '/v1/inquiry/first-round-strategy',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
     },
-    body: JSON.stringify(payload),
-  });
+  );
 }
 
 export async function uploadHumanOmniWindow(formData: FormData) {
-  return requestJson<HumanOmniSummarizeWindowResponse>('/v1/humanomni/summarize-window', {
-    method: 'POST',
-    body: formData,
-  });
+  return requestJson<HumanOmniSummarizeWindowResponse>(
+    '/v1/humanomni/summarize-window',
+    {
+      method: 'POST',
+      body: formData,
+    },
+  );
 }
 
 export async function requestFollowupGuidance(
-  payload: FollowupGuidanceRequest
+  payload: FollowupGuidanceRequest,
 ) {
-  return requestJson<FollowupGuidanceResponse>('/v1/inquiry/followup-guidance', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
+  return requestJson<FollowupGuidanceResponse>(
+    '/v1/inquiry/followup-guidance',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
     },
-    body: JSON.stringify(payload),
-  });
+  );
 }
