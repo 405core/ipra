@@ -20,6 +20,7 @@ from schemas.inquiry import (
 PROMPT_DIR = Path(__file__).resolve().parents[1] / "prompts"
 DEFAULT_LOCAL_MODEL_PATH = REPO_ROOT / "models" / "business-llm" / "modelscope" / "Qwen2.5-3B-Instruct"
 DEFAULT_LOCAL_CACHE_DIR = REPO_ROOT / "models" / "business-llm" / "huggingface"
+DEFAULT_LOCAL_MODEL_NAME = "Qwen2.5-3B-Instruct"
 _LOCAL_RUNNERS: dict[tuple[str, str, str], "_TransformersLocalRunner"] = {}
 
 
@@ -35,11 +36,11 @@ class BusinessLlmSettings:
 
 
 def load_business_llm_settings() -> BusinessLlmSettings:
-    provider = os.getenv("BUSINESS_LLM_PROVIDER", "mock").strip() or "mock"
+    provider = os.getenv("BUSINESS_LLM_PROVIDER", "transformers_local").strip() or "transformers_local"
     model_path = resolve_path(os.getenv("BUSINESS_LLM_MODEL_PATH"), DEFAULT_LOCAL_MODEL_PATH)
     model_name = os.getenv("BUSINESS_LLM_MODEL", "").strip()
     if not model_name:
-        model_name = "mock-business-llm" if provider == "mock" else model_path.name
+        model_name = "mock-business-llm" if provider == "mock" else DEFAULT_LOCAL_MODEL_NAME
 
     return BusinessLlmSettings(
         provider=provider,
@@ -242,8 +243,8 @@ def load_prompt(name: str) -> str:
 
 def public_runtime(runtime: dict[str, Any]) -> dict[str, str]:
     return {
-        "provider": str(runtime.get("provider") or "mock"),
-        "model": str(runtime.get("model") or "mock-business-llm"),
+        "provider": str(runtime.get("provider") or "transformers_local"),
+        "model": str(runtime.get("model") or DEFAULT_LOCAL_MODEL_NAME),
     }
 
 

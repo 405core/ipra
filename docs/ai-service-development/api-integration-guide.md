@@ -338,8 +338,8 @@ cd D:\405project\ipra
 
 | Provider | 说明 |
 | --- | --- |
-| `mock` | 默认模式，返回稳定测试 JSON，不加载真实大模型 |
-| `transformers_local` | 使用本地 Transformers 加载 Qwen2.5-3B-Instruct |
+| `transformers_local` | 默认模式，使用本地 Transformers 加载 Qwen2.5-3B-Instruct |
+| `mock` | 返回稳定测试 JSON，不加载真实大模型，仅用于 schema 联调 |
 
 使用本地 Qwen2.5-3B-Instruct 前，先下载模型：
 
