@@ -33,6 +33,18 @@ interface SearchProfilesResponse {
   profiles: PassengerProfileRecord[];
 }
 
+export interface IDCardOCRResponse {
+  code: number;
+  msg: string;
+  taskNo?: string;
+  data?: {
+    result: number;
+    side: 'front' | 'back' | string;
+    info?: Record<string, string>;
+    validity?: Record<string, boolean>;
+  };
+}
+
 async function authorizedFetch(input: RequestInfo | URL, init?: RequestInit) {
   const session = loadAuthSession();
   if (!session?.token) {
@@ -128,4 +140,31 @@ export async function downloadImportTemplate(templateType: ImportType) {
       : 'ipra-passenger-profile-template.xlsx');
 
   return { blob, filename };
+}
+
+export async function recognizeIDCard(photoBase64: string) {
+  const response = await authorizedFetch('/api/passenger-profiles/ocr/idcard', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      photoBase64,
+    }),
+  });
+
+  const payload = (await response.json().catch(() => null)) as
+    | IDCardOCRResponse
+    | { message?: string }
+    | null;
+
+  if (!response.ok || !payload) {
+    const message =
+      payload && 'message' in payload && typeof payload.message === 'string'
+        ? payload.message
+        : '身份证 OCR 识别失败。';
+    throw new Error(message);
+  }
+
+  return payload as IDCardOCRResponse;
 }

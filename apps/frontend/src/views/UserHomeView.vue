@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { openTouchInput } from '../app/touch-input';
 import {
+  recognizeIDCard,
+  type IDCardOCRResponse,
   searchPassengerProfiles,
   type PassengerProfileRecord,
 } from '../app/profile-service';
@@ -13,6 +15,8 @@ interface ProfileDetailEntry {
 }
 
 const router = useRouter();
+const defaultCameraStatus = '等待开启摄像头。';
+const defaultOCRStatus = '等待开启实时扫描。';
 
 const query = ref('');
 const touchInputHint = '单击正常输入，双击打开触控键盘';
@@ -25,8 +29,29 @@ const captureCanvas = ref<HTMLCanvasElement | null>(null);
 const isCameraActive = ref(false);
 const isCameraStarting = ref(false);
 const capturedFrame = ref('');
-const cameraStatus = ref('等待开启摄像头。');
+const cameraStatus = ref(defaultCameraStatus);
+const ocrStatus = ref(defaultOCRStatus);
+const ocrSide = ref('');
+const ocrName = ref('');
+const ocrNumber = ref('');
+const ocrAddress = ref('');
+const ocrAuthority = ref('');
+const ocrTimeLimit = ref('');
+const cameraPanelStatus = computed(() => {
+  const cameraMessage = cameraStatus.value.trim();
+  const ocrMessage = ocrStatus.value.trim();
+
+  if (!isCameraActive.value && cameraMessage && cameraMessage !== defaultCameraStatus) {
+    return cameraMessage;
+  }
+
+  return ocrMessage || cameraMessage || defaultOCRStatus;
+});
 let cameraStream: MediaStream | null = null;
+let liveScanTimer: number | null = null;
+let ocrScanTimer: number | null = null;
+let isOCRRequestPending = false;
+let lastAutoSearchNumber = '';
 type LegacyNavigator = Navigator & {
   webkitGetUserMedia?: (
     constraints: MediaStreamConstraints,
@@ -46,11 +71,12 @@ type LegacyNavigator = Navigator & {
 };
 
 function handleProfilesImported() {
-  void loadProfiles(query.value);
+  if (query.value.trim()) {
+    void loadProfiles(query.value);
+  }
 }
 
 onMounted(() => {
-  void loadProfiles();
   window.addEventListener('ipra:profiles-imported', handleProfilesImported);
 });
 
@@ -62,8 +88,15 @@ onBeforeUnmount(() => {
 async function loadProfiles(rawValue = query.value) {
   const trimmed = rawValue.trim();
   query.value = trimmed;
+  if (!trimmed) {
+    results.value = [];
+    searchStatus.value = '请输入证件号进行检索。';
+    isSearching.value = false;
+    return;
+  }
+
   isSearching.value = true;
-  searchStatus.value = trimmed ? '正在检索旅客画像...' : '正在加载最新画像记录...';
+  searchStatus.value = '正在检索旅客画像...';
 
   try {
     const profiles = await searchPassengerProfiles(trimmed);
@@ -76,13 +109,9 @@ async function loadProfiles(rawValue = query.value) {
       ].slice(0, 4);
     }
 
-    if (trimmed) {
-      searchStatus.value = results.value.length
-        ? `已检索到 ${results.value.length} 条匹配记录。`
-        : `未找到与 "${trimmed}" 匹配的旅客记录。`;
-    } else {
-      searchStatus.value = results.value.length ? '' : '当前暂无已导入画像，请先导入文件。';
-    }
+    searchStatus.value = results.value.length
+      ? `已检索到 ${results.value.length} 条匹配记录。`
+      : `未找到证件号为 "${trimmed}" 的旅客记录。`;
   } catch (error) {
     results.value = [];
     searchStatus.value = normalizeErrorMessage(error, '查询旅客画像失败，请稍后重试。');
@@ -97,9 +126,9 @@ async function submitSearch() {
 
 async function openSearchKeyboard() {
   const value = await openTouchInput({
-    title: '检索旅客画像',
-    description: '输入完成后点击确认，系统会自动发起检索。',
-    placeholder: '输入旅客证件号、姓名或订票编码 (PNR)',
+    title: '输入证件号',
+    description: '仅支持证件号精确检索，输入完成后点击确认。',
+    placeholder: '输入旅客证件号',
     value: query.value,
     inputMode: 'search',
     confirmText: '确认检索',
@@ -148,6 +177,7 @@ async function startCamera() {
 
   isCameraStarting.value = true;
   capturedFrame.value = '';
+  resetOCRState();
 
   try {
     const stream = await requestCameraStream();
@@ -161,7 +191,10 @@ async function startCamera() {
     }
 
     isCameraActive.value = true;
-    cameraStatus.value = '摄像头已开启，请将身份证放入取景框。';
+    startLiveScanLoop();
+    startOCRLoop();
+    cameraStatus.value = '实时扫描中，请将身份证保持在取景框内。';
+    ocrStatus.value = '扫描中';
   } catch (error) {
     cameraStatus.value = resolveCameraErrorMessage(error);
   } finally {
@@ -170,6 +203,8 @@ async function startCamera() {
 }
 
 function stopCameraStream(updateStatus = true) {
+  stopLiveScanLoop();
+  stopOCRLoop();
   cameraStream?.getTracks().forEach((track) => track.stop());
   cameraStream = null;
 
@@ -184,22 +219,183 @@ function stopCameraStream(updateStatus = true) {
   }
 }
 
-function confirmCameraFrame() {
-  if (!isCameraActive.value) {
-    cameraStatus.value = '请先开启摄像头。';
+async function confirmCameraFrame() {
+  if (!isCameraActive.value && !capturedFrame.value) {
+    cameraStatus.value = '请先开启摄像头，再确认当前证件画面。';
     return;
   }
 
+  if (isOCRRequestPending) {
+    cameraStatus.value = '正在识别当前证件画面，请稍候。';
+    return;
+  }
+
+  captureCurrentVideoFrame();
+  if (!capturedFrame.value) {
+    cameraStatus.value = '当前还没有可识别的证件画面。';
+    return;
+  }
+
+  cameraStatus.value = '正在确认当前证件画面并发起检索。';
+  ocrStatus.value = '扫描中';
+  await runOCRScan({
+    forceSearch: true,
+    manual: true,
+  });
+}
+
+function startLiveScanLoop() {
+  stopLiveScanLoop();
+  captureCurrentVideoFrame();
+  liveScanTimer = window.setInterval(() => {
+    captureCurrentVideoFrame();
+  }, 450);
+}
+
+function stopLiveScanLoop() {
+  if (liveScanTimer != null) {
+    window.clearInterval(liveScanTimer);
+    liveScanTimer = null;
+  }
+}
+
+function startOCRLoop() {
+  stopOCRLoop();
+  void runOCRScan();
+  ocrScanTimer = window.setInterval(() => {
+    void runOCRScan();
+  }, 1400);
+}
+
+function stopOCRLoop() {
+  if (ocrScanTimer != null) {
+    window.clearInterval(ocrScanTimer);
+    ocrScanTimer = null;
+  }
+  isOCRRequestPending = false;
+}
+
+function pauseLiveOCR(message: string) {
+  stopOCRLoop();
+  ocrStatus.value = message;
+}
+
+async function runOCRScan(options?: { forceSearch?: boolean; manual?: boolean }) {
+  if (!isCameraActive.value || isOCRRequestPending || !capturedFrame.value) {
+    return;
+  }
+
+  isOCRRequestPending = true;
+  try {
+    const result = await recognizeIDCard(capturedFrame.value);
+    handleOCRResult(result, options);
+  } catch (error) {
+    const message = normalizeErrorMessage(error, '调用身份证 OCR 失败。');
+    const shouldPauseLiveScan = !options?.manual;
+    if (shouldPauseLiveScan) {
+      pauseLiveOCR(message || 'OCR 识别异常，已暂停扫描。');
+    } else {
+      ocrStatus.value = message;
+    }
+    if (options?.manual) {
+      cameraStatus.value = '当前证件画面识别失败，请调整角度或光线后重试。';
+    } else {
+      cameraStatus.value = '扫描已暂停，请重新开启。';
+    }
+  } finally {
+    isOCRRequestPending = false;
+  }
+}
+
+function handleOCRResult(
+  result: IDCardOCRResponse,
+  options?: { forceSearch?: boolean; manual?: boolean }
+) {
+  if (result.code !== 200) {
+    ocrStatus.value = result.msg || '身份证 OCR 识别失败。';
+    if (options?.manual) {
+      cameraStatus.value = '当前证件画面未识别成功，请调整后重试。';
+    }
+    return;
+  }
+
+  const payload = result.data;
+  if (!payload || payload.result !== 0) {
+    ocrStatus.value = isCameraActive.value ? '扫描中' : '未识别到有效身份证画面。';
+    if (options?.manual) {
+      cameraStatus.value = '当前证件画面未识别成功，请保持身份证完整入框。';
+    }
+    return;
+  }
+
+  ocrSide.value = payload.side || '';
+  const info = payload.info ?? {};
+  const validity = payload.validity ?? {};
+
+  ocrName.value = info.name ?? '';
+  ocrNumber.value = info.number ?? '';
+  ocrAddress.value = info.address ?? '';
+  ocrAuthority.value = info.authority ?? '';
+  ocrTimeLimit.value = info.timelimit ?? '';
+
+  if (payload.side === 'front' && ocrNumber.value && validity.number !== false) {
+    ocrStatus.value = '扫描成功';
+    syncOCRNumberToSearch(ocrNumber.value, options?.forceSearch === true);
+    return;
+  }
+
+  if (payload.side === 'back') {
+    ocrStatus.value = '扫描中';
+    if (options?.manual) {
+      cameraStatus.value = '当前是身份证国徽面，请翻到人像面后再检索。';
+    }
+    return;
+  }
+
+  ocrStatus.value = '已获取证件画面，等待更清晰识别结果。';
+  if (options?.manual) {
+    cameraStatus.value = '当前证件画面信息不足，请保持身份证完整入框。';
+  }
+}
+
+function syncOCRNumberToSearch(number: string, forceSearch = false) {
+  const normalized = number.trim();
+  if (!normalized) {
+    return;
+  }
+
+  query.value = normalized;
+  if (!forceSearch && lastAutoSearchNumber === normalized) {
+    return;
+  }
+
+  lastAutoSearchNumber = normalized;
+  stopCameraStream(false);
+  cameraStatus.value = defaultCameraStatus;
+  ocrStatus.value = '扫描成功';
+  void loadProfiles(normalized);
+}
+
+function resetOCRState() {
+  ocrStatus.value = defaultOCRStatus;
+  ocrSide.value = '';
+  ocrName.value = '';
+  ocrNumber.value = '';
+  ocrAddress.value = '';
+  ocrAuthority.value = '';
+  ocrTimeLimit.value = '';
+  lastAutoSearchNumber = '';
+}
+
+function captureCurrentVideoFrame() {
   const video = cameraVideo.value;
   const canvas = captureCanvas.value;
   if (!video || !canvas || !video.videoWidth || !video.videoHeight) {
-    cameraStatus.value = '暂未获取到有效画面，请稍后重试。';
     return;
   }
 
   const context = canvas.getContext('2d');
   if (!context) {
-    cameraStatus.value = '当前浏览器不支持画面截取。';
     return;
   }
 
@@ -235,15 +431,7 @@ function confirmCameraFrame() {
     targetHeight
   );
 
-  capturedFrame.value = canvas.toDataURL('image/jpeg', 0.92);
-  stopCameraStream(false);
-  cameraStatus.value = '已截取当前画面，后续可直接接入 OCR 识别。';
-}
-
-function resetCameraPanel() {
-  stopCameraStream(false);
-  capturedFrame.value = '';
-  cameraStatus.value = '等待开启摄像头。';
+  capturedFrame.value = canvas.toDataURL('image/jpeg', 0.9);
 }
 
 function resolveCameraErrorMessage(error: unknown) {
@@ -496,44 +684,120 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 <template>
   <section class="user-page">
     <section class="panel-grid">
-      <form class="surface-card surface-card--search" @submit.prevent="submitSearch">
-        <div class="panel-heading">
-          <div>
-            <p class="section-eyebrow">Single Query</p>
-            <h3>单人检索</h3>
+      <section class="search-column">
+        <form class="surface-card surface-card--search" @submit.prevent="submitSearch">
+          <div class="panel-heading">
+            <div>
+              <p class="section-eyebrow">Single Query</p>
+              <h3>手动检索</h3>
+            </div>
+            <span class="panel-badge">Live</span>
           </div>
-          <span class="panel-badge">Live</span>
-        </div>
 
-        <label class="search-box" for="passenger-query">
-          <input
-            id="passenger-query"
-            v-model="query"
-            :title="touchInputHint"
-            type="text"
-            placeholder="输入旅客证件号、姓名或订票编码 (PNR)"
-            @dblclick.stop.prevent="openSearchKeyboard"
-          />
-          <button type="submit" :disabled="isSearching">
-            {{ isSearching ? '检索中...' : '查询' }}
-          </button>
-        </label>
+          <label class="search-box" for="passenger-query">
+            <input
+              id="passenger-query"
+              v-model="query"
+              :title="touchInputHint"
+              type="text"
+              placeholder="输入旅客证件号"
+              @dblclick.stop.prevent="openSearchKeyboard"
+            />
+            <button type="submit" :disabled="isSearching">
+              {{ isSearching ? '检索中...' : '查询' }}
+            </button>
+          </label>
 
-        <p v-if="searchStatus" class="status-copy">{{ searchStatus }}</p>
+          <p v-if="searchStatus" class="status-copy">{{ searchStatus }}</p>
 
-        <div v-if="recentSearches.length" class="tag-row">
-          <span class="tag-row__label">最近搜索</span>
-          <button
-            v-for="item in recentSearches"
-            :key="item"
-            class="tag-chip"
-            type="button"
-            @click="applyRecentSearch(item)"
-          >
-            {{ item }}
-          </button>
-        </div>
-      </form>
+          <div v-if="recentSearches.length" class="tag-row">
+            <span class="tag-row__label">最近搜索</span>
+            <button
+              v-for="item in recentSearches"
+              :key="item"
+              class="tag-chip"
+              type="button"
+              @click="applyRecentSearch(item)"
+            >
+              {{ item }}
+            </button>
+          </div>
+        </form>
+
+        <section class="surface-card surface-card--results">
+          <div class="block-heading">
+            <div>
+              <p class="section-eyebrow">Active Workspace</p>
+              <h3>检索结果 ({{ results.length }})</h3>
+            </div>
+          </div>
+
+          <div v-if="results.length" class="results-list">
+            <article
+              v-for="record in results"
+              :key="record.id"
+              class="result-strip"
+              :class="{ 'is-high-risk': record.isHighRisk }"
+            >
+              <div class="result-strip__content">
+                <div class="result-strip__headline">
+                  <strong>{{ record.fullName }}</strong>
+                  <span v-if="record.isHighRisk" class="result-strip__pill is-high-risk">高风险预警</span>
+                  <span class="result-strip__pill">
+                    {{ formatDocumentTypeLabel(readProfileField(record, 'basicInfo', 'documentType')) || '未填证件类型' }}
+                  </span>
+                  <span class="result-strip__pill">
+                    {{ formatGenderLabel(readProfileField(record, 'basicInfo', 'gender')) || '未填性别' }}
+                  </span>
+                  <span class="result-strip__identity">{{ record.documentNum }}</span>
+                </div>
+
+                <div class="result-strip__fact-list">
+                  <span
+                    v-for="detail in buildResultDetailEntries(record)"
+                    :key="`${record.id}-${detail.label}`"
+                    class="result-strip__fact"
+                  >
+                    <span class="result-strip__fact-label">{{ detail.label }}</span>
+                    <strong class="result-strip__fact-value">{{ detail.value }}</strong>
+                  </span>
+                </div>
+
+                <div
+                  v-if="buildResultTags(record).length || buildResultNotes(record).length"
+                  class="result-strip__tags"
+                >
+                  <span
+                    v-for="tag in buildResultTags(record)"
+                    :key="`${record.id}-${tag}`"
+                    class="result-strip__tag"
+                  >
+                    {{ tag }}
+                  </span>
+                  <span
+                    v-for="note in buildResultNotes(record)"
+                    :key="`${record.id}-${note.label}`"
+                    class="result-strip__tag result-strip__tag--muted"
+                  >
+                    {{ note.label }}
+                  </span>
+                </div>
+              </div>
+
+              <div class="result-strip__actions">
+                <button class="primary-action" type="button" @click="openAskWorkspace">
+                  发起辅助问询
+                </button>
+              </div>
+            </article>
+          </div>
+
+          <div v-else class="empty-state">
+            <p>当前没有匹配记录。</p>
+            <span>请输入准确证件号后检索。</span>
+          </div>
+        </section>
+      </section>
 
       <section class="surface-card surface-card--camera">
         <div class="panel-heading">
@@ -561,14 +825,14 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
           />
           <div v-if="!isCameraActive && !capturedFrame" class="camera-preview__placeholder">
             <strong>等待开启摄像头</strong>
-            <span>后续 OCR 将直接识别当前确认的证件画面。</span>
+            <span>开启后将自动持续扫描当前证件画面。</span>
           </div>
           <div class="camera-preview__frame"></div>
         </div>
 
         <canvas ref="captureCanvas" class="sr-only"></canvas>
 
-        <p class="status-copy camera-status">{{ cameraStatus }}</p>
+        <p class="status-copy camera-status camera-status--secondary">{{ cameraPanelStatus }}</p>
 
         <div class="camera-actions">
           <button
@@ -587,90 +851,8 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
           >
             确定
           </button>
-          <button
-            class="camera-action"
-            type="button"
-            :disabled="!isCameraActive && !capturedFrame"
-            @click="resetCameraPanel"
-          >
-            重置
-          </button>
         </div>
       </section>
-    </section>
-
-    <section class="content-block">
-      <div class="block-heading">
-        <div>
-          <p class="section-eyebrow">Active Workspace</p>
-          <h3>检索结果 ({{ results.length }})</h3>
-        </div>
-      </div>
-
-      <div v-if="results.length" class="results-list">
-        <article
-          v-for="record in results"
-          :key="record.id"
-          class="result-strip"
-          :class="{ 'is-high-risk': record.isHighRisk }"
-        >
-          <div class="result-strip__content">
-            <div class="result-strip__headline">
-              <strong>{{ record.fullName }}</strong>
-              <span v-if="record.isHighRisk" class="result-strip__pill is-high-risk">高风险预警</span>
-              <span class="result-strip__pill">
-                {{ formatDocumentTypeLabel(readProfileField(record, 'basicInfo', 'documentType')) || '未填证件类型' }}
-              </span>
-              <span class="result-strip__pill">
-                {{ formatGenderLabel(readProfileField(record, 'basicInfo', 'gender')) || '未填性别' }}
-              </span>
-              <span class="result-strip__identity">{{ record.documentNum }}</span>
-            </div>
-
-            <div class="result-strip__fact-list">
-              <span
-                v-for="detail in buildResultDetailEntries(record)"
-                :key="`${record.id}-${detail.label}`"
-                class="result-strip__fact"
-              >
-                <span class="result-strip__fact-label">{{ detail.label }}</span>
-                <strong class="result-strip__fact-value">{{ detail.value }}</strong>
-              </span>
-            </div>
-
-            <div
-              v-if="buildResultTags(record).length || buildResultNotes(record).length"
-              class="result-strip__tags"
-            >
-              <span
-                v-for="tag in buildResultTags(record)"
-                :key="`${record.id}-${tag}`"
-                class="result-strip__tag"
-              >
-                {{ tag }}
-              </span>
-              <span
-                v-for="note in buildResultNotes(record)"
-                :key="`${record.id}-${note.label}`"
-                class="result-strip__tag result-strip__tag--muted"
-              >
-                {{ note.label }}
-              </span>
-            </div>
-          </div>
-
-          <div class="result-strip__actions">
-            <button class="primary-action" type="button" @click="openAskWorkspace">
-              发起辅助问询
-            </button>
-          </div>
-        </article>
-      </div>
-
-      <div v-else class="empty-state">
-        <p>当前没有匹配记录。</p>
-        <span>请尝试其他证件号、PNR，或重新导入批量文件。</span>
-      </div>
     </section>
   </section>
 </template>
@@ -691,6 +873,10 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 .user-page {
   display: grid;
   gap: 22px;
+  width: min(1480px, 100%);
+  min-height: calc(100vh - 146px);
+  margin: 0 auto;
+  align-content: center;
 }
 
 .surface-card,
@@ -751,6 +937,12 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
   gap: 18px;
 }
 
+.search-column {
+  display: grid;
+  gap: 18px;
+  align-content: start;
+}
+
 .surface-card {
   padding: 18px 20px;
 }
@@ -765,6 +957,12 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
   display: grid;
   gap: 12px;
   padding: 14px 16px 16px;
+}
+
+.surface-card--results {
+  display: grid;
+  gap: 0;
+  padding: 18px 20px 20px;
 }
 
 .panel-badge {
@@ -922,14 +1120,26 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
   min-height: 44px;
 }
 
+.camera-status--secondary {
+  min-height: 52px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(11, 114, 136, 0.06);
+  border: 1px solid rgba(11, 114, 136, 0.1);
+}
+
 .camera-actions {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
 
 .camera-action {
-  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 56px;
   padding: 0 12px;
   border-radius: 16px;
   background: rgba(11, 114, 136, 0.08);
@@ -954,6 +1164,14 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
   display: grid;
   gap: 14px;
   margin-top: 16px;
+}
+
+.surface-card--results .empty-state {
+  margin-top: 16px;
+  padding: 34px 12px 16px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .result-strip {
@@ -1230,6 +1448,7 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 @media (min-width: 1080px) {
   .panel-grid {
     grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.85fr);
+    align-items: center;
   }
 
   .stats-grid {
@@ -1251,6 +1470,11 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 }
 
 @media (max-width: 719px) {
+  .user-page {
+    min-height: auto;
+    align-content: start;
+  }
+
   .panel-heading,
   .block-heading {
     flex-direction: column;

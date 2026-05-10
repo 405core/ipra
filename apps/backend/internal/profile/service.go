@@ -64,6 +64,69 @@ func NewService(db *gorm.DB) *Service {
 	return &Service{db: db}
 }
 
+func (s *Service) SearchProfilesByDocumentExact(
+	ctx context.Context,
+	documentNum string,
+) ([]SearchProfileResponse, error) {
+	trimmedDocumentNum := strings.TrimSpace(documentNum)
+	if trimmedDocumentNum == "" {
+		return []SearchProfileResponse{}, nil
+	}
+
+	var profiles []dbschema.PassengerProfile
+	if err := s.db.WithContext(ctx).
+		Where("document_num = ?", trimmedDocumentNum).
+		Order("updated_at DESC").
+		Limit(1).
+		Find(&profiles).Error; err != nil {
+		return nil, err
+	}
+
+	if len(profiles) > 0 {
+		watchlistMap, err := s.loadWatchlistMap(ctx, profiles)
+		if err != nil {
+			return nil, err
+		}
+
+		profile := profiles[0]
+		watchItem, inWatchlist := watchlistMap[profile.DocumentNum]
+		return []SearchProfileResponse{
+			{
+				ID:          profile.ID,
+				FullName:    profile.FullName,
+				DocumentNum: profile.DocumentNum,
+				IsHighRisk:  inWatchlist,
+				RiskReason:  watchItem,
+				ProfileData: decodeJSONMap(profile.ProfileData),
+				UpdatedAt:   profile.UpdatedAt,
+			},
+		}, nil
+	}
+
+	var watchItem dbschema.HighRiskWatchlist
+	if err := s.db.WithContext(ctx).
+		Where("document_num = ?", trimmedDocumentNum).
+		Order("updated_at DESC").
+		First(&watchItem).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return []SearchProfileResponse{}, nil
+		}
+		return nil, err
+	}
+
+	return []SearchProfileResponse{
+		{
+			ID:          0,
+			FullName:    "未导入基础画像",
+			DocumentNum: watchItem.DocumentNum,
+			IsHighRisk:  true,
+			RiskReason:  watchItem.RiskReason,
+			ProfileData: map[string]any{},
+			UpdatedAt:   watchItem.UpdatedAt,
+		},
+	}, nil
+}
+
 func (s *Service) SearchProfiles(ctx context.Context, query string, limit int) ([]SearchProfileResponse, error) {
 	dbQuery := s.db.WithContext(ctx).Model(&dbschema.PassengerProfile{})
 
