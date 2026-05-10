@@ -3,37 +3,27 @@ package profile
 import (
 	"embed"
 	"net/http"
-	"path/filepath"
 
 	"github.com/gin-gonic/gin"
 )
 
-const (
-	baseProfileTemplateFilename = "ipra-passenger-profile-template.xlsx"
-	highRiskTemplateFilename    = "ipra-high-risk-watchlist-template.xlsx"
-	spreadsheetContentType      = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
+const ImportTemplateFilename = "ipra-passenger-profile-template.xlsx"
 
-//go:embed templates/ipra-passenger-profile-template.xlsx templates/ipra-high-risk-watchlist-template.xlsx
+//go:embed templates/ipra-passenger-profile-template.xlsx
 var templateFiles embed.FS
 
 func RegisterRoutes(r gin.IRouter) {
-	r.GET("/api/import-templates/passenger-profile.xlsx", func(c *gin.Context) {
-		handleImportTemplate(c, baseProfileTemplateFilename)
-	})
-	r.GET("/api/import-templates/high-risk-watchlist.xlsx", func(c *gin.Context) {
-		handleImportTemplate(c, highRiskTemplateFilename)
-	})
+	r.GET("/api/import-templates/passenger-profile.xlsx", handleImportTemplate)
 }
 
-func handleImportTemplate(c *gin.Context, filename string) {
-	data, err := templateFiles.ReadFile(filepath.ToSlash("templates/" + filename))
+func handleImportTemplate(c *gin.Context) {
+	data, err := templateFiles.ReadFile("templates/" + ImportTemplateFilename)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "读取导入模板失败"})
 		return
 	}
 
-	c.Header("Content-Type", spreadsheetContentType)
-	c.Header("Content-Disposition", `attachment; filename="`+filename+`"`)
-	c.Data(http.StatusOK, spreadsheetContentType, data)
+	c.Header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	c.Header("Content-Disposition", `attachment; filename="`+ImportTemplateFilename+`"`)
+	c.Data(http.StatusOK, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", data)
 }

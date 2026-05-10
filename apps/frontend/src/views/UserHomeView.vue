@@ -65,7 +65,7 @@ const query = ref('');
 const results = ref<PassengerRecord[]>([]);
 const recentSearches = ref<string[]>([]);
 const searchStatus = ref('正在加载最新画像记录...');
-const importStatus = ref('支持 CSV / XLSX，单次最大 20MB。请按当前导入类型下载对应单表模板。');
+const importStatus = ref('支持 CSV / XLSX，单次最大 20MB。推荐使用系统导出的多 sheet XLSX 模板。');
 const isDropActive = ref(false);
 const isSearching = ref(false);
 const isImporting = ref(false);
@@ -130,11 +130,7 @@ async function exportImportTemplate() {
   importStatus.value = '正在获取模板文件...';
 
   try {
-    const templatePath =
-      selectedImportType.value === 'HIGH_RISK'
-        ? '/api/import-templates/high-risk-watchlist.xlsx'
-        : '/api/import-templates/passenger-profile.xlsx';
-    const response = await fetch(templatePath);
+    const response = await fetch('/api/import-templates/passenger-profile.xlsx');
 
     if (!response.ok) {
       throw new Error('模板下载失败');
@@ -145,11 +141,7 @@ async function exportImportTemplate() {
     const link = document.createElement('a');
     const disposition = response.headers.get('Content-Disposition') ?? '';
     const match = disposition.match(/filename="([^"]+)"/);
-    const filename =
-      match?.[1] ??
-      (selectedImportType.value === 'HIGH_RISK'
-        ? 'ipra-high-risk-watchlist-template.xlsx'
-        : 'ipra-passenger-profile-template.xlsx');
+    const filename = match?.[1] ?? 'ipra-passenger-profile-template.xlsx';
 
     link.href = url;
     link.download = filename;

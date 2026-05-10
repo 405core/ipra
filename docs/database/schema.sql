@@ -64,40 +64,36 @@ COMMENT ON COLUMN import_batch_log.created_at IS '记录创建时间';
 
 CREATE TABLE IF NOT EXISTS passenger_profile (
     id BIGSERIAL PRIMARY KEY,
+    document_type VARCHAR(32) NOT NULL,
     document_num VARCHAR(64) NOT NULL,
+    issuing_region VARCHAR(64) NOT NULL DEFAULT 'CN',
     full_name VARCHAR(128) NOT NULL,
-    profile_data JSONB,
+    gender SMALLINT,
+    birth_date DATE,
+    is_high_risk BOOLEAN NOT NULL DEFAULT FALSE,
+    identity_details JSONB,
+    dimension_data JSONB,
+    latest_batch_id BIGINT REFERENCES import_batch_log(id),
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_uniq_passenger_doc
-    ON passenger_profile(document_num);
+    ON passenger_profile(document_type, document_num, issuing_region);
 
 COMMENT ON TABLE passenger_profile IS '旅客全息画像主表（宽表结构）';
 COMMENT ON COLUMN passenger_profile.id IS '主键';
+COMMENT ON COLUMN passenger_profile.document_type IS '证件类型（如 ID_CARD、PASSPORT）';
 COMMENT ON COLUMN passenger_profile.document_num IS '证件号码，现场扫描和检索的核心字段';
+COMMENT ON COLUMN passenger_profile.issuing_region IS '签发国家或地区，用于和证件类型、证件号组成复合唯一键';
 COMMENT ON COLUMN passenger_profile.full_name IS '统一全名展示字段';
-COMMENT ON COLUMN passenger_profile.profile_data IS '旅客基础画像 JSON，覆盖个人基本信息、行程、历史出行、职业背景、违法犯罪记录等维度';
+COMMENT ON COLUMN passenger_profile.gender IS '性别（1:男, 2:女, 0:未知）';
+COMMENT ON COLUMN passenger_profile.birth_date IS '出生日期';
+COMMENT ON COLUMN passenger_profile.is_high_risk IS '高风险标识，供前端显著预警';
+COMMENT ON COLUMN passenger_profile.identity_details IS '证件专属动态字段，如身份证住址、民族或护照有效期';
+COMMENT ON COLUMN passenger_profile.dimension_data IS '存放导入的行程、案底、职业等多维全息画像，供大模型读取';
+COMMENT ON COLUMN passenger_profile.latest_batch_id IS '最近一次写入该画像的导入批次 ID';
 COMMENT ON COLUMN passenger_profile.created_at IS '记录创建时间';
 COMMENT ON COLUMN passenger_profile.updated_at IS '记录更新时间';
-
-CREATE TABLE IF NOT EXISTS high_risk_watchlist (
-    id BIGSERIAL PRIMARY KEY,
-    document_num VARCHAR(64) NOT NULL,
-    risk_reason TEXT NOT NULL DEFAULT '',
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_uniq_watchlist_doc
-    ON high_risk_watchlist(document_num);
-
-COMMENT ON TABLE high_risk_watchlist IS '高风险名单表';
-COMMENT ON COLUMN high_risk_watchlist.id IS '主键';
-COMMENT ON COLUMN high_risk_watchlist.document_num IS '证件号码，用于和旅客画像做证件级关联';
-COMMENT ON COLUMN high_risk_watchlist.risk_reason IS '高风险原因或名单说明';
-COMMENT ON COLUMN high_risk_watchlist.created_at IS '记录创建时间';
-COMMENT ON COLUMN high_risk_watchlist.updated_at IS '记录更新时间';
 
 -- 如需联调账号，请由 DBA / 运维手工插入，不再由后端启动自动补齐。
