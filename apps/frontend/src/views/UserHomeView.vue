@@ -1,79 +1,37 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
+import { openTouchInput } from '../app/touch-input';
 import {
-  importPassengerProfiles,
   searchPassengerProfiles,
-  type ImportBatchResult,
-  type ImportType,
   type PassengerProfileRecord,
 } from '../app/profile-service';
 
-type RiskLevel = 'high' | 'medium';
-
-interface PassengerRecord {
-  id: string;
-  name: string;
-  documentId: string;
-  pnr: string;
-  route: string;
-  seat: string;
-  eta: string;
-  riskLevel: RiskLevel;
-  riskLabel: string;
-  summary: string;
-  watchTags: string[];
-}
-
-interface DashboardStat {
+interface ProfileDetailEntry {
   label: string;
   value: string;
-  detail: string;
 }
 
 const router = useRouter();
 
-const dashboardStats: DashboardStat[] = [
-  {
-    label: '导入入口',
-    value: 'CSV / XLSX',
-    detail: '支持基础画像与高风险名单',
-  },
-  {
-    label: '检索方式',
-    value: '证件 / 姓名 / PNR',
-    detail: '命中后直接展示全息画像',
-  },
-  {
-    label: '风险联动',
-    value: '高风险即预警',
-    detail: '命中名单自动高亮',
-  },
-  {
-    label: '数据承载',
-    value: '主表 + JSON',
-    detail: '兼容多维画像字段',
-  },
-];
-
-const importTypeOptions: Array<{ label: string; value: ImportType }> = [
-  { label: '基础画像', value: 'BASE_PROFILE' },
-  { label: '高风险名单', value: 'HIGH_RISK' },
-];
-
 const query = ref('');
-const results = ref<PassengerRecord[]>([]);
+const touchInputHint = '单击正常输入，双击打开触控键盘';
+const results = ref<PassengerProfileRecord[]>([]);
 const recentSearches = ref<string[]>([]);
-const searchStatus = ref('正在加载最新画像记录...');
-const importStatus = ref('支持 CSV / XLSX，单次最大 20MB。请按基础画像或高风险名单模板分别导入。');
-const isDropActive = ref(false);
+const searchStatus = ref('');
 const isSearching = ref(false);
-const isImporting = ref(false);
-const selectedImportType = ref<ImportType>('BASE_PROFILE');
-const fileInput = ref<HTMLInputElement | null>(null);
+
+function handleProfilesImported() {
+  void loadProfiles(query.value);
+}
 
 onMounted(() => {
   void loadProfiles();
+  window.addEventListener('ipra:profiles-imported', handleProfilesImported);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('ipra:profiles-imported', handleProfilesImported);
 });
 
 async function loadProfiles(rawValue = query.value) {
@@ -84,7 +42,7 @@ async function loadProfiles(rawValue = query.value) {
 
   try {
     const profiles = await searchPassengerProfiles(trimmed);
-    results.value = profiles.map(mapProfileToCard);
+    results.value = profiles;
 
     if (trimmed) {
       recentSearches.value = [
@@ -98,9 +56,7 @@ async function loadProfiles(rawValue = query.value) {
         ? `已检索到 ${results.value.length} 条匹配记录。`
         : `未找到与 "${trimmed}" 匹配的旅客记录。`;
     } else {
-      searchStatus.value = results.value.length
-        ? `已加载最新 ${results.value.length} 条画像记录。`
-        : '当前暂无已导入画像，请先导入文件。';
+      searchStatus.value = results.value.length ? '' : '当前暂无已导入画像，请先导入文件。';
     }
   } catch (error) {
     results.value = [];
@@ -114,100 +70,31 @@ async function submitSearch() {
   await loadProfiles();
 }
 
+async function openSearchKeyboard() {
+  const value = await openTouchInput({
+    title: '检索旅客画像',
+    description: '输入完成后点击确认，系统会自动发起检索。',
+    placeholder: '输入旅客证件号、姓名或订票编码 (PNR)',
+    value: query.value,
+    inputMode: 'search',
+    confirmText: '确认检索',
+  });
+
+  if (value == null) {
+    return;
+  }
+
+  query.value = value;
+  await loadProfiles(value);
+}
+
 async function applyRecentSearch(item: string) {
   query.value = item;
   await loadProfiles(item);
 }
 
-function triggerFileSelection() {
-  if (isImporting.value) {
-    return;
-  }
-  fileInput.value?.click();
-}
-
-async function acceptFile(file: File | null) {
-  if (!file) {
-    importStatus.value = '未选择文件。';
-    return;
-  }
-
-  const normalizedName = file.name.toLowerCase();
-  const isSupported =
-    normalizedName.endsWith('.csv') || normalizedName.endsWith('.xlsx');
-
-  if (!isSupported) {
-    importStatus.value = '仅支持 CSV 或 XLSX 文件。';
-    return;
-  }
-
-  isImporting.value = true;
-  importStatus.value = `正在导入 ${importTypeLabel(selectedImportType.value)}：${file.name}`;
-
-  try {
-    const result = await importPassengerProfiles(file, selectedImportType.value);
-    importStatus.value = buildImportStatus(file.name, result);
-    await loadProfiles(query.value);
-  } catch (error) {
-    importStatus.value = normalizeErrorMessage(error, '导入旅客画像失败，请稍后重试。');
-  } finally {
-    isImporting.value = false;
-    if (fileInput.value) {
-      fileInput.value.value = '';
-    }
-  }
-}
-
-async function handleFileChange(event: Event) {
-  const input = event.target as HTMLInputElement;
-  await acceptFile(input.files?.[0] ?? null);
-}
-
-async function handleDrop(event: DragEvent) {
-  isDropActive.value = false;
-  await acceptFile(event.dataTransfer?.files?.[0] ?? null);
-}
-
-async function reviewRecord(record: PassengerRecord) {
-  query.value = record.documentId;
-  await loadProfiles(record.documentId);
-}
-
 async function openAskWorkspace() {
   await router.push({ name: 'home-ask' });
-}
-
-function mapProfileToCard(profile: PassengerProfileRecord): PassengerRecord {
-  const profileData = asRecord(profile.profileData);
-  const tripInfo = asRecord(profileData.tripInfo);
-  const occupation = asRecord(profileData.occupation);
-  const riskInfo = asRecord(profileData.riskInfo);
-  const riskTags = asStringArray(riskInfo.riskTags);
-  const riskRecords = Object.keys(riskInfo).length ? [riskInfo] : [];
-
-  const route = buildRouteLabel(tripInfo);
-  const seat = asString(tripInfo.seat) || asString(tripInfo.accommodation) || '未录入座位 / 住宿信息';
-  const eta =
-    asString(tripInfo.departureDate) ||
-    asString(tripInfo.returnTicketStatus) ||
-    `更新于 ${formatDateTime(profile.updatedAt)}`;
-  const pnr = asString(tripInfo.pnr) || '未录入 PNR';
-  const summary = buildSummary(profile, tripInfo, occupation, riskRecords, riskTags);
-  const watchTags = buildWatchTags(profile, tripInfo, riskRecords, riskTags);
-
-  return {
-    id: String(profile.id),
-    name: profile.fullName,
-    documentId: profile.documentNum,
-    pnr,
-    route,
-    seat,
-    eta,
-    riskLevel: profile.isHighRisk ? 'high' : 'medium',
-    riskLabel: profile.isHighRisk ? '高风险预警' : '画像已导入',
-    summary,
-    watchTags,
-  };
 }
 
 function buildRouteLabel(tripInfo: Record<string, unknown>) {
@@ -232,38 +119,8 @@ function buildRouteLabel(tripInfo: Record<string, unknown>) {
   return '未录入行程信息';
 }
 
-function buildSummary(
-  profile: PassengerProfileRecord,
-  tripInfo: Record<string, unknown>,
-  occupation: Record<string, unknown>,
-  riskRecords: Array<Record<string, unknown>>,
-  riskTags: string[]
-) {
-  const firstRisk = riskRecords[0] ?? {};
-  const riskType = asString(firstRisk.type);
-  const purpose = asString(tripInfo.purposeDeclared);
-  const occupationName =
-    asString(occupation.occupation) || asString(occupation.position) || asString(occupation.company);
-
-  if (profile.isHighRisk) {
-    const detail = profile.riskReason || riskType || riskTags[0] || '名单命中';
-    return `当前旅客已命中高风险画像：${detail}。建议优先核验行程目的、资金来源和同行关系。`;
-  }
-
-  if (purpose && occupationName) {
-    return `申报出境目的为“${purpose}”，当前职业信息为“${occupationName}”，可结合历史行程继续核验。`;
-  }
-
-  if (purpose) {
-    return `申报出境目的为“${purpose}”，画像已完成入库，可继续进行证件匹配和人工问询。`;
-  }
-
-  return '画像记录已完成入库，可继续开展证件匹配、风险比对和后续辅助问询。';
-}
-
 function buildWatchTags(
   profile: PassengerProfileRecord,
-  tripInfo: Record<string, unknown>,
   riskRecords: Array<Record<string, unknown>>,
   riskTags: string[]
 ) {
@@ -276,44 +133,112 @@ function buildWatchTags(
     }
   }
 
-  const destination = asString(tripInfo.destination);
-  if (destination) {
-    tags.push(`目的地:${destination}`);
-  }
-
   if (profile.isHighRisk) {
     tags.unshift('高风险名单');
   }
 
   const unique = [...new Set(tags.filter(Boolean))];
-  return unique.length ? unique.slice(0, 4) : ['已导入画像'];
+  return unique.slice(0, 4);
 }
 
-function buildImportStatus(fileName: string, result: ImportBatchResult) {
-  const label = importTypeLabel(selectedImportType.value);
-  const firstError = result.errorDetails?.[0];
+function buildResultDetailEntries(profile: PassengerProfileRecord): ProfileDetailEntry[] {
+  const profileData = asRecord(profile.profileData);
+  const basicInfo = asRecord(profileData.basicInfo);
+  const tripInfo = asRecord(profileData.tripInfo);
+  const occupation = asRecord(profileData.occupation);
+  const occupationSummary = [asString(occupation.occupation), asString(occupation.company)]
+    .filter(Boolean)
+    .join(' · ');
 
-  if (result.status === 'success') {
-    return `${label}导入完成：${fileName}，成功 ${result.successCount}/${result.totalRows} 行。`;
-  }
-
-  if (result.status === 'partial_failed') {
-    return `${label}部分导入成功：成功 ${result.successCount} 行，失败 ${result.failedCount} 行。${
-      firstError ? `首个错误位于第 ${firstError.rowNo} 行：${firstError.message}` : ''
-    }`;
-  }
-
-  return `${label}导入失败：${
-    firstError
-      ? firstError.rowNo
-        ? `第 ${firstError.rowNo} 行 ${firstError.message}`
-        : firstError.message
-      : '请检查文件格式和字段内容。'
-  }`;
+  return [
+    { label: '国籍', value: asString(basicInfo.nationality) || '未填写' },
+    { label: '出生', value: asString(basicInfo.birthDate) || '未填写' },
+    { label: '电话', value: asString(basicInfo.phone) || '未填写' },
+    { label: 'PNR', value: asString(tripInfo.pnr) || '未填写' },
+    { label: '航班', value: asString(tripInfo.flightNo) || '未填写' },
+    { label: '目的地', value: asString(tripInfo.destination) || '未填写' },
+    { label: '目的', value: asString(tripInfo.purposeDeclared) || '未填写' },
+    { label: '职业 / 单位', value: occupationSummary || '未填写' },
+  ];
 }
 
-function importTypeLabel(value: ImportType) {
-  return value === 'HIGH_RISK' ? '高风险名单' : '基础画像';
+function buildResultTags(profile: PassengerProfileRecord) {
+  const profileData = asRecord(profile.profileData);
+  const riskInfo = asRecord(profileData.riskInfo);
+  const riskTags = asStringArray(riskInfo.riskTags);
+  const riskRecords = Object.keys(riskInfo).length ? [riskInfo] : [];
+  return buildWatchTags(profile, riskRecords, riskTags);
+}
+
+function buildResultNotes(profile: PassengerProfileRecord): ProfileDetailEntry[] {
+  const profileData = asRecord(profile.profileData);
+  const riskInfo = asRecord(profileData.riskInfo);
+  const notes: ProfileDetailEntry[] = [];
+
+  if (asString(profile.riskReason)) {
+    notes.push({
+      label: '预警原因',
+      value: asString(profile.riskReason),
+    });
+  }
+
+  if (asString(riskInfo.criminalRecord)) {
+    notes.push({
+      label: '违法犯罪记录',
+      value: asString(riskInfo.criminalRecord),
+    });
+  }
+
+  if (asString(riskInfo.note)) {
+    notes.push({
+      label: '备注',
+      value: asString(riskInfo.note),
+    });
+  }
+
+  return notes;
+}
+
+function readProfileField(
+  profile: PassengerProfileRecord,
+  section: 'basicInfo' | 'tripInfo' | 'occupation' | 'riskInfo',
+  field: string
+) {
+  const profileData = asRecord(profile.profileData);
+  const sectionData = asRecord(profileData[section]);
+  return asString(sectionData[field]);
+}
+
+function formatDocumentTypeLabel(value: string) {
+  const normalized = value.trim().toUpperCase();
+  switch (normalized) {
+    case 'PASSPORT':
+      return '护照';
+    case 'ID_CARD':
+      return '身份证';
+    case 'HKMTP':
+      return '港澳通行证';
+    default:
+      return value || '未填写';
+  }
+}
+
+function formatGenderLabel(value: string) {
+  switch (value.trim().toLowerCase()) {
+    case 'male':
+    case 'm':
+    case '1':
+      return '男';
+    case 'female':
+    case 'f':
+    case '2':
+      return '女';
+    case 'unknown':
+    case '0':
+      return '未知';
+    default:
+      return value || '未填写';
+  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -377,21 +302,22 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
         </div>
 
         <label class="search-box" for="passenger-query">
-          <span class="search-box__prefix">ID</span>
           <input
             id="passenger-query"
             v-model="query"
+            :title="touchInputHint"
             type="text"
             placeholder="输入旅客证件号、姓名或订票编码 (PNR)"
+            @dblclick.stop.prevent="openSearchKeyboard"
           />
           <button type="submit" :disabled="isSearching">
             {{ isSearching ? '检索中...' : '查询' }}
           </button>
         </label>
 
-        <p class="status-copy">{{ searchStatus }}</p>
+        <p v-if="searchStatus" class="status-copy">{{ searchStatus }}</p>
 
-        <div class="tag-row">
+        <div v-if="recentSearches.length" class="tag-row">
           <span class="tag-row__label">最近搜索</span>
           <button
             v-for="item in recentSearches"
@@ -404,55 +330,6 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
           </button>
         </div>
       </form>
-
-      <section class="surface-card">
-        <div class="panel-heading">
-          <div>
-            <p class="section-eyebrow">Batch Import</p>
-            <h3>批量导入</h3>
-          </div>
-          <span class="panel-badge panel-badge--muted">CSV / XLSX</span>
-        </div>
-
-        <input
-          ref="fileInput"
-          class="sr-only"
-          type="file"
-          accept=".csv,.xlsx"
-          @change="handleFileChange"
-        />
-
-        <div class="tag-row tag-row--compact">
-          <span class="tag-row__label">导入类型</span>
-          <button
-            v-for="option in importTypeOptions"
-            :key="option.value"
-            class="tag-chip"
-            :class="{ 'tag-chip--active': selectedImportType === option.value }"
-            type="button"
-            @click="selectedImportType = option.value"
-          >
-            {{ option.label }}
-          </button>
-        </div>
-
-        <button
-          class="upload-dropzone"
-          :class="{ 'is-active': isDropActive }"
-          type="button"
-          :disabled="isImporting"
-          @click="triggerFileSelection"
-          @dragenter.prevent="isDropActive = true"
-          @dragover.prevent="isDropActive = true"
-          @dragleave.prevent="isDropActive = false"
-          @drop.prevent="handleDrop"
-        >
-          <strong>{{ isImporting ? '正在处理导入文件...' : '点击或拖拽文件至此处' }}</strong>
-          <span>当前导入类型：{{ importTypeLabel(selectedImportType) }}。</span>
-        </button>
-
-        <p class="status-copy">{{ importStatus }}</p>
-      </section>
     </section>
 
     <section class="content-block">
@@ -467,65 +344,57 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
         <article
           v-for="record in results"
           :key="record.id"
-          class="result-card"
-          :class="`result-card--${record.riskLevel}`"
+          class="result-strip"
+          :class="{ 'is-high-risk': record.isHighRisk }"
         >
-          <div class="result-card__accent"></div>
+          <div class="result-strip__content">
+            <div class="result-strip__headline">
+              <strong>{{ record.fullName }}</strong>
+              <span v-if="record.isHighRisk" class="result-strip__pill is-high-risk">高风险预警</span>
+              <span class="result-strip__pill">
+                {{ formatDocumentTypeLabel(readProfileField(record, 'basicInfo', 'documentType')) || '未填证件类型' }}
+              </span>
+              <span class="result-strip__pill">
+                {{ formatGenderLabel(readProfileField(record, 'basicInfo', 'gender')) || '未填性别' }}
+              </span>
+              <span class="result-strip__identity">{{ record.documentNum }}</span>
+            </div>
 
-          <div class="result-card__body">
-            <div class="identity-card">
-              <div class="identity-card__avatar">
-                {{ record.name.slice(0, 2) }}
-              </div>
-              <div>
-                <h4>{{ record.name }}</h4>
-                <p>PASSPORT: {{ record.documentId }}</p>
-              </div>
-              <span class="risk-pill" :class="`risk-pill--${record.riskLevel}`">
-                {{ record.riskLabel }}
+            <div class="result-strip__fact-list">
+              <span
+                v-for="detail in buildResultDetailEntries(record)"
+                :key="`${record.id}-${detail.label}`"
+                class="result-strip__fact"
+              >
+                <span class="result-strip__fact-label">{{ detail.label }}</span>
+                <strong class="result-strip__fact-value">{{ detail.value }}</strong>
               </span>
             </div>
 
-            <div class="result-grid">
-              <div>
-                <span class="meta-label">航班信息</span>
-                <strong>{{ record.route }}</strong>
-                <p>{{ record.seat }}</p>
-              </div>
-
-              <div>
-                <span class="meta-label">抵离状态</span>
-                <strong>{{ record.eta }}</strong>
-                <p>PNR: {{ record.pnr }}</p>
-              </div>
-
-              <div class="result-grid__summary">
-                <span class="meta-label">评估描述</span>
-                <p>{{ record.summary }}</p>
-              </div>
-            </div>
-
-            <div class="tag-row tag-row--compact">
-              <span class="tag-row__label">关注标签</span>
+            <div
+              v-if="buildResultTags(record).length || buildResultNotes(record).length"
+              class="result-strip__tags"
+            >
               <span
-                v-for="tag in record.watchTags"
-                :key="tag"
-                class="tag-chip tag-chip--passive"
+                v-for="tag in buildResultTags(record)"
+                :key="`${record.id}-${tag}`"
+                class="result-strip__tag"
               >
                 {{ tag }}
+              </span>
+              <span
+                v-for="note in buildResultNotes(record)"
+                :key="`${record.id}-${note.label}`"
+                class="result-strip__tag result-strip__tag--muted"
+              >
+                {{ note.label }}
               </span>
             </div>
           </div>
 
-          <div class="result-card__actions">
+          <div class="result-strip__actions">
             <button class="primary-action" type="button" @click="openAskWorkspace">
               发起辅助问询
-            </button>
-            <button class="secondary-action" type="button" @click="reviewRecord(record)">
-              按证件复查
-            </button>
-            <button class="text-action" type="button" @click="applyRecentSearch(record.documentId)">
-              再次检索
             </button>
           </div>
         </article>
@@ -534,23 +403,6 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
       <div v-else class="empty-state">
         <p>当前没有匹配记录。</p>
         <span>请尝试其他证件号、PNR，或重新导入批量文件。</span>
-      </div>
-    </section>
-
-    <section class="content-block">
-      <div class="block-heading">
-        <div>
-          <p class="section-eyebrow">Daily Overview</p>
-          <h3>态势速览</h3>
-        </div>
-      </div>
-
-      <div class="stats-grid">
-        <article v-for="item in dashboardStats" :key="item.label" class="stat-card">
-          <span class="meta-label">{{ item.label }}</span>
-          <strong>{{ item.value }}</strong>
-          <p>{{ item.detail }}</p>
-        </article>
       </div>
     </section>
   </section>
@@ -633,12 +485,13 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 }
 
 .surface-card {
-  padding: 24px;
+  padding: 18px 20px;
 }
 
 .surface-card--search {
   display: grid;
-  gap: 18px;
+  gap: 10px;
+  padding: 14px 18px;
 }
 
 .panel-badge {
@@ -660,30 +513,18 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 
 .search-box {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
-  padding: 12px;
-  border-radius: 22px;
+  gap: 10px;
+  padding: 8px 8px 8px 12px;
+  border-radius: 18px;
   background: #ffffff;
   border: 1px solid rgba(157, 189, 202, 0.4);
 }
 
-.search-box__prefix {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 44px;
-  min-height: 44px;
-  border-radius: 14px;
-  background: #d9eef4;
-  color: #09596c;
-  font-weight: 700;
-}
-
 .search-box input {
   min-width: 0;
-  padding: 10px 4px;
+  padding: 6px 2px;
   background: transparent;
   color: #15252b;
   font-size: 1rem;
@@ -749,32 +590,168 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
   color: #09596c;
 }
 
-.upload-dropzone {
-  display: grid;
-  gap: 8px;
-  width: 100%;
-  padding: 26px 20px;
-  text-align: left;
-  border-radius: 24px;
-  border: 1.5px dashed rgba(11, 114, 136, 0.28);
-  background: linear-gradient(160deg, rgba(11, 114, 136, 0.05), rgba(255, 255, 255, 0.96));
-  cursor: pointer;
-}
-
-.upload-dropzone.is-active {
-  border-color: #0b7288;
-  background: linear-gradient(160deg, rgba(11, 114, 136, 0.12), rgba(255, 255, 255, 0.96));
-}
-
-.upload-dropzone:disabled {
-  cursor: wait;
-  opacity: 0.72;
+.status-copy {
+  margin: 0;
 }
 
 .results-list {
   display: grid;
-  gap: 18px;
+  gap: 14px;
   margin-top: 16px;
+}
+
+.result-strip {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  gap: 18px;
+  padding: 16px 18px 16px 24px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(157, 189, 202, 0.36);
+  box-shadow: 0 22px 46px rgba(14, 40, 48, 0.08);
+  overflow: hidden;
+}
+
+.result-strip::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 6px;
+  background: linear-gradient(180deg, #0b7288, #20a8c5);
+}
+
+.result-strip.is-high-risk::before {
+  background: linear-gradient(180deg, #c75c47, #de876d);
+}
+
+.result-strip__content {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: grid;
+  gap: 10px;
+}
+
+.result-strip__headline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+
+.result-strip__headline strong {
+  color: #15252b;
+}
+
+.result-strip__pill,
+.result-strip__identity,
+.result-strip__tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.result-strip__pill {
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(157, 189, 202, 0.48);
+  color: #43646e;
+}
+
+.result-strip__pill.is-imported {
+  background: rgba(11, 114, 136, 0.12);
+  border-color: rgba(11, 114, 136, 0.18);
+  color: #09596c;
+}
+
+.result-strip__pill.is-high-risk {
+  background: rgba(199, 92, 71, 0.12);
+  border-color: rgba(199, 92, 71, 0.16);
+  color: #a24734;
+}
+
+.result-strip__identity {
+  background: rgba(217, 238, 244, 0.92);
+  color: #09596c;
+}
+
+.result-strip__fact-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+}
+
+.result-strip__fact {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 12px;
+  background: #fbfeff;
+  border: 1px solid rgba(157, 189, 202, 0.36);
+}
+
+.result-strip__fact-label {
+  color: #6c8790;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.result-strip__fact-value {
+  color: #15252b;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.result-strip__summary {
+  margin: 0;
+  color: #5b7179;
+  line-height: 1.6;
+}
+
+.result-strip__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.result-strip__tag {
+  background: rgba(11, 114, 136, 0.12);
+  color: #09596c;
+}
+
+.result-strip__tag--muted {
+  background: rgba(91, 113, 121, 0.12);
+  color: #5b7179;
+}
+
+.result-strip__actions {
+  display: flex;
+  flex: 0 0 240px;
+  width: 240px;
+  align-items: stretch;
+}
+
+.result-strip__actions .primary-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 100%;
+  padding: 18px 20px;
+  border-radius: 18px;
+  font-size: 1.04rem;
+  letter-spacing: 0.04em;
+}
+
+.result-strip.is-high-risk .result-strip__actions .primary-action {
+  background: linear-gradient(135deg, #c75c47, #e07b61);
+  box-shadow: 0 16px 28px rgba(199, 92, 71, 0.24);
 }
 
 .result-card {
@@ -921,6 +898,14 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
   .panel-heading,
   .block-heading {
     flex-direction: column;
+  }
+
+  .result-strip {
+    flex-direction: column;
+  }
+
+  .result-strip__actions {
+    width: 100%;
   }
 
   .search-box {

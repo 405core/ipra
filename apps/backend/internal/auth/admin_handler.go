@@ -37,8 +37,8 @@ func (h *Handler) handleAdminListUsers(c *gin.Context) {
 	limit := 20
 	if rawLimit := strings.TrimSpace(c.Query("limit")); rawLimit != "" {
 		if parsed, err := strconv.Atoi(rawLimit); err == nil && parsed > 0 {
-			if parsed > 100 {
-				parsed = 100
+			if parsed > 500 {
+				parsed = 500
 			}
 			limit = parsed
 		}
@@ -49,7 +49,8 @@ func (h *Handler) handleAdminListUsers(c *gin.Context) {
 	if query != "" {
 		pattern := "%" + query + "%"
 		dbQuery = dbQuery.Where(
-			`work_id ILIKE ? OR name ILIKE ? OR role ILIKE ?`,
+			`work_id ILIKE ? OR name ILIKE ? OR role ILIKE ? OR status ILIKE ?`,
+			pattern,
 			pattern,
 			pattern,
 			pattern,
@@ -126,6 +127,12 @@ func (h *Handler) handleAdminUpdateUser(c *gin.Context) {
 		return
 	}
 
+	claims, ok := claimsFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "未授权"})
+		return
+	}
+
 	var payload adminUserPayload
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "请求参数无效"})
@@ -143,6 +150,10 @@ func (h *Handler) handleAdminUpdateUser(c *gin.Context) {
 		updates["role"] = role
 	}
 	if status := NormalizeStatus(payload.Status); status != "" {
+		if claims.UserID == id && status == StatusDisabled {
+			c.JSON(http.StatusBadRequest, gin.H{"message": "不能停用当前登录管理员"})
+			return
+		}
 		updates["status"] = status
 	}
 	if password := strings.TrimSpace(payload.Password); password != "" {
@@ -169,6 +180,12 @@ func (h *Handler) handleAdminUpdateUserStatus(c *gin.Context) {
 		return
 	}
 
+	claims, ok := claimsFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "未授权"})
+		return
+	}
+
 	var payload adminUserPayload
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "请求参数无效"})
@@ -178,6 +195,11 @@ func (h *Handler) handleAdminUpdateUserStatus(c *gin.Context) {
 	status := NormalizeStatus(payload.Status)
 	if status == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "状态不能为空"})
+		return
+	}
+
+	if claims.UserID == id && status == StatusDisabled {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "不能停用当前登录管理员"})
 		return
 	}
 

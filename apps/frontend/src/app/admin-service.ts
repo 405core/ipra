@@ -74,7 +74,7 @@ export async function listAdminProfiles(query: string) {
   if (query.trim()) {
     params.set('query', query.trim());
   }
-  params.set('limit', '100');
+  params.set('limit', '500');
   const response = await authorizedFetch(`/api/admin/profiles?${params.toString()}`);
   return parsePayload<AdminListResult<PassengerProfileRecord>>(response, '查询基础画像失败。');
 }
@@ -107,7 +107,7 @@ export async function listAdminWatchlist(query: string) {
   if (query.trim()) {
     params.set('query', query.trim());
   }
-  params.set('limit', '100');
+  params.set('limit', '500');
   const response = await authorizedFetch(`/api/admin/watchlist?${params.toString()}`);
   return parsePayload<AdminListResult<AdminWatchlistItem>>(response, '查询高风险名单失败。');
 }
@@ -140,7 +140,7 @@ export async function listAdminUsers(query: string) {
   if (query.trim()) {
     params.set('query', query.trim());
   }
-  params.set('limit', '100');
+  params.set('limit', '500');
   const response = await authorizedFetch(`/api/admin/users?${params.toString()}`);
   return parsePayload<AdminListResult<AdminUserItem>>(response, '查询用户失败。');
 }
