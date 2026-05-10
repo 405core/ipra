@@ -2,6 +2,10 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
 import { clearAuthSession, loadAuthSession } from '../auth';
+import {
+  downloadImportTemplate,
+  type ImportType,
+} from '../app/profile-service';
 
 type UserRouteName = 'home-data' | 'home-ask';
 
@@ -72,6 +76,18 @@ function handleNavClick() {
   if (!isDesktop.value) {
     closeSidebar();
   }
+}
+
+async function downloadTemplate(templateType: ImportType) {
+  const { blob, filename } = await downloadImportTemplate(templateType);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 async function logout() {
@@ -172,10 +188,22 @@ onBeforeUnmount(() => {
         </RouterLink>
       </nav>
 
-      <div class="sidebar__footer">
-        <p>Secure Node</p>
-        <strong>Operational</strong>
-        <span>当前侧边栏只负责切换 `UserHomeView` 与 `UserAskView`。</span>
+      <div class="sidebar__tools">
+        <p class="sidebar__tools-label">模板下载</p>
+        <button
+          class="sidebar-action"
+          type="button"
+          @click="downloadTemplate('BASE_PROFILE')"
+        >
+          下载基础画像模板
+        </button>
+        <button
+          class="sidebar-action"
+          type="button"
+          @click="downloadTemplate('HIGH_RISK')"
+        >
+          下载高风险名单模板
+        </button>
       </div>
     </aside>
 
@@ -271,7 +299,7 @@ onBeforeUnmount(() => {
 
 .session-chip span,
 .nav-link span,
-.sidebar__footer span {
+.sidebar__tools-label {
   font-size: 0.78rem;
   color: var(--text-muted);
   line-height: 1.55;
@@ -291,6 +319,7 @@ onBeforeUnmount(() => {
 .icon-button,
 .logout-button,
 .nav-link,
+.sidebar-action,
 .user-shell__backdrop {
   cursor: pointer;
 }
@@ -407,22 +436,40 @@ onBeforeUnmount(() => {
   color: rgba(255, 255, 255, 0.82);
 }
 
-.sidebar__footer {
+.sidebar__tools {
   margin-top: auto;
-  padding: 16px;
-  border-radius: 20px;
-  background: linear-gradient(160deg, rgba(11, 114, 136, 0.1), rgba(255, 255, 255, 0.96));
-  border: 1px solid rgba(157, 189, 202, 0.28);
+  display: grid;
+  gap: 10px;
+  padding-top: 16px;
 }
 
-.sidebar__footer p,
-.sidebar__footer strong {
+.sidebar__tools-label {
   margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-weight: 700;
 }
 
-.sidebar__footer strong {
-  display: block;
-  margin-top: 6px;
+.sidebar-action {
+  min-height: 44px;
+  width: 100%;
+  padding: 0 14px;
+  border-radius: 16px;
+  text-align: left;
+  font-weight: 700;
+  color: var(--accent-strong);
+  background: rgba(11, 114, 136, 0.08);
+  border: 1px solid rgba(11, 114, 136, 0.16);
+  transition:
+    transform 0.2s ease,
+    background-color 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.sidebar-action:hover {
+  transform: translateY(-1px);
+  background: rgba(11, 114, 136, 0.14);
+  border-color: rgba(11, 114, 136, 0.28);
 }
 
 .user-shell__content {

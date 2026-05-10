@@ -126,37 +126,6 @@ function triggerFileSelection() {
   fileInput.value?.click();
 }
 
-async function exportImportTemplate() {
-  importStatus.value = '正在获取模板文件...';
-
-  try {
-    const response = await fetch('/api/import-templates/passenger-profile.xlsx');
-
-    if (!response.ok) {
-      throw new Error('模板下载失败');
-    }
-
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    const disposition = response.headers.get('Content-Disposition') ?? '';
-    const match = disposition.match(/filename="([^"]+)"/);
-    const filename = match?.[1] ?? 'ipra-passenger-profile-template.xlsx';
-
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-
-    importStatus.value = `模板已导出：${filename}`;
-  } catch (error) {
-    importStatus.value =
-      error instanceof Error ? error.message : '模板下载失败，请稍后重试。';
-  }
-}
-
 async function acceptFile(file: File | null) {
   if (!file) {
     importStatus.value = '未选择文件。';
@@ -397,25 +366,6 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 
 <template>
   <section class="user-page">
-    <section class="hero-card">
-      <div>
-        <p class="section-eyebrow">Search Console</p>
-        <h2>数据检索与风险联动分析</h2>
-        <p class="section-copy">
-          通过离线导入采购方提供的旅客画像与高风险名单，现场可按证件号、姓名或 PNR 快速检索，并直接查看已入库的全息画像摘要。
-        </p>
-      </div>
-
-      <div class="hero-card__actions">
-        <button class="secondary-action" type="button" @click="exportImportTemplate">
-          下载模板
-        </button>
-        <button class="primary-action" type="button" @click="openAskWorkspace">
-          进入辅助问询
-        </button>
-      </div>
-    </section>
-
     <section class="panel-grid">
       <form class="surface-card surface-card--search" @submit.prevent="submitSearch">
         <div class="panel-heading">
@@ -624,7 +574,6 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
   gap: 22px;
 }
 
-.hero-card,
 .surface-card,
 .result-card,
 .stat-card,
@@ -635,7 +584,6 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
   box-shadow: 0 22px 46px rgba(14, 40, 48, 0.08);
 }
 
-.hero-card,
 .panel-heading,
 .block-heading,
 .identity-card {
@@ -645,11 +593,6 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
   gap: 16px;
 }
 
-.hero-card {
-  padding: 28px;
-}
-
-.hero-card h2,
 .panel-heading h3,
 .block-heading h3,
 .identity-card h4 {
@@ -668,7 +611,6 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
   color: #5b7179;
 }
 
-.section-copy,
 .status-copy,
 .result-grid p,
 .empty-state span,
@@ -678,12 +620,6 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
   line-height: 1.6;
 }
 
-.section-copy {
-  margin-top: 14px;
-  max-width: 720px;
-}
-
-.hero-card__actions,
 .tag-row {
   display: flex;
   flex-wrap: wrap;
@@ -982,8 +918,6 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 }
 
 @media (max-width: 719px) {
-  .hero-card,
-  .hero-card__actions,
   .panel-heading,
   .block-heading {
     flex-direction: column;
@@ -993,8 +927,7 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
     grid-template-columns: 1fr;
   }
 
-  .search-box button,
-  .hero-card__actions > button {
+  .search-box button {
     width: 100%;
   }
 }
