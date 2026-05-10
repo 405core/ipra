@@ -2,8 +2,11 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
 import { clearAuthSession, loadAuthSession } from '../auth';
+import { ElMessage } from '../app/el-message';
 import {
   downloadImportTemplate,
+  importPassengerProfiles,
+  type ImportBatchResult,
   type ImportType,
 } from '../app/profile-service';
 
@@ -34,6 +37,11 @@ const navigationItems: NavigationItem[] = [
 
 const isDesktop = ref(false);
 const isSidebarVisible = ref(false);
+const isImporting = ref(false);
+const isImportDragActive = ref(false);
+const importStatus = ref('支持 CSV / XLSX。');
+const importInput = ref<HTMLInputElement | null>(null);
+let importDragDepth = 0;
 
 const userName = computed(() => session?.user.name || '员工');
 const badgeNumber = computed(() => session?.user.workId || '100002');
@@ -79,20 +87,137 @@ function handleNavClick() {
 }
 
 async function downloadTemplate(templateType: ImportType) {
-  const { blob, filename } = await downloadImportTemplate(templateType);
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  try {
+    const { blob, filename } = await downloadImportTemplate(templateType);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    ElMessage.error(normalizeErrorMessage(error, '模板下载失败。'));
+  }
+}
+
+function triggerImportSelection() {
+  if (isImporting.value) {
+    return;
+  }
+  importInput.value?.click();
+}
+
+async function acceptImportFile(file: File | null) {
+  if (!file) {
+    importStatus.value = '未选择文件。';
+    return;
+  }
+
+  const normalizedName = file.name.toLowerCase();
+  const isSupported = normalizedName.endsWith('.csv') || normalizedName.endsWith('.xlsx');
+  if (!isSupported) {
+    importStatus.value = '仅支持 CSV 或 XLSX 文件。';
+    ElMessage.warning(importStatus.value);
+    return;
+  }
+
+  isImporting.value = true;
+  importStatus.value = `正在导入：${file.name}`;
+
+  try {
+    const result = await importPassengerProfiles(file);
+    importStatus.value = buildImportStatus(file.name, result);
+    if (result.status === 'success') {
+      ElMessage.success('导入完成');
+    } else if (result.status === 'partial_failed') {
+      ElMessage.warning('导入部分成功');
+    } else {
+      ElMessage.error('导入失败');
+    }
+    window.dispatchEvent(new CustomEvent('ipra:profiles-imported'));
+  } catch (error) {
+    importStatus.value = normalizeErrorMessage(error, '导入旅客画像失败，请稍后重试。');
+    ElMessage.error(importStatus.value);
+  } finally {
+    isImporting.value = false;
+    if (importInput.value) {
+      importInput.value.value = '';
+    }
+  }
+}
+
+async function handleImportChange(event: Event) {
+  const input = event.target as HTMLInputElement;
+  await acceptImportFile(input.files?.[0] ?? null);
+}
+
+function handleImportDragEnter() {
+  if (isImporting.value) {
+    return;
+  }
+  importDragDepth += 1;
+  isImportDragActive.value = true;
+}
+
+function handleImportDragLeave() {
+  if (isImporting.value) {
+    return;
+  }
+  importDragDepth = Math.max(0, importDragDepth - 1);
+  if (importDragDepth === 0) {
+    isImportDragActive.value = false;
+  }
+}
+
+function handleImportDragOver(event: DragEvent) {
+  if (isImporting.value) {
+    return;
+  }
+  event.preventDefault();
+  isImportDragActive.value = true;
+}
+
+async function handleImportDrop(event: DragEvent) {
+  event.preventDefault();
+  importDragDepth = 0;
+  isImportDragActive.value = false;
+  if (isImporting.value) {
+    return;
+  }
+  await acceptImportFile(event.dataTransfer?.files?.[0] ?? null);
 }
 
 async function logout() {
   clearAuthSession();
   await router.push('/login');
+}
+
+function buildImportStatus(fileName: string, result: ImportBatchResult) {
+  const firstError = result.errorDetails?.[0];
+
+  if (result.status === 'success') {
+    return `导入完成：${fileName}，成功 ${result.successCount}/${result.totalRows} 行。`;
+  }
+
+  if (result.status === 'partial_failed') {
+    return `部分成功：${result.successCount} 成功，${result.failedCount} 失败。${
+      firstError ? `第 ${firstError.rowNo} 行：${firstError.message}` : ''
+    }`;
+  }
+
+  return `导入失败：${
+    firstError
+      ? firstError.rowNo
+        ? `第 ${firstError.rowNo} 行 ${firstError.message}`
+        : firstError.message
+      : '请检查文件格式和字段内容。'
+  }`;
+}
+
+function normalizeErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error && error.message ? error.message : fallback;
 }
 
 watch(
@@ -189,6 +314,30 @@ onBeforeUnmount(() => {
       </nav>
 
       <div class="sidebar__tools">
+        <p class="sidebar__tools-label">批量导入</p>
+        <input
+          ref="importInput"
+          class="sidebar-upload__input"
+          type="file"
+          accept=".csv,.xlsx"
+          @change="handleImportChange"
+        />
+        <button
+          class="sidebar-upload"
+          :class="{ 'is-drag-active': isImportDragActive }"
+          type="button"
+          :disabled="isImporting"
+          @click="triggerImportSelection"
+          @dragenter.prevent="handleImportDragEnter"
+          @dragover="handleImportDragOver"
+          @dragleave.prevent="handleImportDragLeave"
+          @drop="handleImportDrop"
+        >
+          <strong>{{ isImporting ? '正在处理导入文件...' : '导入画像文件' }}</strong>
+        </button>
+        <p class="sidebar__status">{{ importStatus }}</p>
+        <div class="sidebar__divider"></div>
+
         <p class="sidebar__tools-label">模板下载</p>
         <button
           class="sidebar-action"
@@ -299,7 +448,9 @@ onBeforeUnmount(() => {
 
 .session-chip span,
 .nav-link span,
-.sidebar__tools-label {
+.sidebar__tools-label,
+.sidebar__status,
+.sidebar-upload span {
   font-size: 0.78rem;
   color: var(--text-muted);
   line-height: 1.55;
@@ -443,11 +594,65 @@ onBeforeUnmount(() => {
   padding-top: 16px;
 }
 
+.sidebar-upload__input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .sidebar__tools-label {
   margin: 0;
   text-transform: uppercase;
   letter-spacing: 0.18em;
   font-weight: 700;
+}
+
+.sidebar__status {
+  margin: 0;
+}
+
+.sidebar__divider {
+  height: 1px;
+  background: rgba(157, 189, 202, 0.32);
+}
+
+.sidebar-upload {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  min-height: 92px;
+  padding: 18px 16px;
+  border-radius: 18px;
+  text-align: left;
+  background: linear-gradient(160deg, rgba(11, 114, 136, 0.08), rgba(255, 255, 255, 0.94));
+  border: 1px solid rgba(11, 114, 136, 0.18);
+  color: var(--text-main);
+  transition:
+    transform 0.2s ease,
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.sidebar-upload strong {
+  font-size: 0.96rem;
+}
+
+.sidebar-upload.is-drag-active {
+  border-color: rgba(11, 114, 136, 0.46);
+  background: linear-gradient(160deg, rgba(11, 114, 136, 0.16), rgba(255, 255, 255, 0.98));
+  box-shadow: 0 14px 28px rgba(11, 114, 136, 0.16);
+}
+
+.sidebar-upload:disabled {
+  cursor: wait;
+  opacity: 0.72;
 }
 
 .sidebar-action {

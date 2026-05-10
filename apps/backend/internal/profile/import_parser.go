@@ -44,14 +44,55 @@ type sharedStringRunXML struct {
 	Text string `xml:"t"`
 }
 
+type workbookXML struct {
+	Sheets []workbookSheetXML `xml:"sheets>sheet"`
+}
+
+type workbookSheetXML struct {
+	Name  string `xml:"name,attr"`
+	RelID string `xml:"id,attr"`
+}
+
+type workbookRelsXML struct {
+	Relationships []workbookRelationshipXML `xml:"Relationship"`
+}
+
+type workbookRelationshipXML struct {
+	ID     string `xml:"Id,attr"`
+	Target string `xml:"Target,attr"`
+}
+
+type parsedSpreadsheet struct {
+	Rows          [][]string
+	WorksheetName string
+}
+
+const (
+	baseProfileTemplateTitle = "基础画像模板"
+	highRiskTemplateTitle    = "高风险名单模板"
+)
+
 func parseSpreadsheet(filename string, data []byte) ([][]string, error) {
+	parsed, err := parseSpreadsheetWithMetadata(filename, data)
+	if err != nil {
+		return nil, err
+	}
+
+	return parsed.Rows, nil
+}
+
+func parseSpreadsheetWithMetadata(filename string, data []byte) (parsedSpreadsheet, error) {
 	switch strings.ToLower(filepath.Ext(filename)) {
 	case ".csv":
-		return parseCSVData(data)
+		rows, err := parseCSVData(data)
+		if err != nil {
+			return parsedSpreadsheet{}, err
+		}
+		return parsedSpreadsheet{Rows: rows}, nil
 	case ".xlsx":
-		return parseXLSXData(data)
+		return parseXLSXDataWithMetadata(data)
 	default:
-		return nil, fmt.Errorf("仅支持 CSV 或 XLSX 文件")
+		return parsedSpreadsheet{}, fmt.Errorf("仅支持 CSV 或 XLSX 文件")
 	}
 }
 
@@ -74,9 +115,18 @@ func parseCSVData(data []byte) ([][]string, error) {
 }
 
 func parseXLSXData(data []byte) ([][]string, error) {
+	parsed, err := parseXLSXDataWithMetadata(data)
+	if err != nil {
+		return nil, err
+	}
+
+	return parsed.Rows, nil
+}
+
+func parseXLSXDataWithMetadata(data []byte) (parsedSpreadsheet, error) {
 	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
-		return nil, fmt.Errorf("解析 XLSX 失败: %w", err)
+		return parsedSpreadsheet{}, fmt.Errorf("解析 XLSX 失败: %w", err)
 	}
 
 	files := make(map[string]*zip.File, len(reader.File))
@@ -90,23 +140,31 @@ func parseXLSXData(data []byte) ([][]string, error) {
 
 	slices.Sort(worksheetNames)
 	if len(worksheetNames) == 0 {
-		return nil, errors.New("XLSX 中未找到工作表")
+		return parsedSpreadsheet{}, errors.New("XLSX 中未找到工作表")
 	}
 
 	sharedStrings := make([]string, 0)
 	if file, ok := files["xl/sharedStrings.xml"]; ok {
 		sharedStrings, err = parseSharedStrings(file)
 		if err != nil {
-			return nil, err
+			return parsedSpreadsheet{}, err
 		}
 	}
 
-	rows, err := parseWorksheet(worksheetNames[0], files, sharedStrings)
+	worksheetPath, worksheetTitle, err := resolveFirstWorksheet(files, worksheetNames)
 	if err != nil {
-		return nil, err
+		return parsedSpreadsheet{}, err
 	}
 
-	return rows, nil
+	rows, err := parseWorksheet(worksheetPath, files, sharedStrings)
+	if err != nil {
+		return parsedSpreadsheet{}, err
+	}
+
+	return parsedSpreadsheet{
+		Rows:          rows,
+		WorksheetName: worksheetTitle,
+	}, nil
 }
 
 func parseSharedStrings(file *zip.File) ([]string, error) {
@@ -190,6 +248,10 @@ func splitSpreadsheetRows(rows [][]string) ([]string, [][]string) {
 	for idx, row := range rows {
 		normalized := normalizeRow(row)
 		if !isEmptyRow(normalized) {
+			if detectTemplateMarkerFromRow(normalized) != "" {
+				continue
+			}
+
 			headers := normalized
 			dataRows := make([][]string, 0, len(rows)-idx-1)
 			for _, candidate := range rows[idx+1:] {
@@ -204,6 +266,114 @@ func splitSpreadsheetRows(rows [][]string) ([]string, [][]string) {
 	}
 
 	return nil, nil
+}
+
+func detectImportTypeFromSpreadsheet(rows [][]string, worksheetName string) (string, error) {
+	if importType := detectTemplateMarker(worksheetName); importType != "" {
+		return importType, nil
+	}
+
+	for _, row := range rows {
+		normalized := normalizeRow(row)
+		if isEmptyRow(normalized) {
+			continue
+		}
+
+		if importType := detectTemplateMarkerFromRow(normalized); importType != "" {
+			return importType, nil
+		}
+		break
+	}
+
+	headers, _ := splitSpreadsheetRows(rows)
+	return detectImportType(headers)
+}
+
+func detectImportType(headers []string) (string, error) {
+	headerSet := make(map[string]struct{}, len(headers))
+	for _, header := range headers {
+		normalized := normalizeHeaderKey(header)
+		if normalized == "" {
+			continue
+		}
+		headerSet[normalized] = struct{}{}
+	}
+
+	if len(headerSet) == 0 {
+		return "", errors.New("导入文件缺少表头")
+	}
+
+	if !containsHeaderAlias(headerSet,
+		"document_num", "document_id", "passport_no", "证件号码", "证件号", "护照号", "身份证号",
+	) {
+		return "", errors.New("导入模板缺少证件号码列，请使用系统模板")
+	}
+
+	if containsHeaderAlias(headerSet, "risk_reason", "高风险原因", "名单说明") {
+		return importTypeHighRisk, nil
+	}
+
+	baseProfileSignals := []string{
+		"document_type", "证件类型", "证件类别",
+		"nationality", "国籍", "国家地区",
+		"gender", "sex", "性别",
+		"birth_date", "birthday", "出生日期", "出生年月日",
+		"phone", "手机号", "联系电话",
+		"pnr", "订票编码", "票号",
+		"route", "航线", "行程",
+		"flight_no", "flight", "航班号",
+		"origin", "出发地",
+		"destination", "目的地",
+		"purpose_declared", "申报出境目的", "出行目的",
+		"occupation", "职业",
+		"company", "工作单位",
+		"industry", "行业",
+		"position", "岗位",
+		"monthly_income", "月收入",
+		"funding_source", "资金来源",
+		"criminal_record", "违法犯罪记录",
+	}
+	if containsHeaderAlias(headerSet, baseProfileSignals...) {
+		return importTypeBaseProfile, nil
+	}
+
+	return "", errors.New("无法识别导入模板类型，请使用系统模板")
+}
+
+func detectTemplateMarkerFromRow(row []string) string {
+	nonEmptyValues := make([]string, 0, len(row))
+	for _, value := range row {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			nonEmptyValues = append(nonEmptyValues, trimmed)
+		}
+	}
+
+	if len(nonEmptyValues) != 1 {
+		return ""
+	}
+
+	return detectTemplateMarker(nonEmptyValues[0])
+}
+
+func detectTemplateMarker(value string) string {
+	switch normalizeHeaderKey(value) {
+	case normalizeHeaderKey(baseProfileTemplateTitle), normalizeHeaderKey("基础画像"):
+		return importTypeBaseProfile
+	case normalizeHeaderKey(highRiskTemplateTitle), normalizeHeaderKey("高风险名单"):
+		return importTypeHighRisk
+	default:
+		return ""
+	}
+}
+
+func containsHeaderAlias(headerSet map[string]struct{}, aliases ...string) bool {
+	for _, alias := range aliases {
+		if _, ok := headerSet[normalizeHeaderKey(alias)]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func rowToValueMap(headers []string, row []string) map[string]string {
@@ -221,6 +391,67 @@ func rowToValueMap(headers []string, row []string) map[string]string {
 		values[normalizedHeader] = value
 	}
 	return values
+}
+
+func resolveFirstWorksheet(files map[string]*zip.File, worksheetNames []string) (string, string, error) {
+	if len(worksheetNames) == 0 {
+		return "", "", errors.New("XLSX 中未找到工作表")
+	}
+
+	workbookFile, ok := files["xl/workbook.xml"]
+	if !ok {
+		return worksheetNames[0], "", nil
+	}
+
+	workbookPayload, err := readZipFile(workbookFile)
+	if err != nil {
+		return "", "", fmt.Errorf("读取 workbook 失败: %w", err)
+	}
+
+	var workbook workbookXML
+	if err := xml.Unmarshal(workbookPayload, &workbook); err != nil {
+		return "", "", fmt.Errorf("解析 workbook 失败: %w", err)
+	}
+	if len(workbook.Sheets) == 0 {
+		return worksheetNames[0], "", nil
+	}
+
+	targetByRelID := make(map[string]string, len(workbook.Sheets))
+	if relsFile, ok := files["xl/_rels/workbook.xml.rels"]; ok {
+		relsPayload, err := readZipFile(relsFile)
+		if err != nil {
+			return "", "", fmt.Errorf("读取 workbook 关系失败: %w", err)
+		}
+
+		var rels workbookRelsXML
+		if err := xml.Unmarshal(relsPayload, &rels); err != nil {
+			return "", "", fmt.Errorf("解析 workbook 关系失败: %w", err)
+		}
+
+		for _, rel := range rels.Relationships {
+			targetByRelID[rel.ID] = filepath.ToSlash(filepath.Clean("xl/" + strings.TrimPrefix(rel.Target, "/")))
+		}
+	}
+
+	for _, sheet := range workbook.Sheets {
+		if target, ok := targetByRelID[sheet.RelID]; ok {
+			if _, exists := files[target]; exists {
+				return target, strings.TrimSpace(sheet.Name), nil
+			}
+		}
+	}
+
+	return worksheetNames[0], strings.TrimSpace(workbook.Sheets[0].Name), nil
+}
+
+func readZipFile(file *zip.File) ([]byte, error) {
+	reader, err := file.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+
+	return io.ReadAll(reader)
 }
 
 func buildProfileRecord(row map[string]string, importType string) (profileRecord, error) {
@@ -310,13 +541,13 @@ func buildProfileRecord(row map[string]string, importType string) (profileRecord
 	})
 
 	riskInfo := compactMap(map[string]any{
-		"riskTags": splitListValue(readAlias(row, usedKeys, "risk_tags", "风险标签")),
-		"type":         strings.TrimSpace(readAlias(row, usedKeys, "case_type", "涉案类型", "违法犯罪类型")),
-		"occurredAt":   normalizeDateString(readAlias(row, usedKeys, "case_time", "涉案时间")),
-		"status":       strings.TrimSpace(readAlias(row, usedKeys, "case_status", "处理状态")),
-		"controlLevel": strings.TrimSpace(readAlias(row, usedKeys, "control_level", "管控级别")),
+		"riskTags":       splitListValue(readAlias(row, usedKeys, "risk_tags", "风险标签")),
+		"type":           strings.TrimSpace(readAlias(row, usedKeys, "case_type", "涉案类型", "违法犯罪类型")),
+		"occurredAt":     normalizeDateString(readAlias(row, usedKeys, "case_time", "涉案时间")),
+		"status":         strings.TrimSpace(readAlias(row, usedKeys, "case_status", "处理状态")),
+		"controlLevel":   strings.TrimSpace(readAlias(row, usedKeys, "control_level", "管控级别")),
 		"criminalRecord": strings.TrimSpace(readAlias(row, usedKeys, "criminal_record", "违法犯罪记录")),
-		"note":         strings.TrimSpace(readAlias(row, usedKeys, "remark", "备注说明", "summary", "画像摘要")),
+		"note":           strings.TrimSpace(readAlias(row, usedKeys, "remark", "备注说明", "summary", "画像摘要")),
 	})
 
 	additionalFields := collectAdditionalFields(row, usedKeys)

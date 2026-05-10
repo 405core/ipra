@@ -108,7 +108,7 @@ def cols_xml(widths: Iterable[float]) -> str:
 
 
 def worksheet_xml(spec: TemplateSpec) -> str:
-    rows = [spec.headers, spec.sample_row]
+    rows = [[spec.sheet_name], spec.headers, spec.sample_row]
     row_xml = []
     last_column = excel_column_name(len(spec.headers))
 
@@ -116,23 +116,26 @@ def worksheet_xml(spec: TemplateSpec) -> str:
         cells = []
         for column_index, value in enumerate(row, start=1):
             if row_index == 1:
+                style_id = HEADER_STYLE
+            elif row_index == 2:
                 style_id = REQUIRED_HEADER_STYLE if column_index - 1 in spec.required_columns else HEADER_STYLE
             else:
                 style_id = BODY_STYLE
             cells.append(cell_xml(f"{excel_column_name(column_index)}{row_index}", value, style_id))
-        height = 26 if row_index == 1 else 22
+        height = 28 if row_index == 1 else 26 if row_index == 2 else 22
         row_xml.append(f'<row r="{row_index}" ht="{height}" customHeight="1">{"".join(cells)}</row>')
 
     return (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-        f'<dimension ref="A1:{last_column}2"/>'
-        '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>'
-        '<selection pane="bottomLeft" activeCell="A2" sqref="A2"/></sheetView></sheetViews>'
+        f'<dimension ref="A1:{last_column}3"/>'
+        '<sheetViews><sheetView workbookViewId="0"><pane ySplit="2" topLeftCell="A3" activePane="bottomLeft" state="frozen"/>'
+        '<selection pane="bottomLeft" activeCell="A3" sqref="A3"/></sheetView></sheetViews>'
         '<sheetFormatPr defaultRowHeight="18"/>'
         f"{cols_xml(spec.column_widths)}"
         f'<sheetData>{"".join(row_xml)}</sheetData>'
-        f'<autoFilter ref="A1:{last_column}1"/>'
+        f'<mergeCells count="1"><mergeCell ref="A1:{last_column}1"/></mergeCells>'
+        f'<autoFilter ref="A2:{last_column}2"/>'
         '<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>'
         "</worksheet>"
     )

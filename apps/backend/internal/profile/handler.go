@@ -87,12 +87,6 @@ func (h *Handler) handleImport(c *gin.Context) {
 		return
 	}
 
-	importType, valid := normalizeImportType(c.PostForm("importType"))
-	if !valid {
-		c.JSON(http.StatusBadRequest, gin.H{"message": "importType 仅支持 BASE_PROFILE 或 HIGH_RISK"})
-		return
-	}
-
 	fileHeader, err := c.FormFile("file")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "缺少导入文件"})
@@ -114,6 +108,30 @@ func (h *Handler) handleImport(c *gin.Context) {
 	if len(data) > maxImportFileSize {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "导入文件不能超过 20MB"})
 		return
+	}
+
+	importType := ""
+	if rawImportType := strings.TrimSpace(c.PostForm("importType")); rawImportType != "" {
+		normalizedImportType, valid := normalizeImportType(rawImportType)
+		if !valid {
+			c.JSON(http.StatusBadRequest, gin.H{"message": "importType 仅支持 BASE_PROFILE 或 HIGH_RISK"})
+			return
+		}
+		importType = normalizedImportType
+	}
+
+	if importType == "" {
+		parsed, err := parseSpreadsheetWithMetadata(fileHeader.Filename, data)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
+			return
+		}
+
+		importType, err = detectImportTypeFromSpreadsheet(parsed.Rows, parsed.WorksheetName)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
+			return
+		}
 	}
 
 	result, err := h.service.ImportProfiles(

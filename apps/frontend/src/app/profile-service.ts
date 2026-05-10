@@ -73,10 +73,9 @@ export async function searchPassengerProfiles(query: string) {
   return payload.profiles;
 }
 
-export async function importPassengerProfiles(file: File, importType: ImportType) {
+export async function importPassengerProfiles(file: File) {
   const formData = new FormData();
   formData.append('file', file);
-  formData.append('importType', importType);
 
   const response = await authorizedFetch('/api/passenger-profiles/imports', {
     method: 'POST',

@@ -24,6 +24,16 @@ func TestParseXLSXData(t *testing.T) {
 	var buffer bytes.Buffer
 	zipWriter := zip.NewWriter(&buffer)
 
+	writeZipFile(t, zipWriter, "xl/workbook.xml", `<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>
+    <sheet name="基础画像模板" sheetId="1" r:id="rId1"/>
+  </sheets>
+</workbook>`)
+	writeZipFile(t, zipWriter, "xl/_rels/workbook.xml.rels", `<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>`)
 	writeZipFile(t, zipWriter, "xl/sharedStrings.xml", `<?xml version="1.0" encoding="UTF-8"?>
 <sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="6" uniqueCount="6">
   <si><t>document_type</t></si>
@@ -53,12 +63,15 @@ func TestParseXLSXData(t *testing.T) {
 		t.Fatalf("Close() error = %v", err)
 	}
 
-	rows, err := parseSpreadsheet("profiles.xlsx", buffer.Bytes())
+	parsed, err := parseSpreadsheetWithMetadata("profiles.xlsx", buffer.Bytes())
 	if err != nil {
-		t.Fatalf("parseSpreadsheet returned error: %v", err)
+		t.Fatalf("parseSpreadsheetWithMetadata returned error: %v", err)
 	}
 
-	if got, want := rows[1][2], "ZHANG WEI"; got != want {
+	if got, want := parsed.WorksheetName, "基础画像模板"; got != want {
+		t.Fatalf("WorksheetName = %q, want %q", got, want)
+	}
+	if got, want := parsed.Rows[1][2], "ZHANG WEI"; got != want {
 		t.Fatalf("full_name = %q, want %q", got, want)
 	}
 }
@@ -96,6 +109,111 @@ func TestBuildProfileRecord(t *testing.T) {
 	}
 	if got, want := tripInfo["pnr"], "CX880-LAX"; got != want {
 		t.Fatalf("tripInfo.pnr = %v, want %q", got, want)
+	}
+}
+
+func TestDetectImportType(t *testing.T) {
+	tests := []struct {
+		name    string
+		headers []string
+		want    string
+		wantErr bool
+	}{
+		{
+			name:    "base profile template",
+			headers: []string{"证件号码", "姓名", "国籍", "航班号"},
+			want:    importTypeBaseProfile,
+		},
+		{
+			name:    "high risk template",
+			headers: []string{"证件号码", "高风险原因"},
+			want:    importTypeHighRisk,
+		},
+		{
+			name:    "high risk template with full name column",
+			headers: []string{"证件号码", "姓名", "高风险原因"},
+			want:    importTypeHighRisk,
+		},
+		{
+			name:    "name only is ambiguous",
+			headers: []string{"证件号码", "姓名"},
+			wantErr: true,
+		},
+		{
+			name:    "missing document column",
+			headers: []string{"姓名", "高风险原因"},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := detectImportType(tt.headers)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("detectImportType(%v) error = nil, want error", tt.headers)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("detectImportType(%v) error = %v", tt.headers, err)
+			}
+			if got != tt.want {
+				t.Fatalf("detectImportType(%v) = %q, want %q", tt.headers, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDetectImportTypeFromSpreadsheet(t *testing.T) {
+	tests := []struct {
+		name          string
+		rows          [][]string
+		worksheetName string
+		want          string
+	}{
+		{
+			name:          "detect by worksheet name",
+			rows:          [][]string{{"证件号码"}, {"E92834102"}},
+			worksheetName: highRiskTemplateTitle,
+			want:          importTypeHighRisk,
+		},
+		{
+			name:          "detect by title row",
+			rows:          [][]string{{highRiskTemplateTitle}, {"证件号码"}, {"E92834102"}},
+			worksheetName: "",
+			want:          importTypeHighRisk,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := detectImportTypeFromSpreadsheet(tt.rows, tt.worksheetName)
+			if err != nil {
+				t.Fatalf("detectImportTypeFromSpreadsheet error = %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("detectImportTypeFromSpreadsheet = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSplitSpreadsheetRowsSkipsTemplateTitle(t *testing.T) {
+	headers, dataRows := splitSpreadsheetRows([][]string{
+		{highRiskTemplateTitle},
+		{"证件号码", "高风险原因"},
+		{"E92834102", "跨境赌博关联"},
+	})
+
+	if got, want := len(headers), 2; got != want {
+		t.Fatalf("len(headers) = %d, want %d", got, want)
+	}
+	if got, want := headers[1], "高风险原因"; got != want {
+		t.Fatalf("headers[1] = %q, want %q", got, want)
+	}
+	if got, want := dataRows[0][0], "E92834102"; got != want {
+		t.Fatalf("dataRows[0][0] = %q, want %q", got, want)
 	}
 }
 
