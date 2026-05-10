@@ -98,3 +98,35 @@ export async function importPassengerProfiles(file: File, importType: ImportType
 
   return payload;
 }
+
+export async function downloadImportTemplate(templateType: ImportType) {
+  const endpoint =
+    templateType === 'HIGH_RISK'
+      ? '/api/import-templates/high-risk-watchlist.xlsx'
+      : '/api/import-templates/passenger-profile.xlsx';
+
+  const response = await authorizedFetch(endpoint);
+  if (!response.ok) {
+    let message = '模板下载失败。';
+    try {
+      const payload = (await response.json()) as { message?: string };
+      if (typeof payload?.message === 'string' && payload.message.trim()) {
+        message = payload.message;
+      }
+    } catch {
+      // noop
+    }
+    throw new Error(message);
+  }
+
+  const blob = await response.blob();
+  const disposition = response.headers.get('Content-Disposition') ?? '';
+  const match = disposition.match(/filename="([^"]+)"/);
+  const filename =
+    match?.[1] ??
+    (templateType === 'HIGH_RISK'
+      ? 'ipra-high-risk-watchlist-template.xlsx'
+      : 'ipra-passenger-profile-template.xlsx');
+
+  return { blob, filename };
+}

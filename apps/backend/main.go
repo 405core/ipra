@@ -53,8 +53,6 @@ func newRouter(
 		})
 	})
 
-	profile.RegisterRoutes(r)
-
 	if inquiryHandler != nil {
 		inquiryHandler.Register(r)
 	}

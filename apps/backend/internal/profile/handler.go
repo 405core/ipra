@@ -33,6 +33,12 @@ func (h *Handler) Register(r gin.IRouter, authMiddleware gin.HandlerFunc) {
 	group.GET("", h.handleSearch)
 	group.POST("/imports", h.handleImport)
 
+	templateGroup := r.Group("/api/import-templates")
+	if authMiddleware != nil {
+		templateGroup.Use(authMiddleware)
+	}
+	registerTemplateRoutes(templateGroup)
+
 	adminGroup := r.Group("/api/admin")
 	if authMiddleware != nil {
 		adminGroup.Use(authMiddleware, requireAdminRole())
