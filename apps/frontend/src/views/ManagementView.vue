@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import {
   clearAuthSession,
@@ -127,6 +127,9 @@ const editingProfileId = ref<number | null>(null);
 const editingWatchlistId = ref<number | null>(null);
 
 const currentUserId = computed(() => session.value?.user.id ?? null);
+const isAnyFormVisible = computed(
+  () => isProfileFormVisible.value || isWatchlistFormVisible.value || isUserFormVisible.value
+);
 const isEditingCurrentUser = computed(
   () => userForm.value.id != null && userForm.value.id === currentUserId.value
 );
@@ -211,13 +214,23 @@ onMounted(() => {
   void refreshAll();
   if (typeof document !== 'undefined') {
     document.addEventListener('click', handleDocumentClick);
+    document.addEventListener('keydown', handleDocumentKeydown);
   }
 });
 
 onBeforeUnmount(() => {
   if (typeof document !== 'undefined') {
     document.removeEventListener('click', handleDocumentClick);
+    document.removeEventListener('keydown', handleDocumentKeydown);
+    document.body.style.overflow = '';
   }
+});
+
+watch(isAnyFormVisible, (visible) => {
+  if (typeof document === 'undefined') {
+    return;
+  }
+  document.body.style.overflow = visible ? 'hidden' : '';
 });
 
 async function refreshAll() {
@@ -282,12 +295,14 @@ function resetUserForm() {
 }
 
 function editProfile(item: PassengerProfileRecord) {
+  openFilterPicker.value = null;
   editingProfileId.value = item.id;
   profileForm.value = mapProfileToForm(item);
   isProfileFormVisible.value = true;
 }
 
 function editWatchlist(item: AdminWatchlistItem) {
+  openFilterPicker.value = null;
   editingWatchlistId.value = item.id;
   watchlistForm.value = {
     documentNum: item.documentNum,
@@ -297,6 +312,7 @@ function editWatchlist(item: AdminWatchlistItem) {
 }
 
 function editUser(item: AdminUserItem) {
+  openFilterPicker.value = null;
   userForm.value = {
     id: item.id,
     workId: item.workId,
@@ -436,6 +452,24 @@ function handleDocumentClick(event: MouseEvent) {
   openFilterPicker.value = null;
 }
 
+function handleDocumentKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Escape') {
+    return;
+  }
+
+  if (isProfileFormVisible.value) {
+    closeProfileForm();
+    return;
+  }
+  if (isWatchlistFormVisible.value) {
+    closeWatchlistForm();
+    return;
+  }
+  if (isUserFormVisible.value) {
+    closeUserForm();
+  }
+}
+
 function selectTab(tabKey: TabKey) {
   activeTab.value = tabKey;
   openFilterPicker.value = null;
@@ -446,31 +480,37 @@ function toggleFilterPicker(key: Exclude<FilterPickerKey, null>) {
 }
 
 function openCreateProfileForm() {
+  openFilterPicker.value = null;
   resetProfileForm();
   isProfileFormVisible.value = true;
 }
 
 function openCreateWatchlistForm() {
+  openFilterPicker.value = null;
   resetWatchlistForm();
   isWatchlistFormVisible.value = true;
 }
 
 function openCreateUserForm() {
+  openFilterPicker.value = null;
   resetUserForm();
   isUserFormVisible.value = true;
 }
 
 function closeProfileForm() {
+  openFilterPicker.value = null;
   resetProfileForm();
   isProfileFormVisible.value = false;
 }
 
 function closeWatchlistForm() {
+  openFilterPicker.value = null;
   resetWatchlistForm();
   isWatchlistFormVisible.value = false;
 }
 
 function closeUserForm() {
+  openFilterPicker.value = null;
   resetUserForm();
   isUserFormVisible.value = false;
 }
@@ -985,253 +1025,6 @@ function formatUserStatusLabel(value: string) {
 
         <p class="admin-filter-summary">当前筛选后 {{ filteredProfiles.length }} 条基础画像。</p>
 
-        <section v-if="isProfileFormVisible" class="admin-form-card">
-          <div class="admin-form-card__header">
-            <div>
-              <h3>{{ editingProfileId ? '编辑基础画像' : '新增基础画像' }}</h3>
-              <p>表单默认收起，只有新增或编辑时展开。</p>
-            </div>
-            <button type="button" class="ghost" @click="closeProfileForm">收起表单</button>
-          </div>
-
-          <div class="admin-form-grid">
-            <input
-              v-model="profileForm.documentNum"
-              :title="touchInputHint"
-              type="text"
-              placeholder="证件号码"
-              @dblclick.stop.prevent="
-                openFormFieldInput({
-                  title: '输入证件号码',
-                  placeholder: '输入证件号码',
-                  value: profileForm.documentNum,
-                  assign: (value) => (profileForm.documentNum = value),
-                })
-              "
-            />
-            <input
-              v-model="profileForm.fullName"
-              :title="touchInputHint"
-              type="text"
-              placeholder="姓名"
-              @dblclick.stop.prevent="
-                openFormFieldInput({
-                  title: '输入姓名',
-                  placeholder: '输入姓名',
-                  value: profileForm.fullName,
-                  assign: (value) => (profileForm.fullName = value),
-                })
-              "
-            />
-            <input
-              v-model="profileForm.documentType"
-              :title="touchInputHint"
-              type="text"
-              placeholder="证件类型"
-              @dblclick.stop.prevent="
-                openFormFieldInput({
-                  title: '输入证件类型',
-                  placeholder: '输入证件类型',
-                  value: profileForm.documentType,
-                  assign: (value) => (profileForm.documentType = value),
-                })
-              "
-            />
-            <input
-              v-model="profileForm.nationality"
-              :title="touchInputHint"
-              type="text"
-              placeholder="国籍"
-              @dblclick.stop.prevent="
-                openFormFieldInput({
-                  title: '输入国籍',
-                  placeholder: '输入国籍',
-                  value: profileForm.nationality,
-                  assign: (value) => (profileForm.nationality = value),
-                })
-              "
-            />
-            <input
-              v-model="profileForm.gender"
-              :title="touchInputHint"
-              type="text"
-              placeholder="性别"
-              @dblclick.stop.prevent="
-                openFormFieldInput({
-                  title: '输入性别',
-                  placeholder: '输入性别',
-                  value: profileForm.gender,
-                  assign: (value) => (profileForm.gender = value),
-                })
-              "
-            />
-            <input
-              v-model="profileForm.birthDate"
-              :title="touchInputHint"
-              type="text"
-              placeholder="出生日期"
-              @dblclick.stop.prevent="
-                openFormFieldInput({
-                  title: '输入出生日期',
-                  placeholder: '输入出生日期',
-                  value: profileForm.birthDate,
-                  assign: (value) => (profileForm.birthDate = value),
-                })
-              "
-            />
-            <input
-              v-model="profileForm.phone"
-              :title="touchInputHint"
-              type="text"
-              inputmode="tel"
-              placeholder="联系电话"
-              @dblclick.stop.prevent="
-                openFormFieldInput({
-                  title: '输入联系电话',
-                  placeholder: '输入联系电话',
-                  value: profileForm.phone,
-                  inputMode: 'tel',
-                  assign: (value) => (profileForm.phone = value),
-                })
-              "
-            />
-            <input
-              v-model="profileForm.pnr"
-              :title="touchInputHint"
-              type="text"
-              placeholder="订票编码 PNR"
-              @dblclick.stop.prevent="
-                openFormFieldInput({
-                  title: '输入订票编码 PNR',
-                  placeholder: '输入订票编码 PNR',
-                  value: profileForm.pnr,
-                  assign: (value) => (profileForm.pnr = value),
-                })
-              "
-            />
-            <input
-              v-model="profileForm.flightNo"
-              :title="touchInputHint"
-              type="text"
-              placeholder="航班号"
-              @dblclick.stop.prevent="
-                openFormFieldInput({
-                  title: '输入航班号',
-                  placeholder: '输入航班号',
-                  value: profileForm.flightNo,
-                  assign: (value) => (profileForm.flightNo = value),
-                })
-              "
-            />
-            <input
-              v-model="profileForm.destination"
-              :title="touchInputHint"
-              type="text"
-              placeholder="目的地"
-              @dblclick.stop.prevent="
-                openFormFieldInput({
-                  title: '输入目的地',
-                  placeholder: '输入目的地',
-                  value: profileForm.destination,
-                  assign: (value) => (profileForm.destination = value),
-                })
-              "
-            />
-            <input
-              v-model="profileForm.purpose"
-              :title="touchInputHint"
-              type="text"
-              placeholder="出行目的"
-              @dblclick.stop.prevent="
-                openFormFieldInput({
-                  title: '输入出行目的',
-                  placeholder: '输入出行目的',
-                  value: profileForm.purpose,
-                  assign: (value) => (profileForm.purpose = value),
-                })
-              "
-            />
-            <input
-              v-model="profileForm.occupation"
-              :title="touchInputHint"
-              type="text"
-              placeholder="职业"
-              @dblclick.stop.prevent="
-                openFormFieldInput({
-                  title: '输入职业',
-                  placeholder: '输入职业',
-                  value: profileForm.occupation,
-                  assign: (value) => (profileForm.occupation = value),
-                })
-              "
-            />
-            <input
-              v-model="profileForm.company"
-              :title="touchInputHint"
-              type="text"
-              placeholder="工作单位"
-              @dblclick.stop.prevent="
-                openFormFieldInput({
-                  title: '输入工作单位',
-                  placeholder: '输入工作单位',
-                  value: profileForm.company,
-                  assign: (value) => (profileForm.company = value),
-                })
-              "
-            />
-            <input
-              v-model="profileForm.riskTags"
-              :title="touchInputHint"
-              type="text"
-              placeholder="风险标签，多个用逗号分隔"
-              @dblclick.stop.prevent="
-                openFormFieldInput({
-                  title: '输入风险标签',
-                  description: '多个标签可用逗号分隔。',
-                  placeholder: '输入风险标签，多个用逗号分隔',
-                  value: profileForm.riskTags,
-                  assign: (value) => (profileForm.riskTags = value),
-                })
-              "
-            />
-            <textarea
-              v-model="profileForm.criminalRecord"
-              :title="touchInputHint"
-              placeholder="违法犯罪记录"
-              @dblclick.stop.prevent="
-                openFormFieldInput({
-                  title: '输入违法犯罪记录',
-                  placeholder: '输入违法犯罪记录',
-                  value: profileForm.criminalRecord,
-                  multiline: true,
-                  assign: (value) => (profileForm.criminalRecord = value),
-                })
-              "
-            ></textarea>
-            <textarea
-              v-model="profileForm.remark"
-              :title="touchInputHint"
-              placeholder="备注"
-              @dblclick.stop.prevent="
-                openFormFieldInput({
-                  title: '输入备注',
-                  placeholder: '输入备注',
-                  value: profileForm.remark,
-                  multiline: true,
-                  assign: (value) => (profileForm.remark = value),
-                })
-              "
-            ></textarea>
-          </div>
-
-          <div class="admin-form-actions">
-            <button type="button" @click="submitProfile">
-              {{ editingProfileId ? '更新基础画像' : '新增基础画像' }}
-            </button>
-            <button type="button" class="ghost" @click="closeProfileForm">取消</button>
-          </div>
-        </section>
-
         <div class="admin-table">
           <article v-for="item in filteredProfiles" :key="item.id" class="admin-row admin-row--profile">
             <div class="admin-row__profile-content">
@@ -1296,54 +1089,6 @@ function formatUserStatusLabel(value: string) {
         </div>
 
         <p class="admin-filter-summary">当前筛选后 {{ filteredWatchlist.length }} 条高风险名单。</p>
-
-        <section v-if="isWatchlistFormVisible" class="admin-form-card">
-          <div class="admin-form-card__header">
-            <div>
-              <h3>{{ editingWatchlistId ? '编辑高风险名单' : '新增高风险名单' }}</h3>
-              <p>证件号码保留手动输入，高风险原因为选填。</p>
-            </div>
-            <button type="button" class="ghost" @click="closeWatchlistForm">收起表单</button>
-          </div>
-
-          <div class="admin-form-grid">
-            <input
-              v-model="watchlistForm.documentNum"
-              :title="touchInputHint"
-              type="text"
-              placeholder="证件号码"
-              @dblclick.stop.prevent="
-                openFormFieldInput({
-                  title: '输入证件号码',
-                  placeholder: '输入证件号码',
-                  value: watchlistForm.documentNum ?? '',
-                  assign: (value) => (watchlistForm.documentNum = value),
-                })
-              "
-            />
-            <textarea
-              v-model="watchlistForm.riskReason"
-              :title="touchInputHint"
-              placeholder="高风险原因"
-              @dblclick.stop.prevent="
-                openFormFieldInput({
-                  title: '输入高风险原因',
-                  placeholder: '输入高风险原因',
-                  value: watchlistForm.riskReason ?? '',
-                  multiline: true,
-                  assign: (value) => (watchlistForm.riskReason = value),
-                })
-              "
-            ></textarea>
-          </div>
-
-          <div class="admin-form-actions">
-            <button type="button" @click="submitWatchlist">
-              {{ editingWatchlistId ? '更新高风险名单' : '新增高风险名单' }}
-            </button>
-            <button type="button" class="ghost" @click="closeWatchlistForm">取消</button>
-          </div>
-        </section>
 
         <div class="admin-table">
           <article v-for="item in filteredWatchlist" :key="item.id" class="admin-row">
@@ -1428,77 +1173,6 @@ function formatUserStatusLabel(value: string) {
 
         <p class="admin-filter-summary">当前筛选后 {{ filteredUsers.length }} 个用户。</p>
 
-        <section v-if="isUserFormVisible" class="admin-form-card">
-          <div class="admin-form-card__header">
-            <div>
-              <h3>{{ userForm.id ? '编辑用户' : '新增用户' }}</h3>
-              <p>角色和状态属于低基数字段，筛选时已收纳为按钮选择。</p>
-            </div>
-            <button type="button" class="ghost" @click="closeUserForm">收起表单</button>
-          </div>
-
-          <div class="admin-form-grid">
-            <input
-              v-model="userForm.workId"
-              :title="touchInputHint"
-              type="text"
-              placeholder="工号"
-              @dblclick.stop.prevent="
-                openFormFieldInput({
-                  title: '输入工号',
-                  placeholder: '输入工号',
-                  value: userForm.workId,
-                  assign: (value) => (userForm.workId = value),
-                })
-              "
-            />
-            <input
-              v-model="userForm.name"
-              :title="touchInputHint"
-              type="text"
-              placeholder="姓名"
-              @dblclick.stop.prevent="
-                openFormFieldInput({
-                  title: '输入姓名',
-                  placeholder: '输入姓名',
-                  value: userForm.name,
-                  assign: (value) => (userForm.name = value),
-                })
-              "
-            />
-            <select v-model="userForm.role">
-              <option value="user">员工</option>
-              <option value="admin">管理员</option>
-            </select>
-            <select v-model="userForm.status">
-              <option value="active">启用</option>
-              <option value="disabled" :disabled="isEditingCurrentUser">停用</option>
-            </select>
-            <input
-              v-model="userForm.password"
-              :title="touchInputHint"
-              type="password"
-              placeholder="密码（修改时可留空）"
-              @dblclick.stop.prevent="
-                openFormFieldInput({
-                  title: '输入密码',
-                  placeholder: '输入密码（修改时可留空）',
-                  value: userForm.password,
-                  masked: true,
-                  assign: (value) => (userForm.password = value),
-                })
-              "
-            />
-          </div>
-
-          <div class="admin-form-actions">
-            <button type="button" @click="submitUser">
-              {{ userForm.id ? '更新用户' : '新增用户' }}
-            </button>
-            <button type="button" class="ghost" @click="closeUserForm">取消</button>
-          </div>
-        </section>
-
         <div class="admin-user-table-wrap">
           <table class="admin-user-table">
             <thead>
@@ -1547,6 +1221,384 @@ function formatUserStatusLabel(value: string) {
       </section>
     </section>
   </main>
+
+  <Teleport to="body">
+    <section v-if="isProfileFormVisible" class="admin-dialog" @click.self="closeProfileForm">
+      <div class="admin-form-card admin-form-card--dialog admin-form-card--profile">
+        <div class="admin-form-card__header">
+          <div>
+            <h3>{{ editingProfileId ? '编辑基础画像' : '新增基础画像' }}</h3>
+            <p>在弹窗内填写并提交基础画像信息。</p>
+          </div>
+          <button type="button" class="ghost" @click="closeProfileForm">关闭窗口</button>
+        </div>
+
+        <div class="admin-form-grid">
+          <input
+            v-model="profileForm.documentNum"
+            :title="touchInputHint"
+            type="text"
+            placeholder="证件号码"
+            @dblclick.stop.prevent="
+              openFormFieldInput({
+                title: '输入证件号码',
+                placeholder: '输入证件号码',
+                value: profileForm.documentNum,
+                assign: (value) => (profileForm.documentNum = value),
+              })
+            "
+          />
+          <input
+            v-model="profileForm.fullName"
+            :title="touchInputHint"
+            type="text"
+            placeholder="姓名"
+            @dblclick.stop.prevent="
+              openFormFieldInput({
+                title: '输入姓名',
+                placeholder: '输入姓名',
+                value: profileForm.fullName,
+                assign: (value) => (profileForm.fullName = value),
+              })
+            "
+          />
+          <input
+            v-model="profileForm.documentType"
+            :title="touchInputHint"
+            type="text"
+            placeholder="证件类型"
+            @dblclick.stop.prevent="
+              openFormFieldInput({
+                title: '输入证件类型',
+                placeholder: '输入证件类型',
+                value: profileForm.documentType,
+                assign: (value) => (profileForm.documentType = value),
+              })
+            "
+          />
+          <input
+            v-model="profileForm.nationality"
+            :title="touchInputHint"
+            type="text"
+            placeholder="国籍"
+            @dblclick.stop.prevent="
+              openFormFieldInput({
+                title: '输入国籍',
+                placeholder: '输入国籍',
+                value: profileForm.nationality,
+                assign: (value) => (profileForm.nationality = value),
+              })
+            "
+          />
+          <input
+            v-model="profileForm.gender"
+            :title="touchInputHint"
+            type="text"
+            placeholder="性别"
+            @dblclick.stop.prevent="
+              openFormFieldInput({
+                title: '输入性别',
+                placeholder: '输入性别',
+                value: profileForm.gender,
+                assign: (value) => (profileForm.gender = value),
+              })
+            "
+          />
+          <input
+            v-model="profileForm.birthDate"
+            :title="touchInputHint"
+            type="text"
+            placeholder="出生日期"
+            @dblclick.stop.prevent="
+              openFormFieldInput({
+                title: '输入出生日期',
+                placeholder: '输入出生日期',
+                value: profileForm.birthDate,
+                assign: (value) => (profileForm.birthDate = value),
+              })
+            "
+          />
+          <input
+            v-model="profileForm.phone"
+            :title="touchInputHint"
+            type="text"
+            inputmode="tel"
+            placeholder="联系电话"
+            @dblclick.stop.prevent="
+              openFormFieldInput({
+                title: '输入联系电话',
+                placeholder: '输入联系电话',
+                value: profileForm.phone,
+                inputMode: 'tel',
+                assign: (value) => (profileForm.phone = value),
+              })
+            "
+          />
+          <input
+            v-model="profileForm.pnr"
+            :title="touchInputHint"
+            type="text"
+            placeholder="订票编码 PNR"
+            @dblclick.stop.prevent="
+              openFormFieldInput({
+                title: '输入订票编码 PNR',
+                placeholder: '输入订票编码 PNR',
+                value: profileForm.pnr,
+                assign: (value) => (profileForm.pnr = value),
+              })
+            "
+          />
+          <input
+            v-model="profileForm.flightNo"
+            :title="touchInputHint"
+            type="text"
+            placeholder="航班号"
+            @dblclick.stop.prevent="
+              openFormFieldInput({
+                title: '输入航班号',
+                placeholder: '输入航班号',
+                value: profileForm.flightNo,
+                assign: (value) => (profileForm.flightNo = value),
+              })
+            "
+          />
+          <input
+            v-model="profileForm.destination"
+            :title="touchInputHint"
+            type="text"
+            placeholder="目的地"
+            @dblclick.stop.prevent="
+              openFormFieldInput({
+                title: '输入目的地',
+                placeholder: '输入目的地',
+                value: profileForm.destination,
+                assign: (value) => (profileForm.destination = value),
+              })
+            "
+          />
+          <input
+            v-model="profileForm.purpose"
+            :title="touchInputHint"
+            type="text"
+            placeholder="出行目的"
+            @dblclick.stop.prevent="
+              openFormFieldInput({
+                title: '输入出行目的',
+                placeholder: '输入出行目的',
+                value: profileForm.purpose,
+                assign: (value) => (profileForm.purpose = value),
+              })
+            "
+          />
+          <input
+            v-model="profileForm.occupation"
+            :title="touchInputHint"
+            type="text"
+            placeholder="职业"
+            @dblclick.stop.prevent="
+              openFormFieldInput({
+                title: '输入职业',
+                placeholder: '输入职业',
+                value: profileForm.occupation,
+                assign: (value) => (profileForm.occupation = value),
+              })
+            "
+          />
+          <input
+            v-model="profileForm.company"
+            :title="touchInputHint"
+            type="text"
+            placeholder="工作单位"
+            @dblclick.stop.prevent="
+              openFormFieldInput({
+                title: '输入工作单位',
+                placeholder: '输入工作单位',
+                value: profileForm.company,
+                assign: (value) => (profileForm.company = value),
+              })
+            "
+          />
+          <input
+            v-model="profileForm.riskTags"
+            :title="touchInputHint"
+            type="text"
+            placeholder="风险标签，多个用逗号分隔"
+            @dblclick.stop.prevent="
+              openFormFieldInput({
+                title: '输入风险标签',
+                description: '多个标签可用逗号分隔。',
+                placeholder: '输入风险标签，多个用逗号分隔',
+                value: profileForm.riskTags,
+                assign: (value) => (profileForm.riskTags = value),
+              })
+            "
+          />
+          <textarea
+            v-model="profileForm.criminalRecord"
+            :title="touchInputHint"
+            placeholder="违法犯罪记录"
+            @dblclick.stop.prevent="
+              openFormFieldInput({
+                title: '输入违法犯罪记录',
+                placeholder: '输入违法犯罪记录',
+                value: profileForm.criminalRecord,
+                multiline: true,
+                assign: (value) => (profileForm.criminalRecord = value),
+              })
+            "
+          ></textarea>
+          <textarea
+            v-model="profileForm.remark"
+            :title="touchInputHint"
+            placeholder="备注"
+            @dblclick.stop.prevent="
+              openFormFieldInput({
+                title: '输入备注',
+                placeholder: '输入备注',
+                value: profileForm.remark,
+                multiline: true,
+                assign: (value) => (profileForm.remark = value),
+              })
+            "
+          ></textarea>
+        </div>
+
+        <div class="admin-form-actions">
+          <button type="button" @click="submitProfile">
+            {{ editingProfileId ? '更新基础画像' : '新增基础画像' }}
+          </button>
+          <button type="button" class="ghost" @click="closeProfileForm">取消</button>
+        </div>
+      </div>
+    </section>
+  </Teleport>
+
+  <Teleport to="body">
+    <section v-if="isWatchlistFormVisible" class="admin-dialog" @click.self="closeWatchlistForm">
+      <div class="admin-form-card admin-form-card--dialog admin-form-card--watchlist">
+        <div class="admin-form-card__header">
+          <div>
+            <h3>{{ editingWatchlistId ? '编辑高风险名单' : '新增高风险名单' }}</h3>
+            <p>在弹窗内填写证件号码和高风险原因。</p>
+          </div>
+          <button type="button" class="ghost" @click="closeWatchlistForm">关闭窗口</button>
+        </div>
+
+        <div class="admin-form-grid">
+          <input
+            v-model="watchlistForm.documentNum"
+            :title="touchInputHint"
+            type="text"
+            placeholder="证件号码"
+            @dblclick.stop.prevent="
+              openFormFieldInput({
+                title: '输入证件号码',
+                placeholder: '输入证件号码',
+                value: watchlistForm.documentNum ?? '',
+                assign: (value) => (watchlistForm.documentNum = value),
+              })
+            "
+          />
+          <textarea
+            v-model="watchlistForm.riskReason"
+            :title="touchInputHint"
+            placeholder="高风险原因"
+            @dblclick.stop.prevent="
+              openFormFieldInput({
+                title: '输入高风险原因',
+                placeholder: '输入高风险原因',
+                value: watchlistForm.riskReason ?? '',
+                multiline: true,
+                assign: (value) => (watchlistForm.riskReason = value),
+              })
+            "
+          ></textarea>
+        </div>
+
+        <div class="admin-form-actions">
+          <button type="button" @click="submitWatchlist">
+            {{ editingWatchlistId ? '更新高风险名单' : '新增高风险名单' }}
+          </button>
+          <button type="button" class="ghost" @click="closeWatchlistForm">取消</button>
+        </div>
+      </div>
+    </section>
+  </Teleport>
+
+  <Teleport to="body">
+    <section v-if="isUserFormVisible" class="admin-dialog" @click.self="closeUserForm">
+      <div class="admin-form-card admin-form-card--dialog admin-form-card--user">
+        <div class="admin-form-card__header">
+          <div>
+            <h3>{{ userForm.id ? '编辑用户' : '新增用户' }}</h3>
+            <p>在弹窗内维护工号、角色、状态和密码。</p>
+          </div>
+          <button type="button" class="ghost" @click="closeUserForm">关闭窗口</button>
+        </div>
+
+        <div class="admin-form-grid">
+          <input
+            v-model="userForm.workId"
+            :title="touchInputHint"
+            type="text"
+            placeholder="工号"
+            @dblclick.stop.prevent="
+              openFormFieldInput({
+                title: '输入工号',
+                placeholder: '输入工号',
+                value: userForm.workId,
+                assign: (value) => (userForm.workId = value),
+              })
+            "
+          />
+          <input
+            v-model="userForm.name"
+            :title="touchInputHint"
+            type="text"
+            placeholder="姓名"
+            @dblclick.stop.prevent="
+              openFormFieldInput({
+                title: '输入姓名',
+                placeholder: '输入姓名',
+                value: userForm.name,
+                assign: (value) => (userForm.name = value),
+              })
+            "
+          />
+          <select v-model="userForm.role">
+            <option value="user">员工</option>
+            <option value="admin">管理员</option>
+          </select>
+          <select v-model="userForm.status">
+            <option value="active">启用</option>
+            <option value="disabled" :disabled="isEditingCurrentUser">停用</option>
+          </select>
+          <input
+            v-model="userForm.password"
+            :title="touchInputHint"
+            type="password"
+            placeholder="密码（修改时可留空）"
+            @dblclick.stop.prevent="
+              openFormFieldInput({
+                title: '输入密码',
+                placeholder: '输入密码（修改时可留空）',
+                value: userForm.password,
+                masked: true,
+                assign: (value) => (userForm.password = value),
+              })
+            "
+          />
+        </div>
+
+        <div class="admin-form-actions">
+          <button type="button" @click="submitUser">
+            {{ userForm.id ? '更新用户' : '新增用户' }}
+          </button>
+          <button type="button" class="ghost" @click="closeUserForm">取消</button>
+        </div>
+      </div>
+    </section>
+  </Teleport>
 </template>
 
 <style scoped lang="scss">
@@ -1765,6 +1817,35 @@ function formatUserStatusLabel(value: string) {
   border-radius: 20px;
   background: #fff9f6;
   border: 1px solid rgba(215, 193, 180, 0.5);
+}
+
+.admin-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(34, 22, 18, 0.42);
+  backdrop-filter: blur(6px);
+}
+
+.admin-form-card--dialog {
+  width: min(860px, 100%);
+  max-height: calc(100vh - 48px);
+  margin-bottom: 0;
+  overflow: auto;
+  box-shadow: 0 28px 56px rgba(34, 22, 18, 0.22);
+}
+
+.admin-form-card--profile {
+  width: min(1040px, 100%);
+}
+
+.admin-form-card--watchlist,
+.admin-form-card--user {
+  width: min(720px, 100%);
 }
 
 .admin-form-card__header {
@@ -2100,6 +2181,16 @@ function formatUserStatusLabel(value: string) {
 
   .admin-user-table .is-actions {
     width: 190px;
+  }
+
+  .admin-dialog {
+    align-items: flex-end;
+    padding: 12px;
+  }
+
+  .admin-form-card--dialog {
+    width: 100%;
+    max-height: calc(100vh - 24px);
   }
 
   .admin-form-card__header {
