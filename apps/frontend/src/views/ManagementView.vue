@@ -51,7 +51,11 @@ const tabs: Array<{ key: TabKey; label: string }> = [
 ];
 
 const activeTab = ref<TabKey>('profiles');
-const statusMessage = ref('正在加载管理数据...');
+const statusMessages = ref<Record<TabKey, string>>({
+  profiles: '正在加载基础画像...',
+  watchlist: '正在加载高风险名单...',
+  users: '正在加载用户...',
+});
 
 const profileQuery = ref('');
 const watchlistQuery = ref('');
@@ -86,6 +90,7 @@ const editingWatchlistId = ref<number | null>(null);
 
 const adminName = computed(() => session?.user.name || '系统管理员');
 const adminWorkId = computed(() => session?.user.workId || 'admin');
+const currentStatusMessage = computed(() => statusMessages.value[activeTab.value]);
 
 onMounted(() => {
   void refreshAll();
@@ -98,19 +103,19 @@ async function refreshAll() {
 async function loadProfiles() {
   const result = await listAdminProfiles(profileQuery.value);
   profiles.value = result.items;
-  statusMessage.value = `已加载基础画像 ${result.total} 条。`;
+  statusMessages.value.profiles = `已加载基础画像 ${result.total} 条。`;
 }
 
 async function loadWatchlist() {
   const result = await listAdminWatchlist(watchlistQuery.value);
   watchlist.value = result.items;
-  statusMessage.value = `已加载高风险名单 ${result.total} 条。`;
+  statusMessages.value.watchlist = `已加载高风险名单 ${result.total} 条。`;
 }
 
 async function loadUsers() {
   const result = await listAdminUsers(userQuery.value);
   users.value = result.items;
-  statusMessage.value = `已加载用户 ${result.total} 条。`;
+  statusMessages.value.users = `已加载用户 ${result.total} 条。`;
 }
 
 function resetProfileForm() {
@@ -165,25 +170,27 @@ async function submitProfile() {
     const payload = buildProfilePayload(profileForm.value);
     if (editingProfileId.value) {
       await updateAdminProfile(editingProfileId.value, payload);
-      statusMessage.value = '基础画像已更新。';
+      statusMessages.value.profiles = '基础画像已更新。';
     } else {
       await createAdminProfile(payload);
-      statusMessage.value = '基础画像已新增。';
+      statusMessages.value.profiles = '基础画像已新增。';
     }
     resetProfileForm();
     await loadProfiles();
   } catch (error) {
-    statusMessage.value = error instanceof Error ? error.message : '基础画像保存失败。';
+    statusMessages.value.profiles =
+      error instanceof Error ? error.message : '基础画像保存失败。';
   }
 }
 
 async function removeProfile(id: number) {
   try {
     await deleteAdminProfile(id);
-    statusMessage.value = '基础画像已删除。';
+    statusMessages.value.profiles = '基础画像已删除。';
     await loadProfiles();
   } catch (error) {
-    statusMessage.value = error instanceof Error ? error.message : '删除基础画像失败。';
+    statusMessages.value.profiles =
+      error instanceof Error ? error.message : '删除基础画像失败。';
   }
 }
 
@@ -191,25 +198,27 @@ async function submitWatchlist() {
   try {
     if (editingWatchlistId.value) {
       await updateAdminWatchlist(editingWatchlistId.value, watchlistForm.value);
-      statusMessage.value = '高风险名单已更新。';
+      statusMessages.value.watchlist = '高风险名单已更新。';
     } else {
       await createAdminWatchlist(watchlistForm.value);
-      statusMessage.value = '高风险名单已新增。';
+      statusMessages.value.watchlist = '高风险名单已新增。';
     }
     resetWatchlistForm();
     await loadWatchlist();
   } catch (error) {
-    statusMessage.value = error instanceof Error ? error.message : '高风险名单保存失败。';
+    statusMessages.value.watchlist =
+      error instanceof Error ? error.message : '高风险名单保存失败。';
   }
 }
 
 async function removeWatchlist(id: number) {
   try {
     await deleteAdminWatchlist(id);
-    statusMessage.value = '高风险名单已删除。';
+    statusMessages.value.watchlist = '高风险名单已删除。';
     await loadWatchlist();
   } catch (error) {
-    statusMessage.value = error instanceof Error ? error.message : '删除高风险名单失败。';
+    statusMessages.value.watchlist =
+      error instanceof Error ? error.message : '删除高风险名单失败。';
   }
 }
 
@@ -217,15 +226,16 @@ async function submitUser() {
   try {
     if (userForm.value.id) {
       await updateAdminUser(userForm.value.id, userForm.value);
-      statusMessage.value = '用户已更新。';
+      statusMessages.value.users = '用户已更新。';
     } else {
       await createAdminUser(userForm.value);
-      statusMessage.value = '用户已新增。';
+      statusMessages.value.users = '用户已新增。';
     }
     resetUserForm();
     await loadUsers();
   } catch (error) {
-    statusMessage.value = error instanceof Error ? error.message : '用户保存失败。';
+    statusMessages.value.users =
+      error instanceof Error ? error.message : '用户保存失败。';
   }
 }
 
@@ -233,10 +243,11 @@ async function toggleUserStatus(item: AdminUserItem) {
   try {
     const nextStatus = item.status === 'active' ? 'disabled' : 'active';
     await updateAdminUserStatus(item.id, nextStatus);
-    statusMessage.value = `用户已${nextStatus === 'active' ? '启用' : '停用'}。`;
+    statusMessages.value.users = `用户已${nextStatus === 'active' ? '启用' : '停用'}。`;
     await loadUsers();
   } catch (error) {
-    statusMessage.value = error instanceof Error ? error.message : '更新用户状态失败。';
+    statusMessages.value.users =
+      error instanceof Error ? error.message : '更新用户状态失败。';
   }
 }
 
@@ -396,7 +407,7 @@ function buildProfileSummary(item: PassengerProfileRecord) {
           <p class="admin-header__eyebrow">管理状态</p>
           <h2>{{ tabs.find((item) => item.key === activeTab)?.label }}</h2>
         </div>
-        <span class="admin-status">{{ statusMessage }}</span>
+        <span class="admin-status">{{ currentStatusMessage }}</span>
       </header>
 
       <section v-if="activeTab === 'profiles'" class="admin-panel">
