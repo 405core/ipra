@@ -1,7 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { clearAuthSession, loadAuthSession } from '../auth';
+import {
+  clearAuthSession,
+  loadAuthSession,
+  resolveRoleHome,
+  validateAuthSession,
+} from '../auth';
+import { ElMessage } from '../app/el-message';
+import { openTouchInput } from '../app/touch-input';
 import {
   createAdminProfile,
   createAdminUser,
@@ -22,12 +29,9 @@ import type { PassengerProfileRecord } from '../app/profile-service';
 
 type TabKey = 'profiles' | 'watchlist' | 'users';
 type FilterPickerKey =
-  | 'profiles-search'
   | 'profiles-document-type'
+  | 'profiles-nationality'
   | 'profiles-gender'
-  | 'watchlist-search'
-  | 'watchlist-reason'
-  | 'users-search'
   | 'users-role'
   | 'users-status'
   | null;
@@ -35,6 +39,11 @@ type FilterPickerKey =
 interface FilterOption {
   value: string;
   label: string;
+}
+
+interface ProfileDetailEntry {
+  label: string;
+  value: string;
 }
 
 interface ProfileFormState {
@@ -57,7 +66,7 @@ interface ProfileFormState {
 }
 
 const router = useRouter();
-const session = loadAuthSession();
+const session = ref(loadAuthSession());
 
 const tabs: Array<{ key: TabKey; label: string }> = [
   { key: 'profiles', label: '基础画像' },
@@ -76,6 +85,7 @@ const statusMessages = ref<Record<TabKey, string>>({
 const profileQuery = ref('');
 const watchlistQuery = ref('');
 const userQuery = ref('');
+const touchInputHint = '单击正常输入，双击打开触控键盘';
 
 const profiles = ref<PassengerProfileRecord[]>([]);
 const watchlist = ref<AdminWatchlistItem[]>([]);
@@ -85,10 +95,8 @@ const isWatchlistFormVisible = ref(false);
 const isUserFormVisible = ref(false);
 const profileFilters = ref({
   documentType: '',
+  nationality: '',
   gender: '',
-});
-const watchlistFilters = ref({
-  reasonState: '',
 });
 const userFilters = ref({
   role: '',
@@ -118,8 +126,12 @@ const userForm = ref<{
 const editingProfileId = ref<number | null>(null);
 const editingWatchlistId = ref<number | null>(null);
 
-const adminName = computed(() => session?.user.name || '系统管理员');
-const adminWorkId = computed(() => session?.user.workId || 'admin');
+const currentUserId = computed(() => session.value?.user.id ?? null);
+const isEditingCurrentUser = computed(
+  () => userForm.value.id != null && userForm.value.id === currentUserId.value
+);
+const adminName = computed(() => session.value?.user.name || '系统管理员');
+const adminWorkId = computed(() => session.value?.user.workId || 'admin');
 const profileDocumentTypeOptions = computed(() =>
   buildDistinctOptions(
     profiles.value.map((item) => readProfileField(item, 'basicInfo', 'documentType')),
@@ -132,11 +144,9 @@ const profileGenderOptions = computed(() =>
     formatGenderLabel
   )
 );
-const watchlistReasonOptions: FilterOption[] = [
-  { value: '', label: '全部原因状态' },
-  { value: 'filled', label: '已填写原因' },
-  { value: 'empty', label: '未填写原因' },
-];
+const profileNationalityOptions = computed(() =>
+  buildDistinctOptions(profiles.value.map((item) => readProfileField(item, 'basicInfo', 'nationality')))
+);
 const userRoleOptions: FilterOption[] = [
   { value: '', label: '全部角色' },
   { value: 'user', label: '员工' },
@@ -150,27 +160,25 @@ const userStatusOptions: FilterOption[] = [
 const filteredProfiles = computed(() =>
   profiles.value.filter((item) => {
     const documentType = readProfileField(item, 'basicInfo', 'documentType');
+    const nationality = readProfileField(item, 'basicInfo', 'nationality');
     const gender = readProfileField(item, 'basicInfo', 'gender');
 
     if (profileFilters.value.documentType && documentType !== profileFilters.value.documentType) {
       return false;
     }
+    if (profileFilters.value.nationality && nationality !== profileFilters.value.nationality) {
+      return false;
+    }
     if (profileFilters.value.gender && gender !== profileFilters.value.gender) {
       return false;
     }
-    return true;
+    return matchesSearch(buildProfileSearchText(item), profileQuery.value);
   })
 );
 const filteredWatchlist = computed(() =>
-  watchlist.value.filter((item) => {
-    if (watchlistFilters.value.reasonState === 'filled') {
-      return Boolean(item.riskReason?.trim());
-    }
-    if (watchlistFilters.value.reasonState === 'empty') {
-      return !item.riskReason?.trim();
-    }
-    return true;
-  })
+  watchlist.value.filter((item) =>
+    matchesSearch([item.documentNum, item.riskReason || '高风险名单命中'], watchlistQuery.value)
+  )
 );
 const filteredUsers = computed(() =>
   users.value.filter((item) => {
@@ -180,23 +188,23 @@ const filteredUsers = computed(() =>
     if (userFilters.value.status && item.status !== userFilters.value.status) {
       return false;
     }
-    return true;
+    return matchesSearch(buildUserSearchText(item), userQuery.value);
   })
 );
 const selectedProfileDocumentTypeLabel = computed(() =>
-  findSelectedLabel(profileDocumentTypeOptions.value, profileFilters.value.documentType, '证件类型')
+  describeFilterLabel('证件类型', profileDocumentTypeOptions.value, profileFilters.value.documentType)
+);
+const selectedProfileNationalityLabel = computed(() =>
+  describeFilterLabel('国籍', profileNationalityOptions.value, profileFilters.value.nationality)
 );
 const selectedProfileGenderLabel = computed(() =>
-  findSelectedLabel(profileGenderOptions.value, profileFilters.value.gender, '性别')
-);
-const selectedWatchlistReasonLabel = computed(() =>
-  findSelectedLabel(watchlistReasonOptions, watchlistFilters.value.reasonState, '原因状态')
+  describeFilterLabel('性别', profileGenderOptions.value, profileFilters.value.gender)
 );
 const selectedUserRoleLabel = computed(() =>
-  findSelectedLabel(userRoleOptions, userFilters.value.role, '角色')
+  describeFilterLabel('角色', userRoleOptions, userFilters.value.role)
 );
 const selectedUserStatusLabel = computed(() =>
-  findSelectedLabel(userStatusOptions, userFilters.value.status, '状态')
+  describeFilterLabel('状态', userStatusOptions, userFilters.value.status)
 );
 
 onMounted(() => {
@@ -217,21 +225,37 @@ async function refreshAll() {
 }
 
 async function loadProfiles() {
-  const result = await listAdminProfiles(profileQuery.value);
+  const result = await listAdminProfiles('');
   profiles.value = result.items;
   statusMessages.value.profiles = `已加载基础画像 ${result.total} 条。`;
 }
 
 async function loadWatchlist() {
-  const result = await listAdminWatchlist(watchlistQuery.value);
+  const result = await listAdminWatchlist('');
   watchlist.value = result.items;
   statusMessages.value.watchlist = `已加载高风险名单 ${result.total} 条。`;
 }
 
 async function loadUsers() {
-  const result = await listAdminUsers(userQuery.value);
+  const result = await listAdminUsers('');
   users.value = result.items;
   statusMessages.value.users = `已加载用户 ${result.total} 条。`;
+}
+
+async function syncCurrentSession() {
+  const nextSession = await validateAuthSession();
+  session.value = nextSession;
+
+  if (!nextSession) {
+    await router.push('/login');
+    return null;
+  }
+
+  if (nextSession.user.role !== 'admin') {
+    await router.push(resolveRoleHome(nextSession.user.role));
+  }
+
+  return nextSession;
 }
 
 function resetProfileForm() {
@@ -345,8 +369,24 @@ async function removeWatchlist(id: number) {
 
 async function submitUser() {
   try {
+    if (isEditingCurrentUser.value && userForm.value.status === 'disabled') {
+      const message = '不能停用当前登录管理员。';
+      statusMessages.value.users = message;
+      ElMessage.warning(message);
+      return;
+    }
+
     if (userForm.value.id) {
       await updateAdminUser(userForm.value.id, userForm.value);
+      if (isEditingCurrentUser.value) {
+        const nextSession = await syncCurrentSession();
+        if (!nextSession || nextSession.user.role !== 'admin') {
+          statusMessages.value.users = '当前登录信息已同步更新。';
+          resetUserForm();
+          isUserFormVisible.value = false;
+          return;
+        }
+      }
       statusMessages.value.users = '用户已更新。';
     } else {
       await createAdminUser(userForm.value);
@@ -364,12 +404,22 @@ async function submitUser() {
 async function toggleUserStatus(item: AdminUserItem) {
   try {
     const nextStatus = item.status === 'active' ? 'disabled' : 'active';
+
+    if (item.id === currentUserId.value && nextStatus === 'disabled') {
+      const message = '不能停用当前登录管理员。';
+      statusMessages.value.users = message;
+      ElMessage.warning(message);
+      return;
+    }
+
     await updateAdminUserStatus(item.id, nextStatus);
     statusMessages.value.users = `用户已${nextStatus === 'active' ? '启用' : '停用'}。`;
+    ElMessage.success(statusMessages.value.users);
     await loadUsers();
   } catch (error) {
     statusMessages.value.users =
       error instanceof Error ? error.message : '更新用户状态失败。';
+    ElMessage.error(statusMessages.value.users);
   }
 }
 
@@ -428,6 +478,7 @@ function closeUserForm() {
 function clearProfileFilters() {
   profileQuery.value = '';
   profileFilters.value.documentType = '';
+  profileFilters.value.nationality = '';
   profileFilters.value.gender = '';
   openFilterPicker.value = null;
   void loadProfiles();
@@ -435,8 +486,6 @@ function clearProfileFilters() {
 
 function clearWatchlistFilters() {
   watchlistQuery.value = '';
-  watchlistFilters.value.reasonState = '';
-  openFilterPicker.value = null;
   void loadWatchlist();
 }
 
@@ -453,13 +502,13 @@ function applyProfileDocumentTypeFilter(value: string) {
   openFilterPicker.value = null;
 }
 
-function applyProfileGenderFilter(value: string) {
-  profileFilters.value.gender = value;
+function applyProfileNationalityFilter(value: string) {
+  profileFilters.value.nationality = value;
   openFilterPicker.value = null;
 }
 
-function applyWatchlistReasonFilter(value: string) {
-  watchlistFilters.value.reasonState = value;
+function applyProfileGenderFilter(value: string) {
+  profileFilters.value.gender = value;
   openFilterPicker.value = null;
 }
 
@@ -473,19 +522,33 @@ function applyUserStatusFilter(value: string) {
   openFilterPicker.value = null;
 }
 
-function submitProfileSearch() {
-  openFilterPicker.value = null;
-  void loadProfiles();
-}
+async function openFormFieldInput(options: {
+  title: string;
+  description?: string;
+  placeholder: string;
+  value: string;
+  multiline?: boolean;
+  inputMode?: 'text' | 'search' | 'tel' | 'url' | 'email' | 'numeric' | 'decimal';
+  masked?: boolean;
+  confirmText?: string;
+  assign: (value: string) => void;
+}) {
+  const nextValue = await openTouchInput({
+    title: options.title,
+    description: options.description,
+    placeholder: options.placeholder,
+    value: options.value,
+    multiline: options.multiline,
+    inputMode: options.inputMode,
+    masked: options.masked,
+    confirmText: options.confirmText ?? '确认回填',
+  });
 
-function submitWatchlistSearch() {
-  openFilterPicker.value = null;
-  void loadWatchlist();
-}
+  if (nextValue == null) {
+    return;
+  }
 
-function submitUserSearch() {
-  openFilterPicker.value = null;
-  void loadUsers();
+  options.assign(nextValue);
 }
 
 function createEmptyProfileForm(): ProfileFormState {
@@ -607,6 +670,132 @@ function buildProfileSummary(item: PassengerProfileRecord) {
   return [destination, purpose, occupationName].filter(Boolean).join(' · ') || '未填写更多画像信息';
 }
 
+function buildProfileDetailEntries(item: PassengerProfileRecord): ProfileDetailEntry[] {
+  const profileData = (item.profileData ?? {}) as Record<string, any>;
+  const basicInfo = (profileData.basicInfo ?? {}) as Record<string, any>;
+  const tripInfo = (profileData.tripInfo ?? {}) as Record<string, any>;
+  const occupation = (profileData.occupation ?? {}) as Record<string, any>;
+  const occupationSummary = [occupation.occupation, occupation.company]
+    .map((value) => String(value ?? '').trim())
+    .filter(Boolean)
+    .join(' · ');
+
+  return [
+    {
+      label: '国籍',
+      value: String(basicInfo.nationality ?? '').trim() || '未填写',
+    },
+    {
+      label: '出生',
+      value: String(basicInfo.birthDate ?? '').trim() || '未填写',
+    },
+    {
+      label: '电话',
+      value: String(basicInfo.phone ?? '').trim() || '未填写',
+    },
+    {
+      label: 'PNR',
+      value: String(tripInfo.pnr ?? '').trim() || '未填写',
+    },
+    {
+      label: '航班',
+      value: String(tripInfo.flightNo ?? '').trim() || '未填写',
+    },
+    {
+      label: '目的地',
+      value: String(tripInfo.destination ?? '').trim() || '未填写',
+    },
+    {
+      label: '目的',
+      value: String(tripInfo.purposeDeclared ?? '').trim() || '未填写',
+    },
+    {
+      label: '职业 / 单位',
+      value: occupationSummary || '未填写',
+    },
+  ];
+}
+
+function buildProfileRiskTags(item: PassengerProfileRecord) {
+  const profileData = (item.profileData ?? {}) as Record<string, any>;
+  const riskInfo = (profileData.riskInfo ?? {}) as Record<string, any>;
+  const rawTags = riskInfo.riskTags;
+  if (!Array.isArray(rawTags)) {
+    return [] as string[];
+  }
+
+  return rawTags.map((tag) => String(tag ?? '').trim()).filter(Boolean);
+}
+
+function buildProfileNotes(item: PassengerProfileRecord): ProfileDetailEntry[] {
+  const profileData = (item.profileData ?? {}) as Record<string, any>;
+  const riskInfo = (profileData.riskInfo ?? {}) as Record<string, any>;
+  const notes: ProfileDetailEntry[] = [];
+  const criminalRecord = String(riskInfo.criminalRecord ?? '').trim();
+  const remark = String(riskInfo.note ?? '').trim();
+
+  if (criminalRecord) {
+    notes.push({
+      label: '违法犯罪记录',
+      value: criminalRecord,
+    });
+  }
+  if (remark) {
+    notes.push({
+      label: '备注',
+      value: remark,
+    });
+  }
+
+  return notes;
+}
+
+function buildProfileSearchText(item: PassengerProfileRecord) {
+  return [
+    item.fullName,
+    item.documentNum,
+    item.riskReason,
+    readProfileField(item, 'basicInfo', 'documentType'),
+    formatDocumentTypeLabel(readProfileField(item, 'basicInfo', 'documentType')),
+    readProfileField(item, 'basicInfo', 'nationality'),
+    readProfileField(item, 'basicInfo', 'gender'),
+    formatGenderLabel(readProfileField(item, 'basicInfo', 'gender')),
+    ...buildProfileDetailEntries(item).flatMap((detail) => [detail.label, detail.value]),
+    ...buildProfileRiskTags(item),
+    ...buildProfileNotes(item).flatMap((note) => [note.label, note.value]),
+  ];
+}
+
+function buildUserSearchText(item: AdminUserItem) {
+  return [
+    item.workId,
+    item.name,
+    item.role,
+    formatUserRoleLabel(item.role),
+    item.status,
+    formatUserStatusLabel(item.status),
+  ];
+}
+
+function matchesSearch(values: Array<string | undefined>, rawQuery: string) {
+  const terms = rawQuery
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (terms.length === 0) {
+    return true;
+  }
+
+  const haystack = values
+    .map((value) => String(value ?? '').trim().toLowerCase())
+    .filter(Boolean)
+    .join(' ');
+
+  return terms.every((term) => haystack.includes(term));
+}
+
 function buildDistinctOptions(values: string[], formatter?: (value: string) => string) {
   const distinctValues = [...new Set(values.map((item) => item.trim()).filter(Boolean))].sort((left, right) =>
     left.localeCompare(right, 'zh-Hans-CN')
@@ -621,8 +810,9 @@ function buildDistinctOptions(values: string[], formatter?: (value: string) => s
   ];
 }
 
-function findSelectedLabel(options: FilterOption[], value: string, fallbackPrefix: string) {
-  return options.find((item) => item.value === value)?.label ?? `${fallbackPrefix}：全部`;
+function describeFilterLabel(prefix: string, options: FilterOption[], value: string) {
+  const label = options.find((item) => item.value === value)?.label ?? '全部';
+  return `${prefix}：${label}`;
 }
 
 function readProfileField(
@@ -666,6 +856,14 @@ function formatGenderLabel(value: string) {
       return value || '未填写';
   }
 }
+
+function formatUserRoleLabel(value: string) {
+  return value === 'admin' ? '管理员' : value === 'user' ? '员工' : value || '未填写';
+}
+
+function formatUserStatusLabel(value: string) {
+  return value === 'active' ? '启用' : value === 'disabled' ? '停用' : value || '未填写';
+}
 </script>
 
 <template>
@@ -696,84 +894,93 @@ function formatGenderLabel(value: string) {
     <section class="admin-content">
       <section v-if="activeTab === 'profiles'" class="admin-panel">
         <div class="admin-toolbar">
-          <div class="filter-picker">
-            <button
-              class="filter-chip"
-              :class="{ 'is-active': profileQuery.trim() }"
-              type="button"
-              @click.stop="toggleFilterPicker('profiles-search')"
-            >
-              {{ profileQuery.trim() ? `检索：${profileQuery}` : '手动检索' }}
-            </button>
-            <div
-              v-if="openFilterPicker === 'profiles-search'"
-              class="filter-picker__menu filter-picker__menu--search"
-              @click.stop
-            >
-              <input
-                v-model="profileQuery"
-                type="text"
-                placeholder="输入证件号或姓名"
-                @keyup.enter="submitProfileSearch"
-              />
-              <div class="filter-picker__actions">
-                <button type="button" @click="submitProfileSearch">确定</button>
-                <button type="button" class="ghost" @click="profileQuery = ''">清空</button>
+          <div class="admin-toolbar__search-block">
+            <input
+              v-model="profileQuery"
+              class="admin-toolbar__search-input"
+              type="text"
+              inputmode="search"
+              placeholder="输入要筛选的内容"
+            />
+          </div>
+          <div class="admin-toolbar__actions">
+            <div class="filter-picker">
+              <button
+                class="filter-chip"
+                :class="{ 'is-active': profileFilters.documentType }"
+                type="button"
+                @click.stop="toggleFilterPicker('profiles-document-type')"
+              >
+                {{ selectedProfileDocumentTypeLabel }}
+              </button>
+              <div
+                v-if="openFilterPicker === 'profiles-document-type'"
+                class="filter-picker__menu"
+                @click.stop
+              >
+                <button
+                  v-for="option in profileDocumentTypeOptions"
+                  :key="option.value || 'all-document-type'"
+                  type="button"
+                  @click="applyProfileDocumentTypeFilter(option.value)"
+                >
+                  {{ option.label }}
+                </button>
               </div>
             </div>
-          </div>
-          <div class="filter-picker">
-            <button
-              class="filter-chip"
-              :class="{ 'is-active': profileFilters.documentType }"
-              type="button"
-              @click.stop="toggleFilterPicker('profiles-document-type')"
-            >
-              {{ selectedProfileDocumentTypeLabel }}
-            </button>
-            <div
-              v-if="openFilterPicker === 'profiles-document-type'"
-              class="filter-picker__menu"
-              @click.stop
-            >
+            <div class="filter-picker">
               <button
-                v-for="option in profileDocumentTypeOptions"
-                :key="option.value || 'all-document-type'"
+                class="filter-chip"
+                :class="{ 'is-active': profileFilters.nationality }"
                 type="button"
-                @click="applyProfileDocumentTypeFilter(option.value)"
+                @click.stop="toggleFilterPicker('profiles-nationality')"
               >
-                {{ option.label }}
+                {{ selectedProfileNationalityLabel }}
               </button>
+              <div
+                v-if="openFilterPicker === 'profiles-nationality'"
+                class="filter-picker__menu"
+                @click.stop
+              >
+                <button
+                  v-for="option in profileNationalityOptions"
+                  :key="option.value || 'all-nationality'"
+                  type="button"
+                  @click="applyProfileNationalityFilter(option.value)"
+                >
+                  {{ option.label }}
+                </button>
+              </div>
             </div>
-          </div>
-          <div class="filter-picker">
-            <button
-              class="filter-chip"
-              :class="{ 'is-active': profileFilters.gender }"
-              type="button"
-              @click.stop="toggleFilterPicker('profiles-gender')"
-            >
-              {{ selectedProfileGenderLabel }}
-            </button>
-            <div
-              v-if="openFilterPicker === 'profiles-gender'"
-              class="filter-picker__menu"
-              @click.stop
-            >
+            <div class="filter-picker">
               <button
-                v-for="option in profileGenderOptions"
-                :key="option.value || 'all-gender'"
+                class="filter-chip"
+                :class="{ 'is-active': profileFilters.gender }"
                 type="button"
-                @click="applyProfileGenderFilter(option.value)"
+                @click.stop="toggleFilterPicker('profiles-gender')"
               >
-                {{ option.label }}
+                {{ selectedProfileGenderLabel }}
               </button>
+              <div
+                v-if="openFilterPicker === 'profiles-gender'"
+                class="filter-picker__menu"
+                @click.stop
+              >
+                <button
+                  v-for="option in profileGenderOptions"
+                  :key="option.value || 'all-gender'"
+                  type="button"
+                  @click="applyProfileGenderFilter(option.value)"
+                >
+                  {{ option.label }}
+                </button>
+              </div>
             </div>
+            <button type="button" class="ghost" @click="clearProfileFilters">清空筛选</button>
+            <button type="button" class="ghost ghost--strong" @click="openCreateProfileForm">
+              {{ editingProfileId ? '继续编辑' : '新增基础画像' }}
+            </button>
           </div>
-          <button type="button" class="ghost" @click="clearProfileFilters">清空筛选</button>
-          <button type="button" class="ghost ghost--strong" @click="openCreateProfileForm">
-            {{ editingProfileId ? '继续编辑' : '新增基础画像' }}
-          </button>
         </div>
 
         <p class="admin-filter-summary">当前筛选后 {{ filteredProfiles.length }} 条基础画像。</p>
@@ -788,22 +995,233 @@ function formatGenderLabel(value: string) {
           </div>
 
           <div class="admin-form-grid">
-            <input v-model="profileForm.documentNum" type="text" placeholder="证件号码" />
-            <input v-model="profileForm.fullName" type="text" placeholder="姓名" />
-            <input v-model="profileForm.documentType" type="text" placeholder="证件类型" />
-            <input v-model="profileForm.nationality" type="text" placeholder="国籍" />
-            <input v-model="profileForm.gender" type="text" placeholder="性别" />
-            <input v-model="profileForm.birthDate" type="text" placeholder="出生日期" />
-            <input v-model="profileForm.phone" type="text" placeholder="联系电话" />
-            <input v-model="profileForm.pnr" type="text" placeholder="订票编码 PNR" />
-            <input v-model="profileForm.flightNo" type="text" placeholder="航班号" />
-            <input v-model="profileForm.destination" type="text" placeholder="目的地" />
-            <input v-model="profileForm.purpose" type="text" placeholder="出行目的" />
-            <input v-model="profileForm.occupation" type="text" placeholder="职业" />
-            <input v-model="profileForm.company" type="text" placeholder="工作单位" />
-            <input v-model="profileForm.riskTags" type="text" placeholder="风险标签，多个用逗号分隔" />
-            <textarea v-model="profileForm.criminalRecord" placeholder="违法犯罪记录"></textarea>
-            <textarea v-model="profileForm.remark" placeholder="备注"></textarea>
+            <input
+              v-model="profileForm.documentNum"
+              :title="touchInputHint"
+              type="text"
+              placeholder="证件号码"
+              @dblclick.stop.prevent="
+                openFormFieldInput({
+                  title: '输入证件号码',
+                  placeholder: '输入证件号码',
+                  value: profileForm.documentNum,
+                  assign: (value) => (profileForm.documentNum = value),
+                })
+              "
+            />
+            <input
+              v-model="profileForm.fullName"
+              :title="touchInputHint"
+              type="text"
+              placeholder="姓名"
+              @dblclick.stop.prevent="
+                openFormFieldInput({
+                  title: '输入姓名',
+                  placeholder: '输入姓名',
+                  value: profileForm.fullName,
+                  assign: (value) => (profileForm.fullName = value),
+                })
+              "
+            />
+            <input
+              v-model="profileForm.documentType"
+              :title="touchInputHint"
+              type="text"
+              placeholder="证件类型"
+              @dblclick.stop.prevent="
+                openFormFieldInput({
+                  title: '输入证件类型',
+                  placeholder: '输入证件类型',
+                  value: profileForm.documentType,
+                  assign: (value) => (profileForm.documentType = value),
+                })
+              "
+            />
+            <input
+              v-model="profileForm.nationality"
+              :title="touchInputHint"
+              type="text"
+              placeholder="国籍"
+              @dblclick.stop.prevent="
+                openFormFieldInput({
+                  title: '输入国籍',
+                  placeholder: '输入国籍',
+                  value: profileForm.nationality,
+                  assign: (value) => (profileForm.nationality = value),
+                })
+              "
+            />
+            <input
+              v-model="profileForm.gender"
+              :title="touchInputHint"
+              type="text"
+              placeholder="性别"
+              @dblclick.stop.prevent="
+                openFormFieldInput({
+                  title: '输入性别',
+                  placeholder: '输入性别',
+                  value: profileForm.gender,
+                  assign: (value) => (profileForm.gender = value),
+                })
+              "
+            />
+            <input
+              v-model="profileForm.birthDate"
+              :title="touchInputHint"
+              type="text"
+              placeholder="出生日期"
+              @dblclick.stop.prevent="
+                openFormFieldInput({
+                  title: '输入出生日期',
+                  placeholder: '输入出生日期',
+                  value: profileForm.birthDate,
+                  assign: (value) => (profileForm.birthDate = value),
+                })
+              "
+            />
+            <input
+              v-model="profileForm.phone"
+              :title="touchInputHint"
+              type="text"
+              inputmode="tel"
+              placeholder="联系电话"
+              @dblclick.stop.prevent="
+                openFormFieldInput({
+                  title: '输入联系电话',
+                  placeholder: '输入联系电话',
+                  value: profileForm.phone,
+                  inputMode: 'tel',
+                  assign: (value) => (profileForm.phone = value),
+                })
+              "
+            />
+            <input
+              v-model="profileForm.pnr"
+              :title="touchInputHint"
+              type="text"
+              placeholder="订票编码 PNR"
+              @dblclick.stop.prevent="
+                openFormFieldInput({
+                  title: '输入订票编码 PNR',
+                  placeholder: '输入订票编码 PNR',
+                  value: profileForm.pnr,
+                  assign: (value) => (profileForm.pnr = value),
+                })
+              "
+            />
+            <input
+              v-model="profileForm.flightNo"
+              :title="touchInputHint"
+              type="text"
+              placeholder="航班号"
+              @dblclick.stop.prevent="
+                openFormFieldInput({
+                  title: '输入航班号',
+                  placeholder: '输入航班号',
+                  value: profileForm.flightNo,
+                  assign: (value) => (profileForm.flightNo = value),
+                })
+              "
+            />
+            <input
+              v-model="profileForm.destination"
+              :title="touchInputHint"
+              type="text"
+              placeholder="目的地"
+              @dblclick.stop.prevent="
+                openFormFieldInput({
+                  title: '输入目的地',
+                  placeholder: '输入目的地',
+                  value: profileForm.destination,
+                  assign: (value) => (profileForm.destination = value),
+                })
+              "
+            />
+            <input
+              v-model="profileForm.purpose"
+              :title="touchInputHint"
+              type="text"
+              placeholder="出行目的"
+              @dblclick.stop.prevent="
+                openFormFieldInput({
+                  title: '输入出行目的',
+                  placeholder: '输入出行目的',
+                  value: profileForm.purpose,
+                  assign: (value) => (profileForm.purpose = value),
+                })
+              "
+            />
+            <input
+              v-model="profileForm.occupation"
+              :title="touchInputHint"
+              type="text"
+              placeholder="职业"
+              @dblclick.stop.prevent="
+                openFormFieldInput({
+                  title: '输入职业',
+                  placeholder: '输入职业',
+                  value: profileForm.occupation,
+                  assign: (value) => (profileForm.occupation = value),
+                })
+              "
+            />
+            <input
+              v-model="profileForm.company"
+              :title="touchInputHint"
+              type="text"
+              placeholder="工作单位"
+              @dblclick.stop.prevent="
+                openFormFieldInput({
+                  title: '输入工作单位',
+                  placeholder: '输入工作单位',
+                  value: profileForm.company,
+                  assign: (value) => (profileForm.company = value),
+                })
+              "
+            />
+            <input
+              v-model="profileForm.riskTags"
+              :title="touchInputHint"
+              type="text"
+              placeholder="风险标签，多个用逗号分隔"
+              @dblclick.stop.prevent="
+                openFormFieldInput({
+                  title: '输入风险标签',
+                  description: '多个标签可用逗号分隔。',
+                  placeholder: '输入风险标签，多个用逗号分隔',
+                  value: profileForm.riskTags,
+                  assign: (value) => (profileForm.riskTags = value),
+                })
+              "
+            />
+            <textarea
+              v-model="profileForm.criminalRecord"
+              :title="touchInputHint"
+              placeholder="违法犯罪记录"
+              @dblclick.stop.prevent="
+                openFormFieldInput({
+                  title: '输入违法犯罪记录',
+                  placeholder: '输入违法犯罪记录',
+                  value: profileForm.criminalRecord,
+                  multiline: true,
+                  assign: (value) => (profileForm.criminalRecord = value),
+                })
+              "
+            ></textarea>
+            <textarea
+              v-model="profileForm.remark"
+              :title="touchInputHint"
+              placeholder="备注"
+              @dblclick.stop.prevent="
+                openFormFieldInput({
+                  title: '输入备注',
+                  placeholder: '输入备注',
+                  value: profileForm.remark,
+                  multiline: true,
+                  assign: (value) => (profileForm.remark = value),
+                })
+              "
+            ></textarea>
           </div>
 
           <div class="admin-form-actions">
@@ -815,11 +1233,40 @@ function formatGenderLabel(value: string) {
         </section>
 
         <div class="admin-table">
-          <article v-for="item in filteredProfiles" :key="item.id" class="admin-row">
-            <div>
-              <strong>{{ item.fullName }}</strong>
-              <p>{{ item.documentNum }}</p>
-              <p>{{ buildProfileSummary(item) }}</p>
+          <article v-for="item in filteredProfiles" :key="item.id" class="admin-row admin-row--profile">
+            <div class="admin-row__profile-content">
+              <div class="admin-row__headline">
+                <strong>{{ item.fullName }}</strong>
+                <span class="admin-row__pill">{{ formatDocumentTypeLabel(readProfileField(item, 'basicInfo', 'documentType')) || '未填证件类型' }}</span>
+                <span class="admin-row__pill">{{ formatGenderLabel(readProfileField(item, 'basicInfo', 'gender')) || '未填性别' }}</span>
+                <span class="admin-row__identity">{{ item.documentNum }}</span>
+              </div>
+              <div class="admin-row__fact-list">
+                <span
+                  v-for="detail in buildProfileDetailEntries(item)"
+                  :key="`${item.id}-${detail.label}`"
+                  class="admin-row__fact"
+                >
+                  <span class="admin-row__fact-label">{{ detail.label }}</span>
+                  <strong class="admin-row__fact-value">{{ detail.value }}</strong>
+                </span>
+              </div>
+              <div v-if="buildProfileRiskTags(item).length || buildProfileNotes(item).length" class="admin-row__tags">
+                <span
+                  v-for="tag in buildProfileRiskTags(item)"
+                  :key="`${item.id}-${tag}`"
+                  class="admin-row__tag"
+                >
+                  {{ tag }}
+                </span>
+                <span
+                  v-for="note in buildProfileNotes(item)"
+                  :key="`${item.id}-${note.label}`"
+                  class="admin-row__tag admin-row__tag--muted"
+                >
+                  {{ note.label }}
+                </span>
+              </div>
             </div>
             <div class="admin-row__actions">
               <button type="button" @click="editProfile(item)">编辑</button>
@@ -831,60 +1278,21 @@ function formatGenderLabel(value: string) {
 
       <section v-else-if="activeTab === 'watchlist'" class="admin-panel">
         <div class="admin-toolbar">
-          <div class="filter-picker">
-            <button
-              class="filter-chip"
-              :class="{ 'is-active': watchlistQuery.trim() }"
-              type="button"
-              @click.stop="toggleFilterPicker('watchlist-search')"
-            >
-              {{ watchlistQuery.trim() ? `检索：${watchlistQuery}` : '手动检索' }}
-            </button>
-            <div
-              v-if="openFilterPicker === 'watchlist-search'"
-              class="filter-picker__menu filter-picker__menu--search"
-              @click.stop
-            >
-              <input
-                v-model="watchlistQuery"
-                type="text"
-                placeholder="输入证件号或原因"
-                @keyup.enter="submitWatchlistSearch"
-              />
-              <div class="filter-picker__actions">
-                <button type="button" @click="submitWatchlistSearch">确定</button>
-                <button type="button" class="ghost" @click="watchlistQuery = ''">清空</button>
-              </div>
-            </div>
+          <div class="admin-toolbar__search-block">
+            <input
+              v-model="watchlistQuery"
+              class="admin-toolbar__search-input"
+              type="text"
+              inputmode="search"
+              placeholder="输入要筛选的内容"
+            />
           </div>
-          <div class="filter-picker">
-            <button
-              class="filter-chip"
-              :class="{ 'is-active': watchlistFilters.reasonState }"
-              type="button"
-              @click.stop="toggleFilterPicker('watchlist-reason')"
-            >
-              {{ selectedWatchlistReasonLabel }}
+          <div class="admin-toolbar__actions">
+            <button type="button" class="ghost" @click="clearWatchlistFilters">清空检索</button>
+            <button type="button" class="ghost ghost--strong" @click="openCreateWatchlistForm">
+              {{ editingWatchlistId ? '继续编辑' : '新增高风险名单' }}
             </button>
-            <div
-              v-if="openFilterPicker === 'watchlist-reason'"
-              class="filter-picker__menu"
-              @click.stop
-            >
-              <button
-                v-for="option in watchlistReasonOptions"
-                :key="option.value || 'all-watchlist-reason'"
-                type="button"
-                @click="applyWatchlistReasonFilter(option.value)"
-              >
-                {{ option.label }}
-              </button>
-            </div>
           </div>
-          <button type="button" class="ghost" @click="clearWatchlistFilters">清空筛选</button>
-          <button type="button" class="ghost ghost--strong" @click="openCreateWatchlistForm">
-            {{ editingWatchlistId ? '继续编辑' : '新增高风险名单' }}
-          </button>
         </div>
 
         <p class="admin-filter-summary">当前筛选后 {{ filteredWatchlist.length }} 条高风险名单。</p>
@@ -899,8 +1307,34 @@ function formatGenderLabel(value: string) {
           </div>
 
           <div class="admin-form-grid">
-            <input v-model="watchlistForm.documentNum" type="text" placeholder="证件号码" />
-            <textarea v-model="watchlistForm.riskReason" placeholder="高风险原因"></textarea>
+            <input
+              v-model="watchlistForm.documentNum"
+              :title="touchInputHint"
+              type="text"
+              placeholder="证件号码"
+              @dblclick.stop.prevent="
+                openFormFieldInput({
+                  title: '输入证件号码',
+                  placeholder: '输入证件号码',
+                  value: watchlistForm.documentNum ?? '',
+                  assign: (value) => (watchlistForm.documentNum = value),
+                })
+              "
+            />
+            <textarea
+              v-model="watchlistForm.riskReason"
+              :title="touchInputHint"
+              placeholder="高风险原因"
+              @dblclick.stop.prevent="
+                openFormFieldInput({
+                  title: '输入高风险原因',
+                  placeholder: '输入高风险原因',
+                  value: watchlistForm.riskReason ?? '',
+                  multiline: true,
+                  assign: (value) => (watchlistForm.riskReason = value),
+                })
+              "
+            ></textarea>
           </div>
 
           <div class="admin-form-actions">
@@ -927,84 +1361,69 @@ function formatGenderLabel(value: string) {
 
       <section v-else class="admin-panel">
         <div class="admin-toolbar">
-          <div class="filter-picker">
-            <button
-              class="filter-chip"
-              :class="{ 'is-active': userQuery.trim() }"
-              type="button"
-              @click.stop="toggleFilterPicker('users-search')"
-            >
-              {{ userQuery.trim() ? `检索：${userQuery}` : '手动检索' }}
-            </button>
-            <div
-              v-if="openFilterPicker === 'users-search'"
-              class="filter-picker__menu filter-picker__menu--search"
-              @click.stop
-            >
-              <input
-                v-model="userQuery"
-                type="text"
-                placeholder="输入工号或姓名"
-                @keyup.enter="submitUserSearch"
-              />
-              <div class="filter-picker__actions">
-                <button type="button" @click="submitUserSearch">确定</button>
-                <button type="button" class="ghost" @click="userQuery = ''">清空</button>
+          <div class="admin-toolbar__search-block">
+            <input
+              v-model="userQuery"
+              class="admin-toolbar__search-input"
+              type="text"
+              inputmode="search"
+              placeholder="输入要筛选的内容"
+            />
+          </div>
+          <div class="admin-toolbar__actions">
+            <div class="filter-picker">
+              <button
+                class="filter-chip"
+                :class="{ 'is-active': userFilters.role }"
+                type="button"
+                @click.stop="toggleFilterPicker('users-role')"
+              >
+                {{ selectedUserRoleLabel }}
+              </button>
+              <div
+                v-if="openFilterPicker === 'users-role'"
+                class="filter-picker__menu"
+                @click.stop
+              >
+                <button
+                  v-for="option in userRoleOptions"
+                  :key="option.value || 'all-user-role'"
+                  type="button"
+                  @click="applyUserRoleFilter(option.value)"
+                >
+                  {{ option.label }}
+                </button>
               </div>
             </div>
-          </div>
-          <div class="filter-picker">
-            <button
-              class="filter-chip"
-              :class="{ 'is-active': userFilters.role }"
-              type="button"
-              @click.stop="toggleFilterPicker('users-role')"
-            >
-              {{ selectedUserRoleLabel }}
-            </button>
-            <div
-              v-if="openFilterPicker === 'users-role'"
-              class="filter-picker__menu"
-              @click.stop
-            >
+            <div class="filter-picker">
               <button
-                v-for="option in userRoleOptions"
-                :key="option.value || 'all-user-role'"
+                class="filter-chip"
+                :class="{ 'is-active': userFilters.status }"
                 type="button"
-                @click="applyUserRoleFilter(option.value)"
+                @click.stop="toggleFilterPicker('users-status')"
               >
-                {{ option.label }}
+                {{ selectedUserStatusLabel }}
               </button>
+              <div
+                v-if="openFilterPicker === 'users-status'"
+                class="filter-picker__menu"
+                @click.stop
+              >
+                <button
+                  v-for="option in userStatusOptions"
+                  :key="option.value || 'all-user-status'"
+                  type="button"
+                  @click="applyUserStatusFilter(option.value)"
+                >
+                  {{ option.label }}
+                </button>
+              </div>
             </div>
-          </div>
-          <div class="filter-picker">
-            <button
-              class="filter-chip"
-              :class="{ 'is-active': userFilters.status }"
-              type="button"
-              @click.stop="toggleFilterPicker('users-status')"
-            >
-              {{ selectedUserStatusLabel }}
+            <button type="button" class="ghost" @click="clearUserFilters">清空筛选</button>
+            <button type="button" class="ghost ghost--strong" @click="openCreateUserForm">
+              {{ userForm.id ? '继续编辑' : '新增用户' }}
             </button>
-            <div
-              v-if="openFilterPicker === 'users-status'"
-              class="filter-picker__menu"
-              @click.stop
-            >
-              <button
-                v-for="option in userStatusOptions"
-                :key="option.value || 'all-user-status'"
-                type="button"
-                @click="applyUserStatusFilter(option.value)"
-              >
-                {{ option.label }}
-              </button>
-            </div>
           </div>
-          <button type="button" class="ghost" @click="clearUserFilters">清空筛选</button>
-          <button type="button" class="ghost ghost--strong" @click="openCreateUserForm">
-            {{ userForm.id ? '继续编辑' : '新增用户' }}
-          </button>
         </div>
 
         <p class="admin-filter-summary">当前筛选后 {{ filteredUsers.length }} 个用户。</p>
@@ -1019,17 +1438,57 @@ function formatGenderLabel(value: string) {
           </div>
 
           <div class="admin-form-grid">
-            <input v-model="userForm.workId" type="text" placeholder="工号" />
-            <input v-model="userForm.name" type="text" placeholder="姓名" />
+            <input
+              v-model="userForm.workId"
+              :title="touchInputHint"
+              type="text"
+              placeholder="工号"
+              @dblclick.stop.prevent="
+                openFormFieldInput({
+                  title: '输入工号',
+                  placeholder: '输入工号',
+                  value: userForm.workId,
+                  assign: (value) => (userForm.workId = value),
+                })
+              "
+            />
+            <input
+              v-model="userForm.name"
+              :title="touchInputHint"
+              type="text"
+              placeholder="姓名"
+              @dblclick.stop.prevent="
+                openFormFieldInput({
+                  title: '输入姓名',
+                  placeholder: '输入姓名',
+                  value: userForm.name,
+                  assign: (value) => (userForm.name = value),
+                })
+              "
+            />
             <select v-model="userForm.role">
               <option value="user">员工</option>
               <option value="admin">管理员</option>
             </select>
             <select v-model="userForm.status">
               <option value="active">启用</option>
-              <option value="disabled">停用</option>
+              <option value="disabled" :disabled="isEditingCurrentUser">停用</option>
             </select>
-            <input v-model="userForm.password" type="password" placeholder="密码（修改时可留空）" />
+            <input
+              v-model="userForm.password"
+              :title="touchInputHint"
+              type="password"
+              placeholder="密码（修改时可留空）"
+              @dblclick.stop.prevent="
+                openFormFieldInput({
+                  title: '输入密码',
+                  placeholder: '输入密码（修改时可留空）',
+                  value: userForm.password,
+                  masked: true,
+                  assign: (value) => (userForm.password = value),
+                })
+              "
+            />
           </div>
 
           <div class="admin-form-actions">
@@ -1040,19 +1499,50 @@ function formatGenderLabel(value: string) {
           </div>
         </section>
 
-        <div class="admin-table">
-          <article v-for="item in filteredUsers" :key="item.id" class="admin-row">
-            <div>
-              <strong>{{ item.name }} · {{ item.workId }}</strong>
-              <p>{{ item.role === 'admin' ? '管理员' : '员工' }} · {{ item.status }}</p>
-            </div>
-            <div class="admin-row__actions">
-              <button type="button" @click="editUser(item)">编辑</button>
-              <button type="button" class="ghost" @click="toggleUserStatus(item)">
-                {{ item.status === 'active' ? '停用' : '启用' }}
-              </button>
-            </div>
-          </article>
+        <div class="admin-user-table-wrap">
+          <table class="admin-user-table">
+            <thead>
+              <tr>
+                <th>工号</th>
+                <th>姓名</th>
+                <th>角色</th>
+                <th>状态</th>
+                <th class="is-actions">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="item in filteredUsers" :key="item.id">
+                <td>{{ item.workId }}</td>
+                <td>
+                  <strong class="admin-user-table__name">{{ item.name }}</strong>
+                </td>
+                <td>
+                  <span class="admin-row__pill">{{ formatUserRoleLabel(item.role) }}</span>
+                </td>
+                <td>
+                  <span
+                    class="admin-row__status"
+                    :class="item.status === 'active' ? 'is-active' : 'is-disabled'"
+                  >
+                    <span class="admin-row__status-dot"></span>
+                    {{ formatUserStatusLabel(item.status) }}
+                  </span>
+                </td>
+                <td class="is-actions">
+                  <div class="admin-user-table__actions">
+                    <button type="button" @click="editUser(item)">编辑</button>
+                    <button
+                      type="button"
+                      :class="item.status === 'active' ? 'danger' : ''"
+                      @click="toggleUserStatus(item)"
+                    >
+                      {{ item.status === 'active' ? '停用' : '启用' }}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </section>
     </section>
@@ -1105,7 +1595,8 @@ function formatGenderLabel(value: string) {
 .admin-logout,
 .admin-toolbar button,
 .admin-form-actions button,
-.admin-row__actions button {
+.admin-row__actions button,
+.admin-user-table__actions button {
   min-height: 44px;
   border: 0;
   border-radius: 14px;
@@ -1158,7 +1649,41 @@ function formatGenderLabel(value: string) {
 }
 
 .admin-toolbar {
+  align-items: stretch;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(255, 250, 246, 0.94), rgba(247, 238, 231, 0.82));
+  border: 1px solid rgba(218, 197, 184, 0.66);
+}
+
+.admin-toolbar__search-block {
+  display: flex;
+  flex: 0 1 280px;
   align-items: center;
+  min-width: min(100%, 280px);
+}
+
+.admin-toolbar__actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(138px, 156px));
+  flex: 1 1 520px;
+  gap: 12px;
+  align-items: stretch;
+  align-content: stretch;
+  justify-content: end;
+  margin-left: auto;
+  min-width: min(100%, 420px);
+}
+
+.admin-toolbar__actions > * {
+  min-width: 0;
+}
+
+.admin-toolbar__search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 64px;
 }
 
 .admin-form-grid {
@@ -1167,6 +1692,10 @@ function formatGenderLabel(value: string) {
 
 .admin-form-grid > * {
   flex: 1 1 280px;
+}
+
+.admin-form-actions {
+  justify-content: flex-end;
 }
 
 .admin-form-grid textarea {
@@ -1192,16 +1721,29 @@ function formatGenderLabel(value: string) {
   background: #fffdfa;
 }
 
+.admin-toolbar .admin-toolbar__search-input {
+  min-height: 64px;
+}
+
+.admin-toolbar__actions > button,
+.admin-toolbar__actions > .filter-picker {
+  width: 100%;
+  height: 100%;
+  min-height: 64px;
+}
+
 .admin-toolbar button,
 .admin-form-actions button,
-.admin-row__actions button {
+.admin-row__actions button,
+.admin-user-table__actions button {
   background: linear-gradient(135deg, #b55339, #e27f55);
   color: #fff;
 }
 
 .admin-toolbar button.ghost,
 .admin-form-actions button.ghost,
-.admin-row__actions button.ghost {
+.admin-row__actions button.ghost,
+.admin-user-table__actions button.ghost {
   background: #f3e7de;
   color: #7c5140;
 }
@@ -1211,7 +1753,8 @@ function formatGenderLabel(value: string) {
   color: #6f3e31;
 }
 
-.admin-row__actions button.danger {
+.admin-row__actions button.danger,
+.admin-user-table__actions button.danger {
   background: #f4d7d0;
   color: #8a3325;
 }
@@ -1244,10 +1787,16 @@ function formatGenderLabel(value: string) {
 
 .filter-picker {
   position: relative;
+  display: flex;
 }
 
 .filter-chip {
-  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 64px;
+  padding: 0 16px;
   border-radius: 14px;
   background: #f6ebe4;
   color: #6f493c;
@@ -1273,26 +1822,6 @@ function formatGenderLabel(value: string) {
   box-shadow: 0 16px 30px rgba(52, 28, 20, 0.12);
 }
 
-.filter-picker__menu--search {
-  min-width: 280px;
-}
-
-.filter-picker__actions {
-  display: flex;
-  gap: 8px;
-}
-
-.filter-picker__actions button {
-  min-height: 38px;
-  padding: 0 12px;
-  border-radius: 12px;
-}
-
-.filter-picker__actions button.ghost {
-  background: #f3e7de;
-  color: #7c5140;
-}
-
 .filter-picker__menu button {
   min-height: 40px;
   padding: 0 12px;
@@ -1309,7 +1838,7 @@ function formatGenderLabel(value: string) {
 
 .admin-row {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: space-between;
   gap: 16px;
   padding: 16px 18px;
@@ -1323,9 +1852,213 @@ function formatGenderLabel(value: string) {
   color: #6a5148;
 }
 
+.admin-row > :first-child {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
 .admin-row__actions {
   display: flex;
+  flex-direction: column;
   gap: 10px;
+  margin-left: auto;
+  justify-content: flex-start;
+  align-items: stretch;
+  flex: 0 0 172px;
+  width: 172px;
+}
+
+.admin-row__actions button {
+  width: 100%;
+  flex: 1 1 0;
+  min-height: 64px;
+  font-weight: 700;
+}
+
+.admin-row--profile {
+  align-items: stretch;
+}
+
+.admin-row__profile-content {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: grid;
+  gap: 10px;
+}
+
+.admin-row__headline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+
+.admin-row__identity {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(243, 231, 222, 0.92);
+  color: #7a5142;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.admin-row__pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(214, 193, 180, 0.78);
+  color: #7a5c50;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.admin-row__fact-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+}
+
+.admin-row__fact {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 12px;
+  background: #fffdfb;
+  border: 1px solid rgba(214, 193, 180, 0.66);
+}
+
+.admin-row__fact-label {
+  color: #8c6b5d;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.admin-row__fact-value {
+  color: #1f282c;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.admin-row__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.admin-row__tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(181, 83, 57, 0.12);
+  color: #934932;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.admin-row__tag--muted {
+  background: rgba(121, 145, 156, 0.14);
+  color: #55656d;
+}
+
+.admin-row__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.admin-row__status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: currentColor;
+  flex: 0 0 auto;
+}
+
+.admin-row__status.is-active {
+  background: rgba(73, 166, 85, 0.14);
+  color: #2d8b3a;
+}
+
+.admin-row__status.is-disabled {
+  background: rgba(143, 103, 87, 0.14);
+  color: #8a5b4f;
+}
+
+.admin-user-table-wrap {
+  overflow-x: auto;
+  border-radius: 18px;
+  border: 1px solid rgba(215, 193, 180, 0.5);
+  background: #fff9f6;
+}
+
+.admin-user-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 760px;
+}
+
+.admin-user-table th,
+.admin-user-table td {
+  padding: 14px 16px;
+  text-align: left;
+  border-bottom: 1px solid rgba(215, 193, 180, 0.5);
+  vertical-align: middle;
+}
+
+.admin-user-table th {
+  color: #8a6b5e;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  background: rgba(244, 236, 229, 0.9);
+  white-space: nowrap;
+}
+
+.admin-user-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.admin-user-table td {
+  color: #3d312c;
+}
+
+.admin-user-table__name {
+  color: #1f282c;
+  font-weight: 700;
+}
+
+.admin-user-table .is-actions {
+  width: 212px;
+  text-align: right;
+}
+
+.admin-user-table__actions {
+  display: inline-flex;
+  justify-content: flex-end;
+  gap: 10px;
+  width: 100%;
+}
+
+.admin-user-table__actions button {
+  min-width: 92px;
+  min-height: 40px;
+  padding: 0 16px;
 }
 
 @media (max-width: 1100px) {
@@ -1337,9 +2070,36 @@ function formatGenderLabel(value: string) {
     flex-basis: 100%;
   }
 
+  .admin-toolbar__search-block {
+    min-width: 100%;
+  }
+
+  .admin-toolbar__actions {
+    width: 100%;
+    min-width: 100%;
+    justify-content: stretch;
+  }
+
+  .admin-toolbar__search-input {
+    flex: 1 1 220px;
+  }
+
   .admin-row {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .admin-row__actions {
+    margin-left: 0;
+    width: min(192px, 100%);
+  }
+
+  .admin-user-table {
+    min-width: 680px;
+  }
+
+  .admin-user-table .is-actions {
+    width: 190px;
   }
 
   .admin-form-card__header {

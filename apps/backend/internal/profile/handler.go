@@ -273,8 +273,8 @@ func parseListLimit(c *gin.Context) int {
 	if rawLimit := strings.TrimSpace(c.Query("limit")); rawLimit != "" {
 		parsedLimit, err := strconv.Atoi(rawLimit)
 		if err == nil && parsedLimit > 0 {
-			if parsedLimit > 100 {
-				parsedLimit = 100
+			if parsedLimit > 500 {
+				parsedLimit = 500
 			}
 			limit = parsedLimit
 		}

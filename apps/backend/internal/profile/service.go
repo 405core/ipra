@@ -27,13 +27,13 @@ type Service struct {
 }
 
 type SearchProfileResponse struct {
-	ID         uint64         `json:"id"`
-	FullName   string         `json:"fullName"`
-	DocumentNum string        `json:"documentNum"`
-	IsHighRisk bool           `json:"isHighRisk"`
-	RiskReason string         `json:"riskReason,omitempty"`
+	ID          uint64         `json:"id"`
+	FullName    string         `json:"fullName"`
+	DocumentNum string         `json:"documentNum"`
+	IsHighRisk  bool           `json:"isHighRisk"`
+	RiskReason  string         `json:"riskReason,omitempty"`
 	ProfileData map[string]any `json:"profileData"`
-	UpdatedAt  time.Time      `json:"updatedAt"`
+	UpdatedAt   time.Time      `json:"updatedAt"`
 }
 
 type ImportResult struct {
@@ -71,8 +71,7 @@ func (s *Service) SearchProfiles(ctx context.Context, query string, limit int) (
 	if trimmedQuery != "" {
 		pattern := "%" + trimmedQuery + "%"
 		dbQuery = dbQuery.Where(
-			`document_num ILIKE ? OR full_name ILIKE ? OR COALESCE(profile_data -> 'tripInfo' ->> 'pnr', '') ILIKE ? OR COALESCE(profile_data -> 'tripInfo' ->> 'route', '') ILIKE ?`,
-			pattern,
+			`document_num ILIKE ? OR full_name ILIKE ? OR CAST(profile_data AS TEXT) ILIKE ?`,
 			pattern,
 			pattern,
 			pattern,
@@ -286,7 +285,8 @@ func (s *Service) ListProfiles(ctx context.Context, query string, limit int) (Pr
 	if trimmedQuery != "" {
 		pattern := "%" + trimmedQuery + "%"
 		dbQuery = dbQuery.Where(
-			`document_num ILIKE ? OR full_name ILIKE ?`,
+			`document_num ILIKE ? OR full_name ILIKE ? OR CAST(profile_data AS TEXT) ILIKE ?`,
+			pattern,
 			pattern,
 			pattern,
 		)

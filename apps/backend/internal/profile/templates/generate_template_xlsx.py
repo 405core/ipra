@@ -75,10 +75,10 @@ def build_templates() -> list[TemplateSpec]:
         TemplateSpec(
             output_name="ipra-high-risk-watchlist-template.xlsx",
             sheet_name="高风险名单模板",
-            headers=["证件号码", "姓名", "高风险原因"],
-            sample_row=["E92834102", "张伟", "跨境赌博关联，需重点核验出行目的"],
+            headers=["证件号码", "高风险原因"],
+            sample_row=["E92834102", "跨境赌博关联，需重点核验出行目的"],
             required_columns={0},
-            column_widths=[18, 14, 34],
+            column_widths=[18, 34],
         ),
     ]
 
