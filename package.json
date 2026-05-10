@@ -4,10 +4,13 @@
   "license": "MIT",
   "scripts": {
     "dev": "nx run-many -t serve --projects=frontend,backend --parallel=2 --outputStyle=stream",
+    "dev:https": "VITE_DEV_HTTPS=true nx run-many -t serve --projects=frontend,backend --parallel=2 --outputStyle=stream",
     "dev:frontend": "nx serve frontend",
+    "dev:frontend:https": "VITE_DEV_HTTPS=true nx serve frontend",
     "dev:backend": "nx serve backend",
     "dev:cn": "GOPROXY=https://goproxy.cn,direct nx run-many -t serve --projects=frontend,backend --parallel=2 --outputStyle=stream",
     "dev:backend:cn": "GOPROXY=https://goproxy.cn,direct nx serve backend",
+    "cert:frontend": "bash scripts/generate-dev-https-cert.sh",
     "test:backend": "cd apps/backend && go test ./...",
     "test:frontend": "nx test frontend",
     "typecheck:frontend": "nx typecheck frontend",
