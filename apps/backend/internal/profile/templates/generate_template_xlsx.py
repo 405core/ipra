@@ -7,7 +7,8 @@ from typing import Iterable
 from xml.sax.saxutils import escape
 from zipfile import ZIP_DEFLATED, ZipFile
 
-OUTPUT_PATH = Path(__file__).with_name("ipra-passenger-profile-template.xlsx")
+BASE_OUTPUT_PATH = Path(__file__).with_name("ipra-passenger-profile-template.xlsx")
+HIGH_RISK_OUTPUT_PATH = Path(__file__).with_name("ipra-high-risk-watchlist-template.xlsx")
 
 HEADER_STYLE = 1
 REQUIRED_HEADER_STYLE = 2
@@ -33,216 +34,81 @@ class SheetSpec:
     enable_filter: bool = True
 
 
-def build_sheets() -> list[SheetSpec]:
-    yes_no = ["是", "否"]
+def build_base_profile_sheet() -> SheetSpec:
+    return SheetSpec(
+        name="基础画像",
+        rows=[
+            [
+                "证件号码",
+                "姓名",
+                "国籍",
+                "性别",
+                "出生日期",
+                "联系电话",
+                "常住地",
+                "教育背景",
+                "职业",
+                "工作单位",
+                "收入来源",
+                "订票编码（PNR）",
+                "航班号",
+                "出发地",
+                "目的地",
+                "出发日期",
+                "出行目的",
+                "历史出行摘要",
+                "违法犯罪记录类型",
+                "违法犯罪记录说明",
+                "备注",
+            ],
+            [
+                "E92834102",
+                "张伟",
+                "中国",
+                "男",
+                "1990-06-18",
+                "13800138000",
+                "上海",
+                "本科",
+                "自由职业",
+                "无固定单位",
+                "项目收入",
+                "CX880-LAX",
+                "CX880",
+                "香港",
+                "洛杉矶",
+                "2026-05-06",
+                "旅游",
+                "近三个月存在澳门短频快往返记录",
+                "",
+                "",
+                "示例数据",
+            ],
+        ],
+        required_columns={0, 1},
+        column_widths=[18, 14, 12, 10, 14, 16, 14, 14, 14, 18, 16, 18, 12, 12, 12, 14, 14, 24, 20, 24, 18],
+        validations=[
+            ValidationSpec(3, ["男", "女", "未知"]),
+        ],
+    )
 
-    return [
-        SheetSpec(
-            name="填写说明",
-            rows=[
-                ["说明项", "内容"],
-                ["模板用途", "用于录入旅客基础画像、当前行程、历史出行、职业背景、违法犯罪记录和证件补充信息。"],
-                ["填写顺序", "请先填写“旅客主表”，再根据需要填写其他工作表。"],
-                ["关联方式", "除“旅客主表”外，其他工作表只需要填写“证件号码”，系统会按证件号码关联到主表。"],
-                ["必填字段", "红底表头表示必须填写。"],
-                ["必填范围", "只有“旅客主表”设置了必填字段；其他工作表按实际掌握的信息填写即可。"],
-                ["主表必填项", "证件号码、姓名、证件类型、证件签发国家/地区。"],
-                ["日期格式", "日期请填写为 2026-05-06；日期时间请填写为 2026-05-06 14:20:00。"],
-                ["是否类字段", "请统一填写“是”或“否”。"],
-                ["主表规则", "“旅客主表”中，同一位旅客的证件号码只能出现一次。"],
-                ["多条记录", "历史出行、违法犯罪记录等可以针对同一证件号码填写多行。"],
-                ["排序规则", "历史出行和违法犯罪记录不需要填写序号，系统会根据日期自动排序。"],
-                ["空白处理", "没有相关信息的列可以留空，不要填写“无”“N/A”或其他占位内容。"],
-                ["表头要求", "请不要修改表头名称，不要删除工作表。"],
-                ["证件类型建议值", "身份证 / 护照 / 港澳通行证 / 台胞证 / 其他"],
-                ["性别建议值", "男 / 女 / 未知"],
-                ["是否高风险建议值", "是 / 否"],
-                ["是否有违法犯罪记录建议值", "是 / 否"],
-                ["签证状态建议值", "有效 / 过期 / 无 / 未知"],
+
+def build_high_risk_sheet() -> SheetSpec:
+    return SheetSpec(
+        name="高风险名单",
+        rows=[
+            [
+                "证件号码",
+                "高风险原因",
             ],
-            required_columns=set(),
-            column_widths=[16, 94],
-            freeze_header=False,
-            enable_filter=False,
-        ),
-        SheetSpec(
-            name="旅客主表",
-            rows=[
-                [
-                    "证件号码",
-                    "姓名",
-                    "证件类型",
-                    "证件签发国家/地区",
-                    "国籍",
-                    "性别",
-                    "出生日期",
-                    "联系电话",
-                    "是否高风险",
-                    "高风险说明",
-                ],
-                [
-                    "E92834102",
-                    "张伟",
-                    "护照",
-                    "中国",
-                    "中国",
-                    "男",
-                    "1990-06-18",
-                    "13800138000",
-                    "否",
-                    "",
-                ],
+            [
+                "E92834102",
+                "疑似跨境赌博关联，需重点核验出行目的和资金来源",
             ],
-            required_columns={0, 1, 2, 3},
-            column_widths=[18, 14, 16, 18, 12, 10, 14, 16, 12, 26],
-            validations=[
-                ValidationSpec(2, ["身份证", "护照", "港澳通行证", "台胞证", "其他"]),
-                ValidationSpec(5, ["男", "女", "未知"]),
-                ValidationSpec(8, yes_no),
-            ],
-        ),
-        SheetSpec(
-            name="当前行程",
-            rows=[
-                [
-                    "证件号码",
-                    "订票编码（PNR）",
-                    "客票号",
-                    "航班号",
-                    "出发机场",
-                    "到达机场",
-                    "出发时间",
-                    "返程航班号",
-                    "返程时间",
-                    "座位号",
-                    "出行目的",
-                    "同行人情况",
-                    "住宿地点/目的地",
-                ],
-                [
-                    "E92834102",
-                    "CX880-LAX",
-                    "7812345678901",
-                    "CX880",
-                    "香港国际机场",
-                    "洛杉矶国际机场",
-                    "2026-05-06 14:20:00",
-                    "CX879",
-                    "2026-05-12 09:30:00",
-                    "12A",
-                    "旅游",
-                    "单独出行",
-                    "洛杉矶市中心酒店",
-                ],
-            ],
-            required_columns=set(),
-            column_widths=[18, 18, 18, 14, 16, 18, 22, 16, 22, 10, 14, 16, 20],
-        ),
-        SheetSpec(
-            name="历史出行",
-            rows=[
-                [
-                    "证件号码",
-                    "到访国家/地区",
-                    "入境日期",
-                    "离境日期",
-                    "出行目的",
-                    "同行情况",
-                    "备注",
-                ],
-                [
-                    "E92834102",
-                    "澳门",
-                    "2026-03-02",
-                    "2026-03-05",
-                    "旅游",
-                    "单独出行",
-                    "停留时间较短",
-                ],
-            ],
-            required_columns=set(),
-            column_widths=[18, 16, 14, 14, 14, 16, 22],
-        ),
-        SheetSpec(
-            name="职业背景",
-            rows=[
-                [
-                    "证件号码",
-                    "职业",
-                    "工作单位",
-                    "职务",
-                    "收入来源",
-                    "年收入区间",
-                    "备注",
-                ],
-                [
-                    "E92834102",
-                    "自由职业",
-                    "无固定单位",
-                    "设计顾问",
-                    "项目收入",
-                    "20-30万",
-                    "近期无雇主变更记录",
-                ],
-            ],
-            required_columns=set(),
-            column_widths=[18, 14, 18, 14, 18, 14, 24],
-        ),
-        SheetSpec(
-            name="违法犯罪记录",
-            rows=[
-                [
-                    "证件号码",
-                    "是否有违法犯罪记录",
-                    "记录类型",
-                    "发生日期",
-                    "处理结果",
-                    "风险标签",
-                    "备注",
-                ],
-                [
-                    "E92834102",
-                    "否",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "无已知违法犯罪记录",
-                ],
-            ],
-            required_columns=set(),
-            column_widths=[18, 16, 18, 14, 18, 16, 24],
-            validations=[ValidationSpec(1, yes_no)],
-        ),
-        SheetSpec(
-            name="证件补充信息",
-            rows=[
-                [
-                    "证件号码",
-                    "证件有效期",
-                    "签证状态",
-                    "签证有效期",
-                    "常住地址",
-                    "民族",
-                    "婚姻状况",
-                    "备注",
-                ],
-                [
-                    "E92834102",
-                    "2030-12-31",
-                    "有效",
-                    "2027-12-31",
-                    "上海市浦东新区示例路 88 号",
-                    "汉",
-                    "未婚",
-                    "护照与签证状态正常",
-                ],
-            ],
-            required_columns=set(),
-            column_widths=[18, 14, 12, 14, 28, 10, 12, 24],
-            validations=[ValidationSpec(2, ["有效", "过期", "无", "未知"])],
-        ),
-    ]
+        ],
+        required_columns={0},
+        column_widths=[18, 48],
+    )
 
 
 def excel_column_name(index: int) -> str:
@@ -473,8 +339,7 @@ def core_xml() -> str:
     )
 
 
-def build_workbook(output_path: Path) -> None:
-    sheets = build_sheets()
+def build_workbook(output_path: Path, sheets: list[SheetSpec]) -> None:
     sheet_names = [sheet.name for sheet in sheets]
 
     with ZipFile(output_path, "w", compression=ZIP_DEFLATED) as workbook:
@@ -491,4 +356,5 @@ def build_workbook(output_path: Path) -> None:
 
 
 if __name__ == "__main__":
-    build_workbook(OUTPUT_PATH)
+    build_workbook(BASE_OUTPUT_PATH, [build_base_profile_sheet()])
+    build_workbook(HIGH_RISK_OUTPUT_PATH, [build_high_risk_sheet()])

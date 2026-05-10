@@ -3,17 +3,14 @@ import { loadAuthSession } from '../auth';
 export type ImportType = 'BASE_PROFILE' | 'HIGH_RISK';
 
 export interface PassengerProfileRecord {
-  id: number;
+  id: string;
   fullName: string;
-  documentType: string;
   documentNum: string;
-  issuingRegion: string;
   gender?: number | null;
   birthDate?: string | null;
   isHighRisk: boolean;
   identityDetails: Record<string, unknown>;
   dimensionData: Record<string, unknown>;
-  latestBatchId?: number | null;
   updatedAt: string;
 }
 
