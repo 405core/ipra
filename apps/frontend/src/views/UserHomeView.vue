@@ -27,6 +27,7 @@ const isCameraStarting = ref(false);
 const capturedFrame = ref('');
 const cameraStatus = ref('等待开启摄像头。');
 let cameraStream: MediaStream | null = null;
+let liveScanTimer: number | null = null;
 type LegacyNavigator = Navigator & {
   webkitGetUserMedia?: (
     constraints: MediaStreamConstraints,
@@ -161,7 +162,8 @@ async function startCamera() {
     }
 
     isCameraActive.value = true;
-    cameraStatus.value = '摄像头已开启，请将身份证放入取景框。';
+    startLiveScanLoop();
+    cameraStatus.value = '实时扫描中，请将身份证保持在取景框内。';
   } catch (error) {
     cameraStatus.value = resolveCameraErrorMessage(error);
   } finally {
@@ -170,6 +172,7 @@ async function startCamera() {
 }
 
 function stopCameraStream(updateStatus = true) {
+  stopLiveScanLoop();
   cameraStream?.getTracks().forEach((track) => track.stop());
   cameraStream = null;
 
@@ -185,21 +188,49 @@ function stopCameraStream(updateStatus = true) {
 }
 
 function confirmCameraFrame() {
-  if (!isCameraActive.value) {
-    cameraStatus.value = '请先开启摄像头。';
+  if (!capturedFrame.value) {
+    cameraStatus.value = isCameraActive.value
+      ? '正在获取实时画面，请稍后再试。'
+      : '请先开启摄像头。';
     return;
   }
 
+  if (isCameraActive.value) {
+    stopCameraStream(false);
+  }
+  cameraStatus.value = '已保留当前实时扫描画面，后续可直接接入 OCR 识别。';
+}
+
+function resetCameraPanel() {
+  stopCameraStream(false);
+  capturedFrame.value = '';
+  cameraStatus.value = '等待开启摄像头。';
+}
+
+function startLiveScanLoop() {
+  stopLiveScanLoop();
+  captureCurrentVideoFrame();
+  liveScanTimer = window.setInterval(() => {
+    captureCurrentVideoFrame();
+  }, 450);
+}
+
+function stopLiveScanLoop() {
+  if (liveScanTimer != null) {
+    window.clearInterval(liveScanTimer);
+    liveScanTimer = null;
+  }
+}
+
+function captureCurrentVideoFrame() {
   const video = cameraVideo.value;
   const canvas = captureCanvas.value;
   if (!video || !canvas || !video.videoWidth || !video.videoHeight) {
-    cameraStatus.value = '暂未获取到有效画面，请稍后重试。';
     return;
   }
 
   const context = canvas.getContext('2d');
   if (!context) {
-    cameraStatus.value = '当前浏览器不支持画面截取。';
     return;
   }
 
@@ -235,15 +266,7 @@ function confirmCameraFrame() {
     targetHeight
   );
 
-  capturedFrame.value = canvas.toDataURL('image/jpeg', 0.92);
-  stopCameraStream(false);
-  cameraStatus.value = '已截取当前画面，后续可直接接入 OCR 识别。';
-}
-
-function resetCameraPanel() {
-  stopCameraStream(false);
-  capturedFrame.value = '';
-  cameraStatus.value = '等待开启摄像头。';
+  capturedFrame.value = canvas.toDataURL('image/jpeg', 0.9);
 }
 
 function resolveCameraErrorMessage(error: unknown) {
@@ -561,7 +584,7 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
           />
           <div v-if="!isCameraActive && !capturedFrame" class="camera-preview__placeholder">
             <strong>等待开启摄像头</strong>
-            <span>后续 OCR 将直接识别当前确认的证件画面。</span>
+            <span>开启后将自动持续扫描当前证件画面。</span>
           </div>
           <div class="camera-preview__frame"></div>
         </div>
