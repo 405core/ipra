@@ -20,6 +20,30 @@ const results = ref<PassengerProfileRecord[]>([]);
 const recentSearches = ref<string[]>([]);
 const searchStatus = ref('');
 const isSearching = ref(false);
+const cameraVideo = ref<HTMLVideoElement | null>(null);
+const captureCanvas = ref<HTMLCanvasElement | null>(null);
+const isCameraActive = ref(false);
+const isCameraStarting = ref(false);
+const capturedFrame = ref('');
+const cameraStatus = ref('等待开启摄像头。');
+let cameraStream: MediaStream | null = null;
+type LegacyNavigator = Navigator & {
+  webkitGetUserMedia?: (
+    constraints: MediaStreamConstraints,
+    successCallback: (stream: MediaStream) => void,
+    errorCallback: (error: DOMException) => void
+  ) => void;
+  mozGetUserMedia?: (
+    constraints: MediaStreamConstraints,
+    successCallback: (stream: MediaStream) => void,
+    errorCallback: (error: DOMException) => void
+  ) => void;
+  msGetUserMedia?: (
+    constraints: MediaStreamConstraints,
+    successCallback: (stream: MediaStream) => void,
+    errorCallback: (error: DOMException) => void
+  ) => void;
+};
 
 function handleProfilesImported() {
   void loadProfiles(query.value);
@@ -32,6 +56,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('ipra:profiles-imported', handleProfilesImported);
+  stopCameraStream(false);
 });
 
 async function loadProfiles(rawValue = query.value) {
@@ -95,6 +120,185 @@ async function applyRecentSearch(item: string) {
 
 async function openAskWorkspace() {
   await router.push({ name: 'home-ask' });
+}
+
+async function toggleCamera() {
+  if (isCameraActive.value) {
+    stopCameraStream();
+    return;
+  }
+
+  await startCamera();
+}
+
+async function startCamera() {
+  if (isCameraActive.value || isCameraStarting.value) {
+    return;
+  }
+
+  if (typeof navigator === 'undefined') {
+    cameraStatus.value = '当前环境不支持调用摄像头。';
+    return;
+  }
+
+  if (typeof window !== 'undefined' && !window.isSecureContext) {
+    cameraStatus.value = '当前页面不是安全环境，请使用 HTTPS 或 localhost 打开系统。';
+    return;
+  }
+
+  isCameraStarting.value = true;
+  capturedFrame.value = '';
+
+  try {
+    const stream = await requestCameraStream();
+
+    stopCameraStream(false);
+    cameraStream = stream;
+
+    if (cameraVideo.value) {
+      cameraVideo.value.srcObject = stream;
+      await cameraVideo.value.play().catch(() => undefined);
+    }
+
+    isCameraActive.value = true;
+    cameraStatus.value = '摄像头已开启，请将身份证放入取景框。';
+  } catch (error) {
+    cameraStatus.value = resolveCameraErrorMessage(error);
+  } finally {
+    isCameraStarting.value = false;
+  }
+}
+
+function stopCameraStream(updateStatus = true) {
+  cameraStream?.getTracks().forEach((track) => track.stop());
+  cameraStream = null;
+
+  if (cameraVideo.value) {
+    cameraVideo.value.pause();
+    cameraVideo.value.srcObject = null;
+  }
+
+  isCameraActive.value = false;
+  if (updateStatus) {
+    cameraStatus.value = capturedFrame.value ? '已截取当前画面。' : '摄像头已关闭。';
+  }
+}
+
+function confirmCameraFrame() {
+  if (!isCameraActive.value) {
+    cameraStatus.value = '请先开启摄像头。';
+    return;
+  }
+
+  const video = cameraVideo.value;
+  const canvas = captureCanvas.value;
+  if (!video || !canvas || !video.videoWidth || !video.videoHeight) {
+    cameraStatus.value = '暂未获取到有效画面，请稍后重试。';
+    return;
+  }
+
+  const context = canvas.getContext('2d');
+  if (!context) {
+    cameraStatus.value = '当前浏览器不支持画面截取。';
+    return;
+  }
+
+  const targetWidth = 960;
+  const targetHeight = Math.round(targetWidth / 1.586);
+  const targetAspect = targetWidth / targetHeight;
+  const sourceWidth = video.videoWidth;
+  const sourceHeight = video.videoHeight;
+  const sourceAspect = sourceWidth / sourceHeight;
+
+  let cropWidth = sourceWidth;
+  let cropHeight = sourceHeight;
+  if (sourceAspect > targetAspect) {
+    cropWidth = Math.round(sourceHeight * targetAspect);
+  } else {
+    cropHeight = Math.round(sourceWidth / targetAspect);
+  }
+
+  const offsetX = Math.floor((sourceWidth - cropWidth) / 2);
+  const offsetY = Math.floor((sourceHeight - cropHeight) / 2);
+
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+  context.drawImage(
+    video,
+    offsetX,
+    offsetY,
+    cropWidth,
+    cropHeight,
+    0,
+    0,
+    targetWidth,
+    targetHeight
+  );
+
+  capturedFrame.value = canvas.toDataURL('image/jpeg', 0.92);
+  stopCameraStream(false);
+  cameraStatus.value = '已截取当前画面，后续可直接接入 OCR 识别。';
+}
+
+function resetCameraPanel() {
+  stopCameraStream(false);
+  capturedFrame.value = '';
+  cameraStatus.value = '等待开启摄像头。';
+}
+
+function resolveCameraErrorMessage(error: unknown) {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  if (!(error instanceof DOMException)) {
+    return '开启摄像头失败，请检查浏览器权限。';
+  }
+
+  switch (error.name) {
+    case 'NotAllowedError':
+    case 'PermissionDeniedError':
+      return '未授予摄像头权限，请先允许浏览器访问摄像头。';
+    case 'NotFoundError':
+    case 'DevicesNotFoundError':
+      return '未检测到可用摄像头设备。';
+    case 'NotReadableError':
+    case 'TrackStartError':
+      return '摄像头当前被其他程序占用。';
+    case 'SecurityError':
+      return '当前环境不允许调用摄像头，请使用 HTTPS 或 localhost。';
+    default:
+      return '开启摄像头失败，请稍后重试。';
+  }
+}
+
+async function requestCameraStream() {
+  const constraints: MediaStreamConstraints = {
+    video: {
+      facingMode: { ideal: 'environment' },
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
+    },
+    audio: false,
+  };
+
+  if (navigator.mediaDevices?.getUserMedia) {
+    return navigator.mediaDevices.getUserMedia(constraints);
+  }
+
+  const legacyNavigator = navigator as LegacyNavigator;
+  const legacyGetUserMedia =
+    legacyNavigator.webkitGetUserMedia ??
+    legacyNavigator.mozGetUserMedia ??
+    legacyNavigator.msGetUserMedia;
+
+  if (!legacyGetUserMedia) {
+    throw new Error('当前浏览器缺少摄像头接口，请使用最新版 Edge 或 Chrome。');
+  }
+
+  return new Promise<MediaStream>((resolve, reject) => {
+    legacyGetUserMedia.call(legacyNavigator, constraints, resolve, reject);
+  });
 }
 
 function buildRouteLabel(tripInfo: Record<string, unknown>) {
@@ -330,6 +534,69 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
           </button>
         </div>
       </form>
+
+      <section class="surface-card surface-card--camera">
+        <div class="panel-heading">
+          <div>
+            <p class="section-eyebrow">Live Camera</p>
+            <h3>实时扫描</h3>
+          </div>
+          <span class="panel-badge panel-badge--muted">Camera</span>
+        </div>
+
+        <div class="camera-preview" :class="{ 'is-live': isCameraActive, 'has-capture': capturedFrame }">
+          <video
+            v-show="isCameraActive"
+            ref="cameraVideo"
+            class="camera-preview__video"
+            autoplay
+            muted
+            playsinline
+          ></video>
+          <img
+            v-if="capturedFrame && !isCameraActive"
+            :src="capturedFrame"
+            class="camera-preview__image"
+            alt="已确认的证件画面"
+          />
+          <div v-if="!isCameraActive && !capturedFrame" class="camera-preview__placeholder">
+            <strong>等待开启摄像头</strong>
+            <span>后续 OCR 将直接识别当前确认的证件画面。</span>
+          </div>
+          <div class="camera-preview__frame"></div>
+        </div>
+
+        <canvas ref="captureCanvas" class="sr-only"></canvas>
+
+        <p class="status-copy camera-status">{{ cameraStatus }}</p>
+
+        <div class="camera-actions">
+          <button
+            class="camera-action camera-action--primary"
+            type="button"
+            :disabled="isCameraStarting"
+            @click="toggleCamera"
+          >
+            {{ isCameraActive ? '关闭' : isCameraStarting ? '开启中...' : '开启' }}
+          </button>
+          <button
+            class="camera-action"
+            type="button"
+            :disabled="!isCameraActive"
+            @click="confirmCameraFrame"
+          >
+            确定
+          </button>
+          <button
+            class="camera-action"
+            type="button"
+            :disabled="!isCameraActive && !capturedFrame"
+            @click="resetCameraPanel"
+          >
+            重置
+          </button>
+        </div>
+      </section>
     </section>
 
     <section class="content-block">
@@ -494,6 +761,12 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
   padding: 14px 18px;
 }
 
+.surface-card--camera {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px 16px;
+}
+
 .panel-badge {
   display: inline-flex;
   align-items: center;
@@ -592,6 +865,89 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 
 .status-copy {
   margin: 0;
+}
+
+.camera-preview {
+  position: relative;
+  overflow: hidden;
+  min-height: 220px;
+  border-radius: 22px;
+  background: linear-gradient(160deg, rgba(11, 114, 136, 0.08), rgba(255, 255, 255, 0.96));
+  border: 1px solid rgba(157, 189, 202, 0.36);
+  aspect-ratio: 1.58 / 1;
+}
+
+.camera-preview__video,
+.camera-preview__image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.camera-preview__placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  padding: 20px;
+  text-align: center;
+  color: #5b7179;
+}
+
+.camera-preview__placeholder strong {
+  color: #15252b;
+}
+
+.camera-preview__frame {
+  position: absolute;
+  inset: 14% 10%;
+  border-radius: 18px;
+  border: 2px dashed rgba(11, 114, 136, 0.52);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.42);
+  pointer-events: none;
+}
+
+.camera-preview.is-live .camera-preview__frame {
+  border-color: rgba(11, 114, 136, 0.8);
+}
+
+.camera-preview.has-capture {
+  box-shadow: 0 18px 30px rgba(11, 114, 136, 0.12);
+}
+
+.camera-status {
+  min-height: 44px;
+}
+
+.camera-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.camera-action {
+  min-height: 48px;
+  padding: 0 12px;
+  border-radius: 16px;
+  background: rgba(11, 114, 136, 0.08);
+  border: 1px solid rgba(11, 114, 136, 0.16);
+  color: #09596c;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.camera-action--primary {
+  background: linear-gradient(135deg, #0b7288, #20a8c5);
+  border-color: rgba(11, 114, 136, 0.3);
+  color: #ffffff;
+}
+
+.camera-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .results-list {
@@ -914,6 +1270,10 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 
   .search-box button {
     width: 100%;
+  }
+
+  .camera-actions {
+    grid-template-columns: 1fr;
   }
 }
 </style>

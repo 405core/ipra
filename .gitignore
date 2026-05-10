@@ -52,6 +52,7 @@ docs/.vitepress/dist/
 # environment files
 .env
 .env.local
+.certs/
 
 # local AI/runtime artifacts
 .codex-temp/
