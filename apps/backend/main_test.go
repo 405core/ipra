@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"ipra/backend/internal/auth"
+	"ipra/backend/internal/config"
 	dbschema "ipra/backend/internal/database"
 	"ipra/backend/internal/profile"
 )
@@ -26,7 +27,7 @@ func TestPingRoute(t *testing.T) {
 func TestImportTemplateRouteRequiresAuth(t *testing.T) {
 	tokenManager := auth.NewTokenManager("test-secret", time.Hour)
 	authHandler := auth.NewHandler(nil, tokenManager)
-	router := newRouter(authHandler, profile.NewHandler(nil), nil)
+	router := newRouter(authHandler, profile.NewHandler(nil, config.OCRConfig{}), nil)
 	req := httptest.NewRequest(
 		http.MethodGet,
 		"/api/import-templates/passenger-profile.xlsx",
@@ -56,7 +57,7 @@ func TestImportTemplateRouteAuthorized(t *testing.T) {
 	}
 
 	authHandler := auth.NewHandler(nil, tokenManager)
-	router := newRouter(authHandler, profile.NewHandler(nil), nil)
+	router := newRouter(authHandler, profile.NewHandler(nil, config.OCRConfig{}), nil)
 	req := httptest.NewRequest(
 		http.MethodGet,
 		"/api/import-templates/passenger-profile.xlsx",
@@ -100,7 +101,7 @@ func TestHighRiskTemplateRouteAuthorized(t *testing.T) {
 	}
 
 	authHandler := auth.NewHandler(nil, tokenManager)
-	router := newRouter(authHandler, profile.NewHandler(nil), nil)
+	router := newRouter(authHandler, profile.NewHandler(nil, config.OCRConfig{}), nil)
 	req := httptest.NewRequest(
 		http.MethodGet,
 		"/api/import-templates/high-risk-watchlist.xlsx",

@@ -27,7 +27,7 @@ func main() {
 
 	tokenManager := auth.NewTokenManager(cfg.Auth.JWTSecret, 24*time.Hour)
 	authHandler := auth.NewHandler(db, tokenManager)
-	profileHandler := profile.NewHandler(db)
+	profileHandler := profile.NewHandler(db, cfg.OCR)
 	inquiryHandler := inquiry.NewHandler()
 
 	r := newRouter(authHandler, profileHandler, inquiryHandler)

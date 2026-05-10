@@ -12,6 +12,7 @@ type Config struct {
 	Port     string
 	Database DatabaseConfig
 	Auth     AuthConfig
+	OCR      OCRConfig
 }
 
 type DatabaseConfig struct {
@@ -26,6 +27,13 @@ type DatabaseConfig struct {
 
 type AuthConfig struct {
 	JWTSecret string
+}
+
+type OCRConfig struct {
+	IDCardAPIURL    string
+	IDCardAppCode   string
+	IDCardAppKey    string
+	IDCardAppSecret string
 }
 
 func Load() (Config, error) {
@@ -50,6 +58,12 @@ func Load() (Config, error) {
 		},
 		Auth: AuthConfig{
 			JWTSecret: firstNonEmpty(os.Getenv("JWT_SECRET"), "ipra-local-secret"),
+		},
+		OCR: OCRConfig{
+			IDCardAPIURL:    firstNonEmpty(os.Getenv("OCR_IDCARD_API_URL"), "https://jmsfzsbbd.market.alicloudapi.com/ocr/idcard-enhance"),
+			IDCardAppCode:   os.Getenv("OCR_IDCARD_APP_CODE"),
+			IDCardAppKey:    os.Getenv("OCR_IDCARD_APP_KEY"),
+			IDCardAppSecret: os.Getenv("OCR_IDCARD_APP_SECRET"),
 		},
 	}
 

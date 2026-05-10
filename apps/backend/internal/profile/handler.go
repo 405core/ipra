@@ -10,17 +10,20 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"ipra/backend/internal/auth"
+	"ipra/backend/internal/config"
 )
 
 const maxImportFileSize = 20 << 20
 
 type Handler struct {
 	service *Service
+	ocr     *IDCardOCRClient
 }
 
-func NewHandler(db *gorm.DB) *Handler {
+func NewHandler(db *gorm.DB, ocrConfig config.OCRConfig) *Handler {
 	return &Handler{
 		service: NewService(db),
+		ocr:     NewIDCardOCRClient(ocrConfig),
 	}
 }
 
@@ -32,6 +35,7 @@ func (h *Handler) Register(r gin.IRouter, authMiddleware gin.HandlerFunc) {
 
 	group.GET("", h.handleSearch)
 	group.POST("/imports", h.handleImport)
+	group.POST("/ocr/idcard", h.handleRecognizeIDCard)
 
 	templateGroup := r.Group("/api/import-templates")
 	if authMiddleware != nil {
@@ -56,20 +60,7 @@ func (h *Handler) Register(r gin.IRouter, authMiddleware gin.HandlerFunc) {
 }
 
 func (h *Handler) handleSearch(c *gin.Context) {
-	limit := 20
-	if rawLimit := strings.TrimSpace(c.Query("limit")); rawLimit != "" {
-		parsedLimit, err := strconv.Atoi(rawLimit)
-		if err != nil || parsedLimit <= 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"message": "limit 参数无效"})
-			return
-		}
-		if parsedLimit > 50 {
-			parsedLimit = 50
-		}
-		limit = parsedLimit
-	}
-
-	profiles, err := h.service.SearchProfiles(c.Request.Context(), c.Query("query"), limit)
+	profiles, err := h.service.SearchProfilesByDocumentExact(c.Request.Context(), c.Query("query"))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "查询旅客画像失败"})
 		return
