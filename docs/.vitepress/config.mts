@@ -45,6 +45,10 @@ export default defineConfig({
   lang: 'zh-CN',
   base: siteBase,
   srcDir: '.',
+  ignoreDeadLinks: [
+    /^\/database\/schema\.sql$/,
+    /^\/database\/schema-legacy\.sql$/,
+  ],
   cleanUrls: true,
   lastUpdated: true,
   appearance: false,

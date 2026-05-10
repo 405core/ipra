@@ -5,8 +5,8 @@
 - 当前后端使用 **PostgreSQL**。
 - 当前业务主表共 **4 张**：`system_user`、`import_batch_log`、`passenger_profile`、`high_risk_watchlist`。
 - 数据库结构由 DBA / 运维手工维护，后端启动时不会自动建表或迁移。
-- 当前活动建表 SQL 见 [schema.sql](/home/zheye/project/ipra/docs/database/schema.sql:1)。
-- 你提供的旧版 SQL 已单独保存在 [schema-legacy.sql](/home/zheye/project/ipra/docs/database/schema-legacy.sql:1)。
+- 当前活动建表 SQL 见 [schema.sql](/database/schema.sql)。
+- 你提供的旧版 SQL 已单独保存在 [schema-legacy.sql](/database/schema-legacy.sql)。
 
 ## 表清单
 
@@ -96,10 +96,10 @@
 设计原则：
 
 - 基础画像模板尽量少填，但不缺业务必需字段。
-- 高风险名单模板只要求证件号码和高风险原因。
+- 高风险名单模板只要求证件号码，高风险原因为选填。
 - 不保留“来源”字段，避免增加填写负担。
 
 ## 维护说明
 
-- 新环境建库或结构调整时，应以 [schema.sql](/home/zheye/project/ipra/docs/database/schema.sql:1) 为准。
-- 如果需要追溯旧结构，可参考 [schema-legacy.sql](/home/zheye/project/ipra/docs/database/schema-legacy.sql:1)。
+- 新环境建库或结构调整时，应以 [schema.sql](/database/schema.sql) 为准。
+- 如果需要追溯旧结构，可参考 [schema-legacy.sql](/database/schema-legacy.sql)。
