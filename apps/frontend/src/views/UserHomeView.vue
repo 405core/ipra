@@ -65,7 +65,7 @@ const query = ref('');
 const results = ref<PassengerRecord[]>([]);
 const recentSearches = ref<string[]>([]);
 const searchStatus = ref('正在加载最新画像记录...');
-const importStatus = ref('支持 CSV / XLSX，单次最大 20MB。推荐使用系统导出的多 sheet XLSX 模板。');
+const importStatus = ref('支持 CSV / XLSX，单次最大 20MB。请按基础画像或高风险名单模板分别导入。');
 const isDropActive = ref(false);
 const isSearching = ref(false);
 const isImporting = ref(false);
@@ -209,11 +209,12 @@ async function openAskWorkspace() {
 }
 
 function mapProfileToCard(profile: PassengerProfileRecord): PassengerRecord {
-  const dimensionData = asRecord(profile.dimensionData);
-  const tripInfo = asRecord(dimensionData.tripInfo);
-  const occupation = asRecord(dimensionData.occupation);
-  const riskRecords = asRecordArray(dimensionData.riskRecords);
-  const riskTags = asStringArray(dimensionData.riskTags);
+  const profileData = asRecord(profile.profileData);
+  const tripInfo = asRecord(profileData.tripInfo);
+  const occupation = asRecord(profileData.occupation);
+  const riskInfo = asRecord(profileData.riskInfo);
+  const riskTags = asStringArray(riskInfo.riskTags);
+  const riskRecords = Object.keys(riskInfo).length ? [riskInfo] : [];
 
   const route = buildRouteLabel(tripInfo);
   const seat = asString(tripInfo.seat) || asString(tripInfo.accommodation) || '未录入座位 / 住宿信息';
@@ -276,7 +277,7 @@ function buildSummary(
     asString(occupation.occupation) || asString(occupation.position) || asString(occupation.company);
 
   if (profile.isHighRisk) {
-    const detail = riskType || riskTags[0] || '名单命中';
+    const detail = profile.riskReason || riskType || riskTags[0] || '名单命中';
     return `当前旅客已命中高风险画像：${detail}。建议优先核验行程目的、资金来源和同行关系。`;
   }
 

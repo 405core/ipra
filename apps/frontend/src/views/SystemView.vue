@@ -6,9 +6,9 @@ import { clearAuthSession, loadAuthSession } from '../auth';
 const router = useRouter();
 const session = loadAuthSession();
 
-const realName = computed(() => session?.user.realName || '现场检查员');
-const username = computed(() => session?.user.username || 'user');
-const badgeNumber = computed(() => session?.user.badgeNumber || '-');
+const realName = computed(() => session?.user.name || '员工');
+const username = computed(() => session?.user.workId || 'user');
+const badgeNumber = computed(() => session?.user.workId || '-');
 
 async function logout() {
   clearAuthSession();
@@ -20,12 +20,12 @@ async function logout() {
   <main class="placeholder-page">
     <section class="placeholder-card">
       <p class="placeholder-eyebrow">INSPECTOR PORTAL</p>
-      <h1>检查员页面</h1>
+      <h1>员工页面</h1>
       <p class="placeholder-copy">
-        当前为检查员登录态。后续业务页面还未实现，这里先作为系统主页占位。
+        当前为员工登录态。后续业务页面还未实现，这里先作为系统主页占位。
       </p>
       <div class="placeholder-meta">
-        <span>身份：检查员</span>
+        <span>身份：员工</span>
         <span>姓名：{{ realName }}</span>
         <span>账号：{{ username }}</span>
         <span>警号/工号：{{ badgeNumber }}</span>

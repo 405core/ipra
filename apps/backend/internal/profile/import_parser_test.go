@@ -65,35 +65,34 @@ func TestParseXLSXData(t *testing.T) {
 
 func TestBuildProfileRecord(t *testing.T) {
 	row := map[string]string{
-		normalizeHeaderKey("document_type"):    "passport",
-		normalizeHeaderKey("document_num"):     "E92834102",
-		normalizeHeaderKey("full_name"):        "ZHANG WEI",
-		normalizeHeaderKey("gender"):           "男",
-		normalizeHeaderKey("birth_date"):       "1990-04-12",
-		normalizeHeaderKey("pnr"):              "CX880-LAX",
-		normalizeHeaderKey("destination"):      "LAX",
-		normalizeHeaderKey("monthly_income"):   "不稳定",
-		normalizeHeaderKey("risk_tags"):        "名单重合,异常行程",
-		normalizeHeaderKey("watchlist_source"): "采购方高风险名单",
-		normalizeHeaderKey("case_type"):        "跨境赌博关联",
-		normalizeHeaderKey("issuing_region"):   "cn",
+		normalizeHeaderKey("document_type"):  "passport",
+		normalizeHeaderKey("document_num"):   "E92834102",
+		normalizeHeaderKey("full_name"):      "ZHANG WEI",
+		normalizeHeaderKey("gender"):         "男",
+		normalizeHeaderKey("birth_date"):     "1990-04-12",
+		normalizeHeaderKey("pnr"):            "CX880-LAX",
+		normalizeHeaderKey("destination"):    "LAX",
+		normalizeHeaderKey("monthly_income"): "不稳定",
+		normalizeHeaderKey("risk_tags"):      "名单重合,异常行程",
+		normalizeHeaderKey("case_type"):      "跨境赌博关联",
+		normalizeHeaderKey("issuing_region"): "cn",
 	}
 
-	record, err := buildProfileRecord(row, importTypeHighRisk)
+	record, err := buildProfileRecord(row, importTypeBaseProfile)
 	if err != nil {
 		t.Fatalf("buildProfileRecord returned error: %v", err)
 	}
 
-	if got, want := record.DocumentType, "PASSPORT"; got != want {
-		t.Fatalf("DocumentType = %q, want %q", got, want)
+	if got, want := record.DocumentNum, "E92834102"; got != want {
+		t.Fatalf("DocumentNum = %q, want %q", got, want)
 	}
-	if !record.IsHighRisk {
-		t.Fatalf("IsHighRisk = false, want true")
+	if got, want := record.FullName, "ZHANG WEI"; got != want {
+		t.Fatalf("FullName = %q, want %q", got, want)
 	}
 
-	tripInfo, ok := record.DimensionData["tripInfo"].(map[string]any)
+	tripInfo, ok := record.ProfileData["tripInfo"].(map[string]any)
 	if !ok {
-		t.Fatalf("tripInfo missing from dimension data")
+		t.Fatalf("tripInfo missing from profile data")
 	}
 	if got, want := tripInfo["pnr"], "CX880-LAX"; got != want {
 		t.Fatalf("tripInfo.pnr = %v, want %q", got, want)

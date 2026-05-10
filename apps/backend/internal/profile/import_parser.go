@@ -226,13 +226,6 @@ func rowToValueMap(headers []string, row []string) map[string]string {
 func buildProfileRecord(row map[string]string, importType string) (profileRecord, error) {
 	usedKeys := make(map[string]struct{})
 
-	documentType := normalizeDocumentType(readAlias(row, usedKeys,
-		"document_type", "证件类型", "证件类别",
-	))
-	if documentType == "" {
-		return profileRecord{}, errors.New("证件类型不能为空")
-	}
-
 	documentNum := strings.TrimSpace(readAlias(row, usedKeys,
 		"document_num", "document_id", "passport_no", "证件号码", "证件号", "护照号", "身份证号",
 	))
@@ -243,47 +236,38 @@ func buildProfileRecord(row map[string]string, importType string) (profileRecord
 	fullName := strings.TrimSpace(readAlias(row, usedKeys,
 		"full_name", "name", "姓名",
 	))
-	if fullName == "" {
+	if importType != importTypeHighRisk && fullName == "" {
 		return profileRecord{}, errors.New("姓名不能为空")
 	}
 
-	issuingRegion := strings.TrimSpace(readAlias(row, usedKeys,
-		"issuing_region", "issuing_country", "country_code", "签发地区", "签发国家", "签发区域",
-	))
-	if issuingRegion == "" {
-		issuingRegion = "CN"
-	}
+	if importType == importTypeHighRisk {
+		riskReason := firstNonEmpty(
+			strings.TrimSpace(readAlias(row, usedKeys, "risk_reason", "高风险原因", "名单说明")),
+			strings.TrimSpace(readAlias(row, usedKeys, "case_type", "涉案类型", "违法犯罪类型")),
+			strings.TrimSpace(readAlias(row, usedKeys, "risk_tags", "风险标签")),
+			strings.TrimSpace(readAlias(row, usedKeys, "remark", "备注", "备注说明")),
+		)
+		if riskReason == "" {
+			riskReason = "高风险名单命中"
+		}
 
-	genderValue := strings.TrimSpace(readAlias(row, usedKeys,
-		"gender", "sex", "性别",
-	))
-	gender, err := parseGender(genderValue)
-	if err != nil {
-		return profileRecord{}, err
+		return profileRecord{
+			DocumentNum: documentNum,
+			FullName:    fullName,
+			RiskReason:  riskReason,
+		}, nil
 	}
-
-	birthDateValue := strings.TrimSpace(readAlias(row, usedKeys,
-		"birth_date", "birthday", "出生日期", "出生年月日",
-	))
-	birthDate, err := parseDateValue(birthDateValue)
-	if err != nil {
-		return profileRecord{}, fmt.Errorf("出生日期格式无效")
-	}
-
-	identityDetails := compactMap(map[string]any{
-		"address":          strings.TrimSpace(readAlias(row, usedKeys, "address", "住址", "地址")),
-		"ethnicity":        strings.TrimSpace(readAlias(row, usedKeys, "ethnicity", "民族")),
-		"issuingAuthority": strings.TrimSpace(readAlias(row, usedKeys, "issuing_authority", "签发机关")),
-		"expiryDate":       strings.TrimSpace(readAlias(row, usedKeys, "expiry_date", "证件有效期", "护照有效期")),
-		"visaNumber":       strings.TrimSpace(readAlias(row, usedKeys, "visa_number", "签证号")),
-		"visaType":         strings.TrimSpace(readAlias(row, usedKeys, "visa_type", "签证类型")),
-		"photoIndex":       strings.TrimSpace(readAlias(row, usedKeys, "photo_index", "证件照片索引")),
-	})
 
 	basicInfo := compactMap(map[string]any{
+		"documentType":     normalizeDocumentType(readAlias(row, usedKeys, "document_type", "证件类型", "证件类别")),
+		"issuingRegion":    strings.ToUpper(defaultString(readAlias(row, usedKeys, "issuing_region", "issuing_country", "country_code", "签发地区", "签发国家", "签发区域"), "CN")),
 		"nationality":      strings.TrimSpace(readAlias(row, usedKeys, "nationality", "国籍", "国家地区")),
+		"gender":           strings.TrimSpace(readAlias(row, usedKeys, "gender", "sex", "性别")),
+		"birthDate":        normalizeDateString(readAlias(row, usedKeys, "birth_date", "birthday", "出生日期", "出生年月日")),
 		"residence":        strings.TrimSpace(readAlias(row, usedKeys, "residence", "常住地", "居住地")),
 		"phone":            strings.TrimSpace(readAlias(row, usedKeys, "phone", "手机号", "联系电话")),
+		"address":          strings.TrimSpace(readAlias(row, usedKeys, "address", "住址", "地址")),
+		"ethnicity":        strings.TrimSpace(readAlias(row, usedKeys, "ethnicity", "民族")),
 		"maritalStatus":    strings.TrimSpace(readAlias(row, usedKeys, "marital_status", "婚姻状态")),
 		"education":        strings.TrimSpace(readAlias(row, usedKeys, "education", "教育背景", "学历")),
 		"familyRelation":   strings.TrimSpace(readAlias(row, usedKeys, "family_relation", "家庭关系")),
@@ -325,65 +309,50 @@ func buildProfileRecord(row map[string]string, importType string) (profileRecord
 		"assetProof":    strings.TrimSpace(readAlias(row, usedKeys, "asset_proof", "资产证明摘要")),
 	})
 
-	riskTags := splitListValue(readAlias(row, usedKeys, "risk_tags", "风险标签"))
-	riskRecord := compactMap(map[string]any{
+	riskInfo := compactMap(map[string]any{
+		"riskTags": splitListValue(readAlias(row, usedKeys, "risk_tags", "风险标签")),
 		"type":         strings.TrimSpace(readAlias(row, usedKeys, "case_type", "涉案类型", "违法犯罪类型")),
 		"occurredAt":   normalizeDateString(readAlias(row, usedKeys, "case_time", "涉案时间")),
 		"status":       strings.TrimSpace(readAlias(row, usedKeys, "case_status", "处理状态")),
 		"controlLevel": strings.TrimSpace(readAlias(row, usedKeys, "control_level", "管控级别")),
-		"source":       strings.TrimSpace(readAlias(row, usedKeys, "watchlist_source", "名单来源")),
+		"criminalRecord": strings.TrimSpace(readAlias(row, usedKeys, "criminal_record", "违法犯罪记录")),
 		"note":         strings.TrimSpace(readAlias(row, usedKeys, "remark", "备注说明", "summary", "画像摘要")),
 	})
 
-	highRiskValue := strings.TrimSpace(readAlias(row, usedKeys,
-		"is_high_risk", "high_risk", "risk_flag", "是否高风险",
-	))
-	isHighRisk := importType == importTypeHighRisk
-	if highRiskValue != "" {
-		parsedHighRisk, parseErr := parseBoolValue(highRiskValue)
-		if parseErr != nil {
-			return profileRecord{}, parseErr
-		}
-		isHighRisk = parsedHighRisk || isHighRisk
-	}
-
-	riskRecords := make([]map[string]any, 0, 1)
-	if len(riskRecord) > 0 {
-		if _, exists := riskRecord["source"]; !exists && importType == importTypeHighRisk {
-			riskRecord["source"] = "高风险名单导入"
-		}
-		riskRecords = append(riskRecords, riskRecord)
-	}
-	if importType == importTypeHighRisk && len(riskRecords) == 0 {
-		riskRecords = append(riskRecords, map[string]any{
-			"type":   "高风险名单",
-			"source": "高风险名单导入",
-		})
-	}
-
 	additionalFields := collectAdditionalFields(row, usedKeys)
 
-	dimensionData := compactMap(map[string]any{
+	profileData := compactMap(map[string]any{
 		"basicInfo":        basicInfo,
 		"tripInfo":         tripInfo,
 		"travelHistory":    travelHistory,
 		"occupation":       occupation,
-		"riskTags":         riskTags,
-		"riskRecords":      riskRecords,
+		"riskInfo":         riskInfo,
 		"additionalFields": additionalFields,
 	})
 
 	return profileRecord{
-		DocumentType:    documentType,
-		DocumentNum:     documentNum,
-		IssuingRegion:   strings.ToUpper(issuingRegion),
-		FullName:        fullName,
-		Gender:          gender,
-		BirthDate:       birthDate,
-		IsHighRisk:      isHighRisk,
-		IdentityDetails: identityDetails,
-		DimensionData:   dimensionData,
+		DocumentNum: documentNum,
+		FullName:    fullName,
+		ProfileData: profileData,
 	}, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func defaultString(value string, fallback string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return fallback
+	}
+	return trimmed
 }
 
 func readAlias(row map[string]string, usedKeys map[string]struct{}, aliases ...string) string {

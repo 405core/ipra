@@ -33,11 +33,10 @@ describe('App', () => {
     token: 'test-token',
     user: {
       id: 7,
-      username: 'inspector.demo',
-      realName: '张测试',
-      badgeNumber: 'A-2048',
-      roleCode: 'inspector',
-      status: 1,
+      workId: 'A-2048',
+      name: '张测试',
+      role: 'admin',
+      status: 'active',
     },
   };
 
@@ -55,8 +54,8 @@ describe('App', () => {
           },
         },
         {
-          path: '/management',
-          name: 'management',
+          path: '/admin/home',
+          name: 'admin-home',
           component: securedView,
           meta: {
             watermark: true,
@@ -99,7 +98,7 @@ describe('App', () => {
     vi.setSystemTime(currentTime);
     saveAuthSession(testSession);
 
-    const wrapper = await mountAt('/management');
+    const wrapper = await mountAt('/admin/home');
 
     expect(wrapper.get('[data-testid="global-watermark"]').text()).toContain(
       '张测试',
@@ -128,7 +127,7 @@ describe('App', () => {
     vi.setSystemTime(initialTime);
     saveAuthSession(testSession);
 
-    const wrapper = await mountAt('/management');
+    const wrapper = await mountAt('/admin/home');
     const beforeText = wrapper.get('[data-testid="global-watermark"]').text();
 
     vi.advanceTimersByTime(1000);
@@ -148,7 +147,7 @@ describe('App', () => {
   it('keeps the overlay click-through for underlying actions', async () => {
     saveAuthSession(testSession);
 
-    const wrapper = await mountAt('/management');
+    const wrapper = await mountAt('/admin/home');
 
     await wrapper.get('[data-testid="secured-action"]').trigger('click');
 

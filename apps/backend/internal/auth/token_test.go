@@ -11,12 +11,11 @@ func TestTokenManagerSignAndParse(t *testing.T) {
 	manager := NewTokenManager("test-secret", time.Hour)
 
 	token, err := manager.Sign(dbschema.SystemUser{
-		ID:          7,
-		Username:    "user",
-		RealName:    "现场检查员",
-		BadgeNumber: "100002",
-		RoleCode:    RoleInspector,
-		Status:      StatusActive,
+		ID:     7,
+		WorkID: "user",
+		Name:   "员工",
+		Role:   RoleUser,
+		Status: StatusActive,
 	})
 	if err != nil {
 		t.Fatalf("Sign() error = %v", err)
@@ -30,17 +29,17 @@ func TestTokenManagerSignAndParse(t *testing.T) {
 	if claims.UserID != 7 {
 		t.Fatalf("UserID = %d, want %d", claims.UserID, 7)
 	}
-	if claims.RoleCode != RoleInspector {
-		t.Fatalf("RoleCode = %q, want %q", claims.RoleCode, RoleInspector)
+	if claims.Role != RoleUser {
+		t.Fatalf("Role = %q, want %q", claims.Role, RoleUser)
 	}
-	if claims.Username != "user" {
-		t.Fatalf("Username = %q, want %q", claims.Username, "user")
+	if claims.WorkID != "user" {
+		t.Fatalf("WorkID = %q, want %q", claims.WorkID, "user")
 	}
-	if claims.BadgeNumber != "100002" {
-		t.Fatalf("BadgeNumber = %q, want %q", claims.BadgeNumber, "100002")
+	if claims.Name != "员工" {
+		t.Fatalf("Name = %q, want %q", claims.Name, "员工")
 	}
 	if claims.Status != StatusActive {
-		t.Fatalf("Status = %d, want %d", claims.Status, StatusActive)
+		t.Fatalf("Status = %q, want %q", claims.Status, StatusActive)
 	}
 }
 
@@ -48,12 +47,11 @@ func TestTokenManagerRejectsExpiredTokens(t *testing.T) {
 	manager := NewTokenManager("test-secret", -time.Second)
 
 	token, err := manager.Sign(dbschema.SystemUser{
-		ID:          1,
-		Username:    "admin",
-		RealName:    "系统管理员",
-		BadgeNumber: "100001",
-		RoleCode:    RoleAdmin,
-		Status:      StatusActive,
+		ID:     1,
+		WorkID: "admin",
+		Name:   "系统管理员",
+		Role:   RoleAdmin,
+		Status: StatusActive,
 	})
 	if err != nil {
 		t.Fatalf("Sign() error = %v", err)

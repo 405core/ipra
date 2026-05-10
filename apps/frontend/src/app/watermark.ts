@@ -55,8 +55,8 @@ export function buildWatermarkText(
   return [
     `IPRA`,
     `页面 ${normalizedTitle}`,
-    `姓名 ${session.user.realName}`,
-    `警号/工号 ${session.user.badgeNumber}`,
+    `姓名 ${session.user.name}`,
+    `工号 ${session.user.workId}`,
     `时间 ${formatWatermarkTimestamp(timestamp)}`,
   ].join(' · ');
 }

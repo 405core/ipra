@@ -1,12 +1,11 @@
-export type UserRole = 'admin' | 'inspector';
+export type UserRole = 'admin' | 'user';
 
 export interface AuthUser {
   id: number;
-  username: string;
-  realName: string;
-  badgeNumber: string;
-  roleCode: UserRole;
-  status: number;
+  workId: string;
+  name: string;
+  role: UserRole;
+  status: string;
 }
 
 export interface AuthSession {
@@ -36,11 +35,10 @@ export function loadAuthSession(): AuthSession | null {
     if (
       typeof parsed.token !== 'string' ||
       !parsed.user ||
-      typeof parsed.user.username !== 'string' ||
-      typeof parsed.user.realName !== 'string' ||
-      typeof parsed.user.badgeNumber !== 'string' ||
-      typeof parsed.user.roleCode !== 'string' ||
-      typeof parsed.user.status !== 'number'
+      typeof parsed.user.workId !== 'string' ||
+      typeof parsed.user.name !== 'string' ||
+      typeof parsed.user.role !== 'string' ||
+      typeof parsed.user.status !== 'string'
     ) {
       localStorage.removeItem(AUTH_STORAGE_KEY);
       return null;
@@ -61,12 +59,12 @@ export function clearAuthSession() {
   localStorage.removeItem(AUTH_STORAGE_KEY);
 }
 
-export function resolveRoleHome(roleCode: UserRole) {
-  return roleCode === 'admin' ? '/management' : '/home/data';
+export function resolveRoleHome(role: UserRole) {
+  return role === 'admin' ? '/admin/home' : '/home';
 }
 
 export async function loginWithCredentials(
-  username: string,
+  workId: string,
   password: string
 ): Promise<AuthSession> {
   const response = await fetch('/api/login', {
@@ -75,7 +73,7 @@ export async function loginWithCredentials(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      username,
+      workId,
       password,
     }),
   });

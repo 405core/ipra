@@ -7,14 +7,13 @@ import (
 
 type SystemUser struct {
 	ID           uint64    `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键"`
-	Username     string    `gorm:"column:username;type:varchar(64);uniqueIndex:uk_system_user_username;not null;comment:登录账号"`
 	PasswordHash string    `gorm:"column:password_hash;type:varchar(255);not null;comment:Bcrypt加密后的密码"`
-	RealName     string    `gorm:"column:real_name;type:varchar(64);not null;comment:操作员真实姓名"`
-	BadgeNumber  string    `gorm:"column:badge_number;type:varchar(64);uniqueIndex:uk_system_user_badge_number;not null;comment:警号/工号，用于前端和视频回放生成防泄密数字水印"`
-	RoleCode     string    `gorm:"column:role_code;type:varchar(32);not null;comment:角色代码，用于基础权限控制"`
-	Status       int16     `gorm:"column:status;type:smallint;not null;default:1;comment:账号状态（1:启用, 0:停用），不使用物理删除以保障历史审计链路完整"`
+	WorkID       string    `gorm:"column:work_id;type:varchar(64);uniqueIndex:uk_system_user_work_id;not null;comment:工号，用于登录和水印"`
+	Status       string    `gorm:"column:status;type:varchar(32);not null;default:active;comment:账号状态（active:启用, disabled:停用）"`
 	CreatedAt    time.Time `gorm:"column:created_at;type:timestamp;not null;autoCreateTime;comment:账号创建时间"`
 	UpdatedAt    time.Time `gorm:"column:updated_at;type:timestamp;not null;autoUpdateTime;comment:账号最后更新时间"`
+	Name         string    `gorm:"column:name;type:varchar(64);not null;comment:姓名"`
+	Role         string    `gorm:"column:role;type:varchar(32);not null;comment:角色代码（admin、user）"`
 }
 
 func (SystemUser) TableName() string {
@@ -43,22 +42,26 @@ func (ImportBatchLog) TableName() string {
 }
 
 type PassengerProfile struct {
-	ID              uint64          `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键"`
-	DocumentType    string          `gorm:"column:document_type;type:varchar(32);uniqueIndex:idx_uniq_passenger_doc,priority:1;not null;comment:证件类型（如 ID_CARD、PASSPORT）"`
-	DocumentNum     string          `gorm:"column:document_num;type:varchar(64);uniqueIndex:idx_uniq_passenger_doc,priority:2;not null;comment:证件号码，现场扫描和检索的核心字段"`
-	IssuingRegion   string          `gorm:"column:issuing_region;type:varchar(64);uniqueIndex:idx_uniq_passenger_doc,priority:3;not null;default:CN;comment:签发国家或地区"`
-	FullName        string          `gorm:"column:full_name;type:varchar(128);not null;comment:统一全名展示字段"`
-	Gender          *int16          `gorm:"column:gender;type:smallint;comment:性别（1:男, 2:女, 0:未知）"`
-	BirthDate       *time.Time      `gorm:"column:birth_date;type:date;comment:出生日期"`
-	IsHighRisk      bool            `gorm:"column:is_high_risk;type:boolean;not null;default:false;comment:高风险标识，供前端显著预警"`
-	IdentityDetails json.RawMessage `gorm:"column:identity_details;type:jsonb;comment:证件专属动态字段，如身份证住址、民族或护照有效期"`
-	DimensionData   json.RawMessage `gorm:"column:dimension_data;type:jsonb;comment:多维全息画像数据，含行程、历史出行、职业和违法犯罪记录等"`
-	LatestBatchID   *uint64         `gorm:"column:latest_batch_id;type:bigint;comment:最近一次写入该画像的导入批次 ID"`
-	LatestBatch     *ImportBatchLog `gorm:"foreignKey:LatestBatchID;references:ID;constraint:OnUpdate:RESTRICT,OnDelete:RESTRICT;"`
-	CreatedAt       time.Time       `gorm:"column:created_at;type:timestamptz;not null;default:CURRENT_TIMESTAMP;autoCreateTime;comment:记录创建时间"`
-	UpdatedAt       time.Time       `gorm:"column:updated_at;type:timestamptz;not null;default:CURRENT_TIMESTAMP;autoUpdateTime;comment:记录更新时间"`
+	ID          uint64          `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键"`
+	DocumentNum string          `gorm:"column:document_num;type:varchar(64);uniqueIndex:idx_uniq_passenger_doc;not null;comment:证件号码，现场扫描和检索的核心字段"`
+	FullName    string          `gorm:"column:full_name;type:varchar(128);not null;comment:统一全名展示字段"`
+	ProfileData json.RawMessage `gorm:"column:profile_data;type:jsonb;comment:旅客基础画像 JSON，覆盖个人基本信息、行程、历史出行、职业背景、违法犯罪记录等维度"`
+	CreatedAt   time.Time       `gorm:"column:created_at;type:timestamptz;not null;default:CURRENT_TIMESTAMP;autoCreateTime;comment:记录创建时间"`
+	UpdatedAt   time.Time       `gorm:"column:updated_at;type:timestamptz;not null;default:CURRENT_TIMESTAMP;autoUpdateTime;comment:记录更新时间"`
 }
 
 func (PassengerProfile) TableName() string {
 	return "passenger_profile"
+}
+
+type HighRiskWatchlist struct {
+	ID          uint64    `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键"`
+	DocumentNum string    `gorm:"column:document_num;type:varchar(64);uniqueIndex:idx_uniq_watchlist_doc;not null;comment:证件号码"`
+	RiskReason  string    `gorm:"column:risk_reason;type:text;not null;default:'';comment:高风险原因或名单说明"`
+	CreatedAt   time.Time `gorm:"column:created_at;type:timestamptz;not null;default:CURRENT_TIMESTAMP;autoCreateTime;comment:记录创建时间"`
+	UpdatedAt   time.Time `gorm:"column:updated_at;type:timestamptz;not null;default:CURRENT_TIMESTAMP;autoUpdateTime;comment:记录更新时间"`
+}
+
+func (HighRiskWatchlist) TableName() string {
+	return "high_risk_watchlist"
 }

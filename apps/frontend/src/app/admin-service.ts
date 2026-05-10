@@ -1,0 +1,170 @@
+import { loadAuthSession } from '../auth';
+import type { PassengerProfileRecord } from './profile-service';
+
+export interface AdminListResult<T> {
+  items: T[];
+  total: number;
+}
+
+export interface AdminWatchlistItem {
+  id: number;
+  documentNum: string;
+  riskReason: string;
+  updatedAt: string;
+}
+
+export interface AdminUserItem {
+  id: number;
+  workId: string;
+  name: string;
+  role: 'admin' | 'user';
+  status: string;
+}
+
+interface AdminUserPayload {
+  workId?: string;
+  name?: string;
+  role?: 'admin' | 'user';
+  status?: string;
+  password?: string;
+}
+
+async function authorizedFetch(input: RequestInfo | URL, init?: RequestInit) {
+  const session = loadAuthSession();
+  if (!session?.token) {
+    throw new Error('登录状态已失效，请重新登录。');
+  }
+
+  return fetch(input, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(init?.headers ?? {}),
+      Authorization: `Bearer ${session.token}`,
+    },
+  });
+}
+
+async function parsePayload<T>(response: Response, fallbackMessage: string): Promise<T> {
+  const payload = (await response.json().catch(() => null)) as
+    | T
+    | { message?: string }
+    | null;
+
+  if (
+    !response.ok ||
+    payload == null ||
+    (typeof payload !== 'object' && typeof payload !== 'function')
+  ) {
+    const message =
+      payload &&
+      typeof payload === 'object' &&
+      'message' in payload &&
+      typeof payload.message === 'string'
+        ? payload.message
+        : fallbackMessage;
+    throw new Error(message);
+  }
+
+  return payload as T;
+}
+
+export async function listAdminProfiles(query: string) {
+  const params = new URLSearchParams();
+  if (query.trim()) {
+    params.set('query', query.trim());
+  }
+  params.set('limit', '100');
+  const response = await authorizedFetch(`/api/admin/profiles?${params.toString()}`);
+  return parsePayload<AdminListResult<PassengerProfileRecord>>(response, '查询基础画像失败。');
+}
+
+export async function createAdminProfile(payload: Partial<PassengerProfileRecord>) {
+  const response = await authorizedFetch('/api/admin/profiles', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  return parsePayload<{ message: string }>(response, '新增基础画像失败。');
+}
+
+export async function updateAdminProfile(id: number, payload: Partial<PassengerProfileRecord>) {
+  const response = await authorizedFetch(`/api/admin/profiles/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+  return parsePayload<{ message: string }>(response, '更新基础画像失败。');
+}
+
+export async function deleteAdminProfile(id: number) {
+  const response = await authorizedFetch(`/api/admin/profiles/${id}`, {
+    method: 'DELETE',
+  });
+  return parsePayload<{ message: string }>(response, '删除基础画像失败。');
+}
+
+export async function listAdminWatchlist(query: string) {
+  const params = new URLSearchParams();
+  if (query.trim()) {
+    params.set('query', query.trim());
+  }
+  params.set('limit', '100');
+  const response = await authorizedFetch(`/api/admin/watchlist?${params.toString()}`);
+  return parsePayload<AdminListResult<AdminWatchlistItem>>(response, '查询高风险名单失败。');
+}
+
+export async function createAdminWatchlist(payload: Partial<AdminWatchlistItem>) {
+  const response = await authorizedFetch('/api/admin/watchlist', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  return parsePayload<{ message: string }>(response, '新增高风险名单失败。');
+}
+
+export async function updateAdminWatchlist(id: number, payload: Partial<AdminWatchlistItem>) {
+  const response = await authorizedFetch(`/api/admin/watchlist/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+  return parsePayload<{ message: string }>(response, '更新高风险名单失败。');
+}
+
+export async function deleteAdminWatchlist(id: number) {
+  const response = await authorizedFetch(`/api/admin/watchlist/${id}`, {
+    method: 'DELETE',
+  });
+  return parsePayload<{ message: string }>(response, '删除高风险名单失败。');
+}
+
+export async function listAdminUsers(query: string) {
+  const params = new URLSearchParams();
+  if (query.trim()) {
+    params.set('query', query.trim());
+  }
+  params.set('limit', '100');
+  const response = await authorizedFetch(`/api/admin/users?${params.toString()}`);
+  return parsePayload<AdminListResult<AdminUserItem>>(response, '查询用户失败。');
+}
+
+export async function createAdminUser(payload: AdminUserPayload) {
+  const response = await authorizedFetch('/api/admin/users', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  return parsePayload<{ message: string }>(response, '新增用户失败。');
+}
+
+export async function updateAdminUser(id: number, payload: AdminUserPayload) {
+  const response = await authorizedFetch(`/api/admin/users/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+  return parsePayload<{ message: string }>(response, '更新用户失败。');
+}
+
+export async function updateAdminUserStatus(id: number, status: string) {
+  const response = await authorizedFetch(`/api/admin/users/${id}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  });
+  return parsePayload<{ message: string }>(response, '更新用户状态失败。');
+}

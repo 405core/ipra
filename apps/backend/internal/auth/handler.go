@@ -18,17 +18,16 @@ type Handler struct {
 }
 
 type loginRequest struct {
-	Username string `json:"username"`
+	WorkID   string `json:"workId"`
 	Password string `json:"password"`
 }
 
 type userResponse struct {
-	ID          uint64 `json:"id"`
-	Username    string `json:"username"`
-	RealName    string `json:"realName"`
-	BadgeNumber string `json:"badgeNumber"`
-	RoleCode    string `json:"roleCode"`
-	Status      int16  `json:"status"`
+	ID     uint64 `json:"id"`
+	WorkID string `json:"workId"`
+	Name   string `json:"name"`
+	Role   string `json:"role"`
+	Status string `json:"status"`
 }
 
 func NewHandler(db *gorm.DB, tokenManager *TokenManager) *Handler {
@@ -57,17 +56,17 @@ func (h *Handler) handleLogin(c *gin.Context) {
 		return
 	}
 
-	username := NormalizeUsername(req.Username)
+	workID := NormalizeWorkID(req.WorkID)
 	password := strings.TrimSpace(req.Password)
-	if username == "" || password == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"message": "账号和密码不能为空"})
+	if workID == "" || password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "工号和密码不能为空"})
 		return
 	}
 
 	var user dbschema.SystemUser
-	if err := h.db.Where("username = ?", username).First(&user).Error; err != nil {
+	if err := h.db.Where("LOWER(work_id) = ?", workID).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			c.JSON(http.StatusUnauthorized, gin.H{"message": "账号或密码错误"})
+			c.JSON(http.StatusUnauthorized, gin.H{"message": "工号或密码错误"})
 			return
 		}
 
@@ -76,11 +75,11 @@ func (h *Handler) handleLogin(c *gin.Context) {
 	}
 
 	if err := VerifyPassword(user.PasswordHash, password); err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"message": "账号或密码错误"})
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "工号或密码错误"})
 		return
 	}
 
-	if user.Status != StatusActive {
+	if NormalizeStatus(user.Status) != StatusActive {
 		c.JSON(http.StatusForbidden, gin.H{"message": "账号已停用"})
 		return
 	}
@@ -115,7 +114,7 @@ func (h *Handler) handleCurrentUser(c *gin.Context) {
 		return
 	}
 
-	if user.Status != StatusActive {
+	if NormalizeStatus(user.Status) != StatusActive {
 		c.JSON(http.StatusForbidden, gin.H{"message": "账号已停用"})
 		return
 	}
@@ -177,11 +176,10 @@ func parseBearerToken(header string) (string, bool) {
 
 func toUserResponse(user dbschema.SystemUser) userResponse {
 	return userResponse{
-		ID:          user.ID,
-		Username:    user.Username,
-		RealName:    user.RealName,
-		BadgeNumber: user.BadgeNumber,
-		RoleCode:    user.RoleCode,
-		Status:      user.Status,
+		ID:     user.ID,
+		WorkID: user.WorkID,
+		Name:   user.Name,
+		Role:   NormalizeRole(user.Role),
+		Status: NormalizeStatus(user.Status),
 	}
 }

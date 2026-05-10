@@ -61,6 +61,7 @@ func newRouter(
 
 	if authHandler != nil {
 		authHandler.Register(r)
+		authHandler.RegisterAdminRoutes(r)
 		if profileHandler != nil {
 			profileHandler.Register(r, authHandler.AuthMiddleware())
 		}

@@ -32,6 +32,21 @@ func (h *Handler) Register(r gin.IRouter, authMiddleware gin.HandlerFunc) {
 
 	group.GET("", h.handleSearch)
 	group.POST("/imports", h.handleImport)
+
+	adminGroup := r.Group("/api/admin")
+	if authMiddleware != nil {
+		adminGroup.Use(authMiddleware, requireAdminRole())
+	}
+
+	adminGroup.GET("/profiles", h.handleAdminListProfiles)
+	adminGroup.POST("/profiles", h.handleAdminCreateProfile)
+	adminGroup.PUT("/profiles/:id", h.handleAdminUpdateProfile)
+	adminGroup.DELETE("/profiles/:id", h.handleAdminDeleteProfile)
+
+	adminGroup.GET("/watchlist", h.handleAdminListWatchlist)
+	adminGroup.POST("/watchlist", h.handleAdminCreateWatchlist)
+	adminGroup.PUT("/watchlist/:id", h.handleAdminUpdateWatchlist)
+	adminGroup.DELETE("/watchlist/:id", h.handleAdminDeleteWatchlist)
 }
 
 func (h *Handler) handleSearch(c *gin.Context) {
@@ -113,4 +128,175 @@ func (h *Handler) handleImport(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) handleAdminListProfiles(c *gin.Context) {
+	limit := parseListLimit(c)
+	result, err := h.service.ListProfiles(c.Request.Context(), c.Query("query"), limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "查询基础画像失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) handleAdminCreateProfile(c *gin.Context) {
+	var payload SearchProfileResponse
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "请求参数无效"})
+		return
+	}
+	if strings.TrimSpace(payload.DocumentNum) == "" || strings.TrimSpace(payload.FullName) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "证件号码和姓名不能为空"})
+		return
+	}
+
+	if err := h.service.CreateProfile(c.Request.Context(), payload); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "新增基础画像失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "ok"})
+}
+
+func (h *Handler) handleAdminUpdateProfile(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+
+	var payload SearchProfileResponse
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "请求参数无效"})
+		return
+	}
+
+	if err := h.service.UpdateProfile(c.Request.Context(), id, payload); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "更新基础画像失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "ok"})
+}
+
+func (h *Handler) handleAdminDeleteProfile(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+
+	if err := h.service.DeleteProfile(c.Request.Context(), id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "删除基础画像失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "ok"})
+}
+
+func (h *Handler) handleAdminListWatchlist(c *gin.Context) {
+	limit := parseListLimit(c)
+	result, err := h.service.ListWatchlist(c.Request.Context(), c.Query("query"), limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "查询高风险名单失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) handleAdminCreateWatchlist(c *gin.Context) {
+	var payload WatchlistItem
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "请求参数无效"})
+		return
+	}
+	if strings.TrimSpace(payload.DocumentNum) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "证件号码不能为空"})
+		return
+	}
+
+	if err := h.service.CreateWatchlist(c.Request.Context(), payload); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "新增高风险名单失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "ok"})
+}
+
+func (h *Handler) handleAdminUpdateWatchlist(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+
+	var payload WatchlistItem
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "请求参数无效"})
+		return
+	}
+	if strings.TrimSpace(payload.DocumentNum) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "证件号码不能为空"})
+		return
+	}
+
+	if err := h.service.UpdateWatchlist(c.Request.Context(), id, payload); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "更新高风险名单失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "ok"})
+}
+
+func (h *Handler) handleAdminDeleteWatchlist(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+
+	if err := h.service.DeleteWatchlist(c.Request.Context(), id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "删除高风险名单失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "ok"})
+}
+
+func parseListLimit(c *gin.Context) int {
+	limit := 20
+	if rawLimit := strings.TrimSpace(c.Query("limit")); rawLimit != "" {
+		parsedLimit, err := strconv.Atoi(rawLimit)
+		if err == nil && parsedLimit > 0 {
+			if parsedLimit > 100 {
+				parsedLimit = 100
+			}
+			limit = parsedLimit
+		}
+	}
+	return limit
+}
+
+func parseUintParam(c *gin.Context, key string) (uint64, bool) {
+	value := strings.TrimSpace(c.Param(key))
+	id, err := strconv.ParseUint(value, 10, 64)
+	if err != nil || id == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "ID 参数无效"})
+		return 0, false
+	}
+	return id, true
+}
+
+func requireAdminRole() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		claims, ok := auth.ClaimsFromContext(c)
+		if !ok {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"message": "未授权"})
+			return
+		}
+		if auth.NormalizeRole(claims.Role) != auth.RoleAdmin {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"message": "无权限访问"})
+			return
+		}
+		c.Next()
+	}
 }

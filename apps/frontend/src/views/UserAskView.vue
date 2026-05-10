@@ -150,8 +150,8 @@ interface JudgementBriefing {
 }
 
 const session = loadAuthSession();
-const inspectorName = session?.user.realName || '普通员工';
-const inspectorWorkId = session?.user.badgeNumber || 'EMP-0000';
+const inspectorName = session?.user.name || '普通员工';
+const inspectorWorkId = session?.user.workId || 'EMP-0000';
 
 const passengerProfile: MockPassengerProfile = {
   name: 'ZHANG WEI',

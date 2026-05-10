@@ -33,7 +33,7 @@ const router = createRouter({
       redirect: { name: 'home-data' },
       meta: {
         requiresAuth: true,
-        roles: ['inspector'] satisfies UserRole[],
+        roles: ['user'] satisfies UserRole[],
         watermark: true,
       },
       children: [
@@ -56,28 +56,8 @@ const router = createRouter({
       ],
     },
     {
-      path: '/system',
-      redirect: { name: 'home-data' },
-    },
-    {
-      path: '/system/home',
-      redirect: { name: 'home-data' },
-    },
-    {
-      path: '/system/ask',
-      redirect: { name: 'home-ask' },
-    },
-    {
-      path: '/system-home',
-      redirect: { name: 'home-data' },
-    },
-    {
-      path: '/system-ask',
-      redirect: { name: 'home-ask' },
-    },
-    {
-      path: '/management',
-      name: 'management',
+      path: '/admin/home',
+      name: 'admin-home',
       component: ManagementView,
       meta: {
         requiresAuth: true,
@@ -89,7 +69,7 @@ const router = createRouter({
       path: '/:pathMatch(.*)*',
       redirect: () => {
         const session = loadAuthSession();
-        return session ? resolveRoleHome(session.user.roleCode) : '/login';
+        return session ? resolveRoleHome(session.user.role) : '/login';
       },
     },
   ],
@@ -105,7 +85,7 @@ router.beforeEach(async (to) => {
       : loadAuthSession();
 
   if (guestOnly && session) {
-    return resolveRoleHome(session.user.roleCode);
+    return resolveRoleHome(session.user.role);
   }
 
   if (requiresAuth && !session) {
@@ -113,8 +93,8 @@ router.beforeEach(async (to) => {
   }
 
   const allowedRoles = to.meta.roles as UserRole[] | undefined;
-  if (allowedRoles && session && !allowedRoles.includes(session.user.roleCode)) {
-    return resolveRoleHome(session.user.roleCode);
+  if (allowedRoles && session && !allowedRoles.includes(session.user.role)) {
+    return resolveRoleHome(session.user.role);
   }
 
   return true;
