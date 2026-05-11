@@ -21,11 +21,18 @@ class MinioSettings:
     public_base_url: str
 
 
+@dataclass(frozen=True)
+class StoredObject:
+    stored_path: str
+    bucket: str
+    object_key: str
+
+
 def load_minio_settings() -> MinioSettings | None:
     endpoint = os.getenv("MINIO_ENDPOINT", "").strip()
     access_key = os.getenv("MINIO_ACCESS_KEY", "").strip() or os.getenv("MINIO_ROOT_USER", "").strip()
     secret_key = os.getenv("MINIO_SECRET_KEY", "").strip() or os.getenv("MINIO_ROOT_PASSWORD", "").strip()
-    bucket = os.getenv("MINIO_BUCKET", "").strip()
+    bucket = os.getenv("MINIO_BUCKET_VIDEO", "").strip() or os.getenv("MINIO_BUCKET", "").strip()
 
     if not endpoint or not access_key or not secret_key or not bucket:
         return None
@@ -60,11 +67,11 @@ def get_minio_client() -> Minio | None:
     )
 
 
-def store_file(local_path: Path, object_name: str, content_type: str | None = None) -> str:
+def store_file(local_path: Path, object_name: str, content_type: str | None = None) -> StoredObject:
     settings = load_minio_settings()
     client = get_minio_client()
     if settings is None or client is None:
-        return str(local_path)
+        return StoredObject(stored_path=str(local_path), bucket="", object_key="")
 
     if not client.bucket_exists(settings.bucket):
         client.make_bucket(settings.bucket)
@@ -78,6 +85,12 @@ def store_file(local_path: Path, object_name: str, content_type: str | None = No
 
     if settings.public_base_url:
         encoded_key = "/".join(quote(part) for part in object_name.split("/"))
-        return f"{settings.public_base_url}/{settings.bucket}/{encoded_key}"
+        stored_path = f"{settings.public_base_url}/{settings.bucket}/{encoded_key}"
+    else:
+        stored_path = f"minio://{settings.bucket}/{object_name}"
 
-    return f"minio://{settings.bucket}/{object_name}"
+    return StoredObject(
+        stored_path=stored_path,
+        bucket=settings.bucket,
+        object_key=object_name,
+    )

@@ -12,6 +12,8 @@ class UploadedWindowFile(ApiModel):
     stored_path: str = Field(alias="storedPath")
     content_type: str | None = Field(default=None, alias="contentType")
     size_bytes: int = Field(alias="sizeBytes")
+    bucket: str | None = None
+    object_key: str | None = Field(default=None, alias="objectKey")
 
 
 class HumanOmniSummaryResult(ApiModel):

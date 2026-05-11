@@ -190,6 +190,14 @@ func classifyRequest(method string, routePath string) (string, string) {
 		return "view_admin_inquiry_settings", "系统设置"
 	case method == "PUT" && routePath == "/api/admin/settings/inquiry":
 		return "update_admin_inquiry_settings", "系统设置"
+	case method == "POST" && routePath == "/api/inquiry/archives":
+		return "create_inquiry_archive", "问询归档"
+	case method == "GET" && routePath == "/api/admin/inquiry-archives":
+		return "list_inquiry_archives", "问询归档"
+	case method == "GET" && routePath == "/api/admin/inquiry-archives/:id":
+		return "view_inquiry_archive", "问询归档"
+	case method == "GET" && routePath == "/api/admin/inquiry-archives/videos/:id/stream":
+		return "stream_inquiry_archive_video", "问询归档"
 	case method == "GET" && routePath == "/api/admin/memory":
 		return "list_admin_memory", "Agent记忆"
 	case method == "GET" && routePath == "/api/audit-logs":
