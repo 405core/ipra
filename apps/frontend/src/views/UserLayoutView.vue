@@ -26,12 +26,12 @@ const navigationItems: NavigationItem[] = [
   {
     routeName: 'home-data',
     label: '数据检索',
-    description: 'UserHomeView',
+    description: '',
   },
   {
     routeName: 'home-ask',
     label: '辅助问询',
-    description: 'UserAskView',
+    description: '',
   },
 ];
 
@@ -39,7 +39,8 @@ const isDesktop = ref(false);
 const isSidebarVisible = ref(false);
 const isImporting = ref(false);
 const isImportDragActive = ref(false);
-const importStatus = ref('支持 CSV / XLSX。');
+const defaultImportHint = '支持 CSV / XLSX';
+const importStatus = ref('');
 const importInput = ref<HTMLInputElement | null>(null);
 let importDragDepth = 0;
 
@@ -54,6 +55,16 @@ const userBadge = computed(() => {
 });
 const currentTitle = computed(() =>
   typeof route.meta.title === 'string' ? route.meta.title : '员工工作台'
+);
+const importBoxDetail = computed(() => {
+  if (isImporting.value) {
+    return importStatus.value || '正在处理导入文件...';
+  }
+
+  return defaultImportHint;
+});
+const hasImportStatus = computed(
+  () => !isImporting.value && Boolean(importStatus.value.trim())
 );
 
 function syncLayout(force = false) {
@@ -261,7 +272,6 @@ onBeforeUnmount(() => {
         </button>
 
         <div>
-          <p class="brand-block__eyebrow">LUMINOUS RISK</p>
           <h1>{{ currentTitle }}</h1>
         </div>
       </div>
@@ -293,10 +303,7 @@ onBeforeUnmount(() => {
 
     <aside class="user-shell__sidebar" :class="{ 'is-visible': isSidebarVisible }">
       <div class="sidebar__head">
-        <div>
-          <p class="sidebar__eyebrow">Navigation</p>
-          <h2>Staff Workspace</h2>
-        </div>
+        <h2>工作区</h2>
       </div>
 
       <nav class="sidebar__nav" aria-label="员工工作台导航">
@@ -309,7 +316,7 @@ onBeforeUnmount(() => {
           @click="handleNavClick"
         >
           <strong>{{ item.label }}</strong>
-          <span>{{ item.description }}</span>
+          <span v-if="item.description">{{ item.description }}</span>
         </RouterLink>
       </nav>
 
@@ -334,8 +341,9 @@ onBeforeUnmount(() => {
           @drop="handleImportDrop"
         >
           <strong>{{ isImporting ? '正在处理导入文件...' : '导入画像文件' }}</strong>
+          <span>{{ importBoxDetail }}</span>
         </button>
-        <p class="sidebar__status">{{ importStatus }}</p>
+        <p v-if="hasImportStatus" class="sidebar__status">{{ importStatus }}</p>
         <div class="sidebar__divider"></div>
 
         <p class="sidebar__tools-label">模板下载</p>
@@ -561,19 +569,24 @@ onBeforeUnmount(() => {
 
 .nav-link {
   display: grid;
-  gap: 6px;
+  gap: 4px;
   width: 100%;
-  padding: 18px 16px;
+  min-height: 92px;
+  padding: 16px;
   border-radius: 20px;
   background: linear-gradient(180deg, rgba(17, 34, 40, 0.02), rgba(17, 34, 40, 0.06));
   color: var(--text-main);
   border: 1px solid rgba(15, 48, 58, 0.14);
   text-decoration: none;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  align-content: center;
+  justify-items: center;
+  text-align: center;
 }
 
 .nav-link strong {
-  font-size: 1rem;
+  font-size: 1.04rem;
+  line-height: 1.35;
 }
 
 .nav-link.is-active {

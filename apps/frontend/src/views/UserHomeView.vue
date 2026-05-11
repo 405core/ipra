@@ -24,6 +24,7 @@ const results = ref<PassengerProfileRecord[]>([]);
 const recentSearches = ref<string[]>([]);
 const searchStatus = ref('');
 const isSearching = ref(false);
+const lastSearchedQuery = ref('');
 const cameraVideo = ref<HTMLVideoElement | null>(null);
 const captureCanvas = ref<HTMLCanvasElement | null>(null);
 const isCameraActive = ref(false);
@@ -46,6 +47,32 @@ const cameraPanelStatus = computed(() => {
   }
 
   return ocrMessage || cameraMessage || defaultOCRStatus;
+});
+const resultEmptyTitle = computed(() => {
+  if (isSearching.value) {
+    return '正在检索旅客画像...';
+  }
+
+  if (!lastSearchedQuery.value) {
+    return '当前没有匹配记录。';
+  }
+
+  return searchStatus.value || '当前没有匹配记录。';
+});
+const resultEmptyDetail = computed(() => {
+  if (isSearching.value) {
+    return '系统正在根据证件号匹配旅客画像。';
+  }
+
+  if (!lastSearchedQuery.value) {
+    return '请输入准确证件号后检索。';
+  }
+
+  if (searchStatus.value.startsWith('未找到证件号为')) {
+    return '请核对证件号后重新检索。';
+  }
+
+  return '请稍后重试，或检查输入内容。';
 });
 let cameraStream: MediaStream | null = null;
 let liveScanTimer: number | null = null;
@@ -88,6 +115,7 @@ onBeforeUnmount(() => {
 async function loadProfiles(rawValue = query.value) {
   const trimmed = rawValue.trim();
   query.value = trimmed;
+  lastSearchedQuery.value = trimmed;
   if (!trimmed) {
     results.value = [];
     searchStatus.value = '请输入证件号进行检索。';
@@ -688,10 +716,8 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
         <form class="surface-card surface-card--search" @submit.prevent="submitSearch">
           <div class="panel-heading">
             <div>
-              <p class="section-eyebrow">Single Query</p>
               <h3>手动检索</h3>
             </div>
-            <span class="panel-badge">Live</span>
           </div>
 
           <label class="search-box" for="passenger-query">
@@ -707,8 +733,6 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
               {{ isSearching ? '检索中...' : '查询' }}
             </button>
           </label>
-
-          <p v-if="searchStatus" class="status-copy">{{ searchStatus }}</p>
 
           <div v-if="recentSearches.length" class="tag-row">
             <span class="tag-row__label">最近搜索</span>
@@ -727,7 +751,6 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
         <section class="surface-card surface-card--results">
           <div class="block-heading">
             <div>
-              <p class="section-eyebrow">Active Workspace</p>
               <h3>检索结果 ({{ results.length }})</h3>
             </div>
           </div>
@@ -793,8 +816,8 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
           </div>
 
           <div v-else class="empty-state">
-            <p>当前没有匹配记录。</p>
-            <span>请输入准确证件号后检索。</span>
+            <p>{{ resultEmptyTitle }}</p>
+            <span>{{ resultEmptyDetail }}</span>
           </div>
         </section>
       </section>
@@ -802,10 +825,8 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
       <section class="surface-card surface-card--camera">
         <div class="panel-heading">
           <div>
-            <p class="section-eyebrow">Live Camera</p>
             <h3>实时扫描</h3>
           </div>
-          <span class="panel-badge panel-badge--muted">Camera</span>
         </div>
 
         <div class="camera-preview" :class="{ 'is-live': isCameraActive, 'has-capture': capturedFrame }">
@@ -899,7 +920,11 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 }
 
 .panel-heading h3,
-.block-heading h3,
+.block-heading h3 {
+  margin: 0;
+  color: #15252b;
+}
+
 .identity-card h4 {
   margin: 6px 0 0;
   color: #15252b;
@@ -939,8 +964,9 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 
 .search-column {
   display: grid;
-  gap: 18px;
-  align-content: start;
+  gap: 14px;
+  min-height: 100%;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .surface-card {
@@ -949,20 +975,24 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 
 .surface-card--search {
   display: grid;
-  gap: 10px;
-  padding: 14px 18px;
+  gap: 8px;
+  padding: 12px 16px;
 }
 
 .surface-card--camera {
   display: grid;
   gap: 12px;
   padding: 14px 16px 16px;
+  height: 100%;
+  align-content: start;
 }
 
 .surface-card--results {
   display: grid;
   gap: 0;
   padding: 18px 20px 20px;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .panel-badge {
@@ -987,15 +1017,15 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  padding: 8px 8px 8px 12px;
-  border-radius: 18px;
+  padding: 6px 6px 6px 10px;
+  border-radius: 16px;
   background: #ffffff;
   border: 1px solid rgba(157, 189, 202, 0.4);
 }
 
 .search-box input {
   min-width: 0;
-  padding: 6px 2px;
+  padding: 4px 2px;
   background: transparent;
   color: #15252b;
   font-size: 1rem;
@@ -1059,6 +1089,21 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 .tag-chip--active {
   background: rgba(11, 114, 136, 0.16);
   color: #09596c;
+}
+
+.surface-card--search .search-box button {
+  min-height: 42px;
+  padding: 0 16px;
+}
+
+.surface-card--search .tag-row {
+  gap: 8px;
+}
+
+.surface-card--search .tag-chip {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 0.8rem;
 }
 
 .status-copy {
@@ -1164,6 +1209,9 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
   display: grid;
   gap: 14px;
   margin-top: 16px;
+  min-height: 0;
+  align-content: start;
+  overflow: auto;
 }
 
 .surface-card--results .empty-state {
@@ -1448,7 +1496,7 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 @media (min-width: 1080px) {
   .panel-grid {
     grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.85fr);
-    align-items: center;
+    align-items: stretch;
   }
 
   .stats-grid {

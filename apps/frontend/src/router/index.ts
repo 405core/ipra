@@ -50,7 +50,7 @@ const router = createRouter({
           name: 'home-ask',
           component: UserAskView,
           meta: {
-            title: '辅助问询工作台',
+            title: '辅助问询',
           },
         },
       ],

@@ -214,7 +214,7 @@ const workflowStages: StageItem[] = [
 
 const stageLoadingContent: Record<StageLoadingMode, StageLoadingContent> = {
   strategy: {
-    eyebrow: 'Strategy Engine',
+    eyebrow: '首轮策略',
     title: '正在生成首轮策略',
     detail: 'AI-Service 正在整合画像、风险标签和输出约束。',
     phrases: [
@@ -225,7 +225,7 @@ const stageLoadingContent: Record<StageLoadingMode, StageLoadingContent> = {
     ],
   },
   samplingUpload: {
-    eyebrow: 'Sampling Window',
+    eyebrow: '采样整理',
     title: '正在整理本轮采样',
     detail: '系统正在停止录制、汇总转写，并上传音视频窗口摘要。',
     phrases: [
@@ -236,7 +236,7 @@ const stageLoadingContent: Record<StageLoadingMode, StageLoadingContent> = {
     ],
   },
   nextRound: {
-    eyebrow: 'Follow-up Guidance',
+    eyebrow: '追问生成',
     title: '正在生成下一轮追问',
     detail: '系统正在结合本轮摘要和历史线索，整理下一轮问询重点。',
     phrases: [
@@ -247,7 +247,7 @@ const stageLoadingContent: Record<StageLoadingMode, StageLoadingContent> = {
     ],
   },
   judgementBriefing: {
-    eyebrow: 'Human Review',
+    eyebrow: '人工复核',
     title: '正在整理人审前摘要',
     detail: 'AI-Service 正在生成多模态辅助线索，供检查员最终判定。',
     phrases: [
@@ -2106,8 +2106,7 @@ onBeforeUnmount(() => {
   <section class="ask-page">
     <header class="workflow-hero">
       <div>
-        <p class="section-eyebrow">Inquiry Flow</p>
-        <h2>辅助问询流程控制台</h2>
+        <h2>辅助问询</h2>
         <p class="section-copy">
           使用单一主工作面管理策略生成、多轮采样和人工判定。当前已对接
           AI-Service 三个接口，摄像头、话筒和实时转写随采样流程同步启动。
@@ -2116,7 +2115,7 @@ onBeforeUnmount(() => {
 
       <div class="workflow-hero__meta">
         <div class="meta-chip">
-          <span>CASE</span>
+          <span>编号</span>
           <strong>{{ archiveCode }}</strong>
         </div>
         <div class="meta-chip">
@@ -2131,7 +2130,7 @@ onBeforeUnmount(() => {
         <div class="stage-card__progress">
           <div class="stage-card__progress-head">
             <div>
-              <p class="section-eyebrow">Progress Track</p>
+              <p class="section-eyebrow">流程进度</p>
               <h4>三阶段流程</h4>
             </div>
             <span class="progress-note">上一阶段完成后解锁下一阶段</span>
@@ -2159,7 +2158,7 @@ onBeforeUnmount(() => {
         <template v-if="currentStage === 'strategy'">
           <header class="stage-card__head">
             <div>
-              <p class="section-eyebrow">Stage 01</p>
+              <p class="section-eyebrow">第一阶段</p>
               <h3>首轮策略生成</h3>
               <p class="section-copy">
                 读取对象画像并生成首轮问题包，完成后解锁采样问询。
@@ -2233,14 +2232,14 @@ onBeforeUnmount(() => {
             <section class="workspace-panel">
               <div class="workspace-panel__head">
                 <div>
-                  <p class="section-eyebrow">Strategy Engine</p>
+                  <p class="section-eyebrow">首轮策略</p>
                   <h4>首轮问题包</h4>
                 </div>
 
                 <span class="soft-chip">
                   {{
                     isGeneratingStrategy
-                      ? 'AI-Service 生成中'
+                      ? '系统生成中'
                       : strategyGenerated
                         ? `${generatedQuestions.length} 个问题已生成`
                         : '等待生成'
@@ -2251,7 +2250,7 @@ onBeforeUnmount(() => {
               <p class="workspace-summary">
                 {{
                   strategySummary ||
-                  '系统将根据用户画像与风险标签，调用 AI-Service 生成首轮策略与问题包。'
+                  '系统将根据用户画像与风险标签生成首轮策略与问题包。'
                 }}
               </p>
 
@@ -2361,7 +2360,7 @@ onBeforeUnmount(() => {
         <template v-else-if="currentStage === 'interview'">
           <header class="stage-card__head">
             <div>
-              <p class="section-eyebrow">Stage 02</p>
+              <p class="section-eyebrow">第二阶段</p>
               <h3>智能辅助问询</h3>
               <p class="section-copy">
                 点击开始采样后同步记录视频、话筒输入与实时转写；结束后上传本轮窗口并生成下一轮追问。
@@ -2385,7 +2384,7 @@ onBeforeUnmount(() => {
             <section class="video-panel video-panel--capture">
               <div class="video-panel__head">
                 <div>
-                  <p class="section-eyebrow">Live Capture</p>
+                  <p class="section-eyebrow">采样视频</p>
                   <h4>采样视频流</h4>
                 </div>
                 <span class="soft-chip">
@@ -2449,15 +2448,15 @@ onBeforeUnmount(() => {
                     {{ realtimeDetection.statusMessage }}
                   </span>
                   <span class="detector-pill detector-pill--neutral">
-                    Face {{ realtimeDetection.overlayFrame.faceCount }}
+                    人脸 {{ realtimeDetection.overlayFrame.faceCount }}
                   </span>
                   <span class="detector-pill detector-pill--neutral">
-                    Hand {{ realtimeDetection.overlayFrame.handCount }}
+                    手部 {{ realtimeDetection.overlayFrame.handCount }}
                   </span>
                   <span class="detector-pill detector-pill--neutral">
-                    Pose
+                    姿态
                     {{
-                      realtimeDetection.overlayFrame.poseDetected ? 'ON' : 'OFF'
+                      realtimeDetection.overlayFrame.poseDetected ? '已识别' : '未识别'
                     }}
                   </span>
                 </div>
@@ -2500,7 +2499,7 @@ onBeforeUnmount(() => {
               <section class="sampling-console">
                 <div class="sampling-console__head">
                   <div>
-                    <p class="section-eyebrow">Sampling Console</p>
+                    <p class="section-eyebrow">采样控制</p>
                     <h4>采样控制台</h4>
                   </div>
                   <span
@@ -2584,14 +2583,10 @@ onBeforeUnmount(() => {
 
                 <div class="console-metrics">
                   <span class="soft-chip">
-                    检测
-                    {{ realtimeDetection.overlayFrame.detectionFps.toFixed(1) }}
-                    FPS
+                    检测 {{ realtimeDetection.overlayFrame.detectionFps.toFixed(1) }} 帧/秒
                   </span>
                   <span class="soft-chip">
-                    推理
-                    {{ realtimeDetection.overlayFrame.inferenceMs.toFixed(1) }}
-                    ms
+                    推理 {{ realtimeDetection.overlayFrame.inferenceMs.toFixed(1) }} 毫秒
                   </span>
                   <span class="soft-chip">
                     {{
@@ -2673,7 +2668,7 @@ onBeforeUnmount(() => {
             <section class="transcript-panel transcript-panel--round">
               <div class="transcript-panel__head">
                 <div>
-                  <p class="section-eyebrow">Round Focus</p>
+                  <p class="section-eyebrow">本轮重点</p>
                   <h4>{{ currentRound.title }}</h4>
                 </div>
                 <span class="soft-chip">{{ currentRound.focus }}</span>
@@ -2792,12 +2787,12 @@ onBeforeUnmount(() => {
                 </div>
 
                 <div class="summary-item">
-                  <span class="meta-label">HumanOmni 摘要</span>
+                  <span class="meta-label">窗口摘要</span>
                   <p>
                     {{
                       currentRound.humanOmniWindow?.rawSummary ||
                       (currentRound.uploadState === 'uploading'
-                        ? '正在等待 AI-Service 返回窗口摘要。'
+                        ? '正在等待系统返回窗口摘要。'
                         : '尚未生成窗口摘要。')
                     }}
                   </p>
@@ -2817,7 +2812,7 @@ onBeforeUnmount(() => {
           <section class="history-panel">
             <div class="history-panel__head">
               <div>
-                <p class="section-eyebrow">Round History</p>
+                <p class="section-eyebrow">历史轮次</p>
                 <h4>历史轮次保留区</h4>
               </div>
               <span class="progress-note"
@@ -2869,17 +2864,15 @@ onBeforeUnmount(() => {
         <template v-else-if="currentStage === 'judgement' && !isArchived">
           <header class="stage-card__head">
             <div>
-              <p class="section-eyebrow">Stage 03</p>
+              <p class="section-eyebrow">第三阶段</p>
               <h3>人工辅助判断</h3>
               <p class="section-copy">
-                AI-Service 摘要作为辅助线索，最终结论由检查员判定并归档。
+                系统摘要作为辅助线索，最终结论由检查员判定并归档。
               </p>
             </div>
 
             <div class="stage-chip-group">
-              <span class="status-chip status-chip--judgement"
-                >Human Review</span
-              >
+              <span class="status-chip status-chip--judgement">人工复核</span>
               <span class="soft-chip">至少 20 字详细理由</span>
             </div>
           </header>
@@ -2888,7 +2881,7 @@ onBeforeUnmount(() => {
             <section class="workspace-panel workspace-panel--judgement">
               <div class="workspace-panel__head">
                 <div>
-                  <p class="section-eyebrow">Decision</p>
+                  <p class="section-eyebrow">判定结果</p>
                   <h4>最终判定</h4>
                 </div>
                 <span class="soft-chip">{{ selectedJudgementLabel }}</span>
@@ -2942,7 +2935,7 @@ onBeforeUnmount(() => {
             <section class="profile-panel digest-panel">
               <div class="workspace-panel__head">
                 <div>
-                  <p class="section-eyebrow">AI-Service Digest</p>
+                  <p class="section-eyebrow">系统摘要</p>
                   <h4>归档前摘要</h4>
                 </div>
                 <span class="soft-chip">{{
@@ -2968,7 +2961,7 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
                 <div class="summary-item">
-                  <span class="meta-label">AI 综合摘要</span>
+                  <span class="meta-label">综合摘要</span>
                   <p>{{ judgementBriefing.multimodalAssessment.summary }}</p>
                 </div>
                 <div class="summary-item">
@@ -3019,7 +3012,7 @@ onBeforeUnmount(() => {
               </div>
 
               <div v-else class="empty-panel empty-panel--compact">
-                <strong>尚未生成 AI-Service 摘要</strong>
+                <strong>尚未生成系统摘要</strong>
                 <span
                   >请返回第二阶段完成采样与摘要整理后，再进入人工辅助判断。</span
                 >
@@ -3042,7 +3035,7 @@ onBeforeUnmount(() => {
         <template v-else>
           <header class="stage-card__head">
             <div>
-              <p class="section-eyebrow">Archived</p>
+              <p class="section-eyebrow">已归档</p>
               <h3>流程已完成归档</h3>
               <p class="section-copy">
                 页面已进入锁定完成态，以下展示最终判定、理由摘要与本次问询的关键依据，当前内容不再允许修改。
@@ -3063,9 +3056,9 @@ onBeforeUnmount(() => {
 
           <div class="completion-layout">
             <section class="completion-hero">
-              <div class="completion-seal">ARCHIVED</div>
+              <div class="completion-seal">已归档</div>
               <div>
-                <p class="section-eyebrow">Archive Code</p>
+                <p class="section-eyebrow">归档编号</p>
                 <h4>{{ archiveCode }}</h4>
                 <p>
                   本次问询共完成 {{ completedRounds.length }} 轮采样，累计转写
@@ -3214,6 +3207,10 @@ onBeforeUnmount(() => {
 .analysis-column h4 {
   margin: 6px 0 0;
   color: var(--text-main);
+}
+
+.workflow-hero h2 {
+  margin-top: 0;
 }
 
 .stage-card h3 {
