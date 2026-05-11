@@ -10,7 +10,7 @@ import {
   type ImportType,
 } from '../app/profile-service';
 
-type UserRouteName = 'home-data' | 'home-ask';
+type UserRouteName = 'home-data' | 'home-ask' | 'home-log';
 
 interface NavigationItem {
   routeName: UserRouteName;
@@ -31,6 +31,11 @@ const navigationItems: NavigationItem[] = [
   {
     routeName: 'home-ask',
     label: '辅助问询',
+    description: '',
+  },
+  {
+    routeName: 'home-log',
+    label: '日志审计',
     description: '',
   },
 ];
