@@ -117,24 +117,32 @@ func (d DatabaseConfig) DSN() string {
 }
 
 func loadEnvFiles(initialEnv map[string]struct{}, appEnv string) error {
-	filename := envFileFor(appEnv)
-
-	for _, path := range candidateEnvPaths(filename) {
-		info, err := os.Stat(path)
-		if err != nil {
-			if os.IsNotExist(err) {
+	for _, filename := range envFileCandidates(appEnv) {
+		for _, path := range candidateEnvPaths(filename) {
+			info, err := os.Stat(path)
+			if err != nil {
+				if os.IsNotExist(err) {
+					continue
+				}
+				return fmt.Errorf("stat %s: %w", path, err)
+			}
+			if info.IsDir() {
 				continue
 			}
-			return fmt.Errorf("stat %s: %w", path, err)
-		}
-		if info.IsDir() {
-			continue
-		}
 
-		return loadEnvFile(path, initialEnv)
+			return loadEnvFile(path, initialEnv)
+		}
 	}
 
 	return nil
+}
+
+func envFileCandidates(appEnv string) []string {
+	envFile := envFileFor(appEnv)
+	if envFile == ".env" {
+		return []string{envFile}
+	}
+	return []string{envFile, ".env"}
 }
 
 func envFileFor(appEnv string) string {

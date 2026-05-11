@@ -32,7 +32,7 @@ def main() -> int:
     else:
         result = call_in_process(payload)
 
-    required = ["riskAssessment", "strategy", "questions", "operatorNote"]
+    required = ["riskAssessment", "strategy", "questions", "memoryReferences", "memoryUpdates", "operatorNote"]
     missing = [key for key in required if key not in result]
     ok = not missing and bool(result.get("questions"))
 
@@ -67,6 +67,33 @@ def build_payload() -> dict[str, Any]:
             "旅客无法提供稳定收入证明",
             "行程停留时间较长",
         ],
+        "memoryContext": {
+            "sessionId": "inq-smoke-001",
+            "passengerId": "pax-smoke-001",
+            "sessionMemories": [
+                {
+                    "id": 1,
+                    "scopeType": "session",
+                    "scopeId": "inq-smoke-001",
+                    "memoryType": "gap",
+                    "title": "住宿安排待核验",
+                    "content": "旅客尚未提供明确住宿地址。",
+                    "source": "ai-service",
+                }
+            ],
+            "passengerMemories": [],
+            "ruleMemories": [
+                {
+                    "id": 0,
+                    "scopeType": "rule",
+                    "scopeId": "default",
+                    "memoryType": "procedure",
+                    "title": "多模态线索使用边界",
+                    "content": "动作、情绪和多模态观察只能作为追问方向参考，不能单独构成风险结论。",
+                    "source": "system-rule",
+                }
+            ],
+        },
         "constraints": {
             "questionCount": 6,
             "tone": "中性、专业、非指控",

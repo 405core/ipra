@@ -8,6 +8,11 @@ from schemas.inquiry import (
     LlmRuntimeInfo,
     RiskAssessment,
 )
+from services.memory_utils import (
+    build_first_round_memory_updates,
+    collect_memory_references,
+    memory_reference_text,
+)
 
 
 DEFAULT_QUESTION_BANK = [
@@ -55,7 +60,10 @@ def build_mock_first_round_strategy(
     runtime: dict[str, str],
     prompt: str,
 ) -> FirstRoundStrategyResponse:
+    memory_references = collect_memory_references(request.memory_context)
     reasons = _collect_risk_reasons(request)
+    reasons.extend(memory_reference_text(request.memory_context))
+    reasons = _dedupe(reasons)
     level = _risk_level(reasons)
     focus_areas = _focus_areas(reasons)
     question_count = request.constraints.question_count
@@ -75,6 +83,13 @@ def build_mock_first_round_strategy(
     else:
         summary = "当前基础画像未显示明显异常，但仍需通过首轮开放式问题建立完整叙述。"
 
+    memory_updates = build_first_round_memory_updates(
+        session_id=request.session_id,
+        passenger_id=request.passenger_profile.passenger_id,
+        summary=summary,
+        focus_areas=focus_areas,
+    )
+
     return FirstRoundStrategyResponse(
         sessionId=request.session_id,
         llm=LlmRuntimeInfo(provider=runtime["provider"], model=runtime["model"]),
@@ -84,6 +99,8 @@ def build_mock_first_round_strategy(
             focusAreas=focus_areas,
         ),
         questions=questions,
+        memoryReferences=memory_references,
+        memoryUpdates=memory_updates,
         operatorNote=(
             "本轮建议以开放式、事实核验型问题为主，语气保持中性专业；"
             "系统输出用于辅助工作人员形成问询思路，不直接构成风险结论。"

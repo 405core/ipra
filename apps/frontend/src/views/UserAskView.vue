@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import {
   requestFirstRoundStrategy,
   requestFollowupGuidance,
   resolveAiServiceWebSocketUrl,
   uploadHumanOmniWindow,
+  type AgentMemoryContextPayload,
+  type AgentMemoryReferencePayload,
+  type AgentMemoryUpdatePayload,
   type ActionObservationPayload,
   type AsrPayload,
   type FollowupGuidanceResponse,
@@ -16,6 +19,10 @@ import {
   type RiskAssessmentPayload,
   type TripProfilePayload,
 } from '../app/ai-service';
+import {
+  fetchMemoryContext,
+  persistMemoryUpdates,
+} from '../app/memory-service';
 import {
   createIdleRealtimeDetectionState,
   createRealtimeDetectionController,
@@ -44,6 +51,7 @@ type SpeechRecognitionPhase =
   | 'ended'
   | 'unsupported'
   | 'error';
+type MemoryLoadState = 'idle' | 'loading' | 'ready' | 'error';
 
 interface MockPassengerProfile {
   name: string;
@@ -147,6 +155,25 @@ interface JudgementBriefing {
   operatorNote: string;
   warnings: string[];
   generatedAt: string;
+}
+
+interface MemoryPanelItem {
+  key: string;
+  title: string;
+  content: string;
+  scopeLabel: string;
+  typeLabel: string;
+  source: string;
+  confidence?: number | null;
+  updatedAt?: string | null;
+}
+
+interface MemoryReferenceViewItem {
+  key: string;
+  title: string;
+  scopeLabel: string;
+  typeLabel: string;
+  count: number;
 }
 
 const session = loadAuthSession();
@@ -335,6 +362,11 @@ const isEndingSampling = ref(false);
 const isRequestingGuidance = ref(false);
 const strategyRequestError = ref('');
 const roundServiceError = ref('');
+const memoryContext = ref<AgentMemoryContextPayload | null>(null);
+const memoryLoadState = ref<MemoryLoadState>('idle');
+const memoryErrorMessage = ref('');
+const memoryLastSyncedAt = ref('');
+const latestMemoryReferences = ref<AgentMemoryReferencePayload[]>([]);
 const rounds = ref<InterviewRound[]>([]);
 const currentRoundId = ref<string | null>(null);
 const selectedJudgement = ref<FinalJudgement | null>(null);
@@ -350,6 +382,9 @@ const speechRecognitionMessage = ref('等待开始采样。');
 
 const videoElement = ref<HTMLVideoElement | null>(null);
 const overlayCanvas = ref<HTMLCanvasElement | null>(null);
+const capturePanelElement = ref<HTMLElement | null>(null);
+const roundPanelElement = ref<HTMLElement | null>(null);
+const roundPanelMaxHeight = ref('');
 const samplingState = ref<SamplingState>(createIdleSamplingState());
 const realtimeDetection = ref<RealtimeDetectionState>(
   createIdleRealtimeDetectionState(),
@@ -377,6 +412,7 @@ let speechInterimTranscript = '';
 let isStoppingSpeechRecognition = false;
 let speechRecognitionHadError = false;
 let speechRecognitionFatalError = false;
+let interviewPanelResizeObserver: ResizeObserver | null = null;
 const ASR_TARGET_SAMPLE_RATE = 16000;
 const ASR_FRAME_BYTES = 1280;
 let stageLoadingTimerId: number | null = null;
@@ -547,6 +583,69 @@ const keyEvidenceTags = computed(() => {
   return tags.slice(0, 4);
 });
 
+const memoryPanelItems = computed<MemoryPanelItem[]>(() => {
+  const context = memoryContext.value;
+  if (!context) {
+    return [];
+  }
+
+  return [
+    ...context.sessionMemories.map((item) =>
+      toMemoryPanelItem(item, '会话记忆'),
+    ),
+    ...context.passengerMemories.map((item) =>
+      toMemoryPanelItem(item, '旅客记忆'),
+    ),
+    ...context.ruleMemories.map((item) => toMemoryPanelItem(item, '规则记忆')),
+  ].slice(0, 10);
+});
+
+const groupedMemoryReferences = computed<MemoryReferenceViewItem[]>(() => {
+  const referencesByKey = new Map<string, MemoryReferenceViewItem>();
+
+  latestMemoryReferences.value.forEach((reference) => {
+    const normalizedTitle = normalizeMemoryReferenceTitle(reference.title);
+    if (!normalizedTitle) {
+      return;
+    }
+
+    const key = [
+      reference.scopeType || 'unknown',
+      reference.memoryType || 'unknown',
+      normalizedTitle,
+    ].join('::');
+    const existing = referencesByKey.get(key);
+
+    if (existing) {
+      existing.count += 1;
+      return;
+    }
+
+    referencesByKey.set(key, {
+      key,
+      title: normalizedTitle,
+      scopeLabel: memoryScopeLabel(reference.scopeType),
+      typeLabel: memoryTypeLabel(reference.memoryType),
+      count: 1,
+    });
+  });
+
+  return [...referencesByKey.values()].slice(0, 6);
+});
+
+const memoryStatusLabel = computed(() => {
+  switch (memoryLoadState.value) {
+    case 'loading':
+      return '记忆读取中';
+    case 'ready':
+      return '记忆已同步';
+    case 'error':
+      return '记忆同步异常';
+    default:
+      return '等待同步';
+  }
+});
+
 const speechRecognitionLabel = computed(() => {
   switch (speechRecognitionPhase.value) {
     case 'connecting':
@@ -693,6 +792,129 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
   }
 
   return fallback;
+}
+
+function toMemoryPanelItem(
+  item: AgentMemoryContextPayload['sessionMemories'][number],
+  scopeLabel: string,
+): MemoryPanelItem {
+  return {
+    key: `${item.scopeType}-${item.scopeId}-${item.memoryType}-${item.id ?? item.title}`,
+    title: item.title,
+    content: item.content,
+    scopeLabel,
+    typeLabel: memoryTypeLabel(item.memoryType),
+    source: item.source || 'system',
+    confidence: item.confidence,
+    updatedAt: item.updatedAt || item.createdAt,
+  };
+}
+
+function normalizeMemoryReferenceTitle(title?: string | null) {
+  return (title || '').replace(/\s+/g, ' ').trim();
+}
+
+function memoryScopeLabel(scopeType: string) {
+  switch (scopeType) {
+    case 'session':
+      return '会话';
+    case 'passenger':
+      return '旅客';
+    case 'rule':
+      return '规则';
+    default:
+      return '记忆';
+  }
+}
+
+function memoryTypeLabel(type: string) {
+  switch (type) {
+    case 'fact':
+      return '事实';
+    case 'gap':
+      return '缺口';
+    case 'inconsistency':
+      return '不一致';
+    case 'evidence':
+      return '证据';
+    case 'procedure':
+      return '规则';
+    default:
+      return '记忆';
+  }
+}
+
+function formatMemoryConfidence(value?: number | null) {
+  if (typeof value !== 'number') {
+    return '未标注';
+  }
+
+  return `${Math.round(value * 100)}%`;
+}
+
+function formatMemoryTime(value?: string | null) {
+  if (!value) {
+    return '刚刚';
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString('zh-CN', {
+    hour12: false,
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+async function refreshMemoryContext() {
+  memoryLoadState.value = 'loading';
+  memoryErrorMessage.value = '';
+
+  try {
+    const context = await fetchMemoryContext(
+      sessionId.value,
+      mockedPassengerSupplement.passengerId,
+    );
+    memoryContext.value = context;
+    memoryLoadState.value = 'ready';
+    memoryLastSyncedAt.value = new Date().toLocaleTimeString('zh-CN', {
+      hour12: false,
+    });
+    return context;
+  } catch (error) {
+    memoryLoadState.value = 'error';
+    memoryErrorMessage.value = normalizeErrorMessage(
+      error,
+      '智能体记忆读取失败，本次问询将继续执行。',
+    );
+    return memoryContext.value;
+  }
+}
+
+async function saveMemoryUpdates(
+  updates: AgentMemoryUpdatePayload[] = [],
+  references: AgentMemoryReferencePayload[] = [],
+) {
+  latestMemoryReferences.value = references;
+  if (!updates.length) {
+    return;
+  }
+
+  try {
+    await persistMemoryUpdates(updates);
+    await refreshMemoryContext();
+  } catch (error) {
+    memoryLoadState.value = 'error';
+    memoryErrorMessage.value = normalizeErrorMessage(
+      error,
+      '智能体记忆保存失败，本次问询结果不会中断。',
+    );
+  }
 }
 
 function deriveDestination() {
@@ -1043,6 +1265,7 @@ function buildFollowupPayload(roundNumber: number, round: InterviewRound) {
     humanOmniWindows: buildHumanOmniWindows(),
     actionObservations: buildActionObservationHistory(),
     asr: buildRoundAsrPayload(round),
+    memoryContext: memoryContext.value,
     constraints: buildOutputConstraints(3),
   };
 }
@@ -1084,6 +1307,34 @@ function closeStageLoading(mode?: StageLoadingMode) {
   stageLoadingMode.value = null;
   stageLoadingPhraseIndex.value = 0;
   clearStageLoadingTimer();
+}
+
+function syncRoundPanelMaxHeight() {
+  const capturePanel = capturePanelElement.value;
+  if (!capturePanel || window.innerWidth < 960) {
+    roundPanelMaxHeight.value = '';
+    return;
+  }
+
+  const height = Math.round(capturePanel.getBoundingClientRect().height);
+  roundPanelMaxHeight.value = height > 0 ? `${height}px` : '';
+}
+
+function setupInterviewPanelSizing() {
+  if (typeof ResizeObserver === 'undefined') {
+    window.addEventListener('resize', syncRoundPanelMaxHeight);
+    void nextTick(syncRoundPanelMaxHeight);
+    return;
+  }
+
+  interviewPanelResizeObserver?.disconnect();
+  interviewPanelResizeObserver = new ResizeObserver(() => {
+    syncRoundPanelMaxHeight();
+  });
+  if (capturePanelElement.value) {
+    interviewPanelResizeObserver.observe(capturePanelElement.value);
+  }
+  void nextTick(syncRoundPanelMaxHeight);
 }
 
 function stopElapsedTimer() {
@@ -1403,11 +1654,13 @@ async function generateStrategy() {
   openStageLoading('strategy');
 
   try {
+    const context = await refreshMemoryContext();
     const response = await requestFirstRoundStrategy({
       sessionId: sessionId.value,
       passengerProfile: buildPassengerPayload(),
       tripProfile: buildTripPayload(),
       knownFacts: buildKnownFacts(),
+      memoryContext: context,
       constraints: buildOutputConstraints(6),
     });
 
@@ -1424,6 +1677,7 @@ async function generateStrategy() {
       createStrategyQuestionFromApi(question, index),
     );
     strategyGenerationCount.value += 1;
+    await saveMemoryUpdates(response.memoryUpdates, response.memoryReferences);
   } catch (error) {
     strategyRequestError.value = normalizeErrorMessage(
       error,
@@ -1615,6 +1869,7 @@ async function enterNextRound() {
 
   try {
     const nextRoundNumber = round.roundNumber + 1;
+    await refreshMemoryContext();
     const response = await requestFollowupGuidance(
       buildFollowupPayload(nextRoundNumber, round),
     );
@@ -1628,6 +1883,7 @@ async function enterNextRound() {
     currentRoundId.value = nextRound.id;
     resetSamplingIndicators();
     resetRealtimeDetectionViewState();
+    await saveMemoryUpdates(response.memoryUpdates, response.memoryReferences);
   } catch (error) {
     roundServiceError.value = normalizeErrorMessage(
       error,
@@ -1658,6 +1914,7 @@ async function enterJudgementStage() {
   openStageLoading('judgementBriefing');
 
   try {
+    await refreshMemoryContext();
     const response = await requestFollowupGuidance(
       buildFollowupPayload(round.roundNumber + 1, round),
     );
@@ -1669,6 +1926,7 @@ async function enterJudgementStage() {
         hour12: false,
       }),
     };
+    await saveMemoryUpdates(response.memoryUpdates, response.memoryReferences);
     currentStage.value = 'judgement';
   } catch (error) {
     roundServiceError.value = normalizeErrorMessage(
@@ -2095,7 +2353,22 @@ function stopSpeechRecognition(options: { reset?: boolean } = {}) {
   }
 }
 
+onMounted(() => {
+  setupInterviewPanelSizing();
+});
+
+watch(
+  () => [currentStage.value, currentRoundId.value, samplingState.value.phase],
+  () => {
+    void nextTick(() => {
+      setupInterviewPanelSizing();
+    });
+  },
+);
+
 onBeforeUnmount(() => {
+  interviewPanelResizeObserver?.disconnect();
+  window.removeEventListener('resize', syncRoundPanelMaxHeight);
   stopSamplingResources();
   stopSpeechRecognition({ reset: true });
   closeStageLoading();
@@ -2227,6 +2500,58 @@ onBeforeUnmount(() => {
                   {{ tag }}
                 </span>
               </div>
+
+              <section class="memory-panel">
+                <div class="memory-panel__head">
+                  <div>
+                    <span class="meta-label">智能体记忆</span>
+                    <strong>{{ memoryStatusLabel }}</strong>
+                  </div>
+                  <span
+                    class="status-chip"
+                    :class="`status-chip--${memoryLoadState}`"
+                  >
+                    {{ memoryLastSyncedAt || '未同步' }}
+                  </span>
+                </div>
+
+                <div v-if="memoryPanelItems.length" class="memory-list">
+                  <article
+                    v-for="item in memoryPanelItems"
+                    :key="item.key"
+                    class="memory-item"
+                  >
+                    <div class="memory-item__meta">
+                      <strong>{{ item.title }}</strong>
+                      <span>{{ item.scopeLabel }} · {{ item.typeLabel }}</span>
+                    </div>
+                    <p>{{ item.content }}</p>
+                    <div class="tag-row">
+                      <span class="tag-chip tag-chip--passive">
+                        {{ item.source }}
+                      </span>
+                      <span
+                        v-if="typeof item.confidence === 'number'"
+                        class="tag-chip tag-chip--passive"
+                      >
+                        置信度 {{ formatMemoryConfidence(item.confidence) }}
+                      </span>
+                      <span class="tag-chip tag-chip--passive">
+                        {{ formatMemoryTime(item.updatedAt) }}
+                      </span>
+                    </div>
+                  </article>
+                </div>
+
+                <div v-else class="empty-panel empty-panel--compact">
+                  <strong>尚无可用记忆</strong>
+                  <span>生成策略后，系统会沉淀本次会话与旅客记忆。</span>
+                </div>
+
+                <div v-if="memoryErrorMessage" class="inline-alert">
+                  {{ memoryErrorMessage }}
+                </div>
+              </section>
             </section>
 
             <section class="workspace-panel">
@@ -2381,7 +2706,7 @@ onBeforeUnmount(() => {
           </header>
 
           <div v-if="currentRound" class="interview-layout">
-            <section class="video-panel video-panel--capture">
+            <section ref="capturePanelElement" class="video-panel video-panel--capture">
               <div class="video-panel__head">
                 <div>
                   <p class="section-eyebrow">采样视频</p>
@@ -2665,7 +2990,15 @@ onBeforeUnmount(() => {
               </div>
             </section>
 
-            <section class="transcript-panel transcript-panel--round">
+            <section
+              ref="roundPanelElement"
+              class="transcript-panel transcript-panel--round"
+              :style="
+                roundPanelMaxHeight
+                  ? { maxHeight: roundPanelMaxHeight }
+                  : undefined
+              "
+            >
               <div class="transcript-panel__head">
                 <div>
                   <p class="section-eyebrow">本轮重点</p>
@@ -2674,21 +3007,21 @@ onBeforeUnmount(() => {
                 <span class="soft-chip">{{ currentRound.focus }}</span>
               </div>
 
-              <p class="workspace-summary">{{ currentRound.strategyNote }}</p>
+              <div class="transcript-panel__scroll">
+                <p class="workspace-summary">{{ currentRound.strategyNote }}</p>
 
-              <div class="round-actions round-actions--compact">
+                <div class="round-actions round-actions--compact">
                 <div class="round-actions__copy">
                   <strong>{{
                     currentRound.completed ? '本轮已完成' : '本轮未完成'
                   }}</strong>
-                  <span>
-                    {{
-                      currentRound.completed
-                        ? currentRound.summary ||
-                          '本轮已结束，等待窗口摘要上传完成后解锁下一步。'
-                        : '完成采样并等待摘要上传后，可解锁下一轮或进入人工判断。'
-                    }}
-                  </span>
+                    <span>
+                      {{
+                        currentRound.completed
+                          ? '本轮采样与摘要已完成，可继续进入下一轮追问或提交人工辅助判断。'
+                          : '完成采样并等待摘要上传后，可解锁下一轮或进入人工判断。'
+                      }}
+                    </span>
                 </div>
 
                 <div class="action-row">
@@ -2806,6 +3139,61 @@ onBeforeUnmount(() => {
               <div v-if="roundServiceError" class="inline-alert">
                 {{ roundServiceError }}
               </div>
+
+              <section class="memory-panel memory-panel--inline">
+                <div class="memory-panel__head">
+                  <div>
+                    <span class="meta-label">智能体记忆</span>
+                    <strong>{{ memoryStatusLabel }}</strong>
+                  </div>
+                  <span
+                    class="status-chip"
+                    :class="`status-chip--${memoryLoadState}`"
+                  >
+                    {{ memoryLastSyncedAt || '未同步' }}
+                  </span>
+                </div>
+
+                <div
+                  v-if="groupedMemoryReferences.length"
+                  class="memory-reference-row"
+                >
+                  <span
+                    v-for="reference in groupedMemoryReferences"
+                    :key="reference.key"
+                    class="memory-reference-chip"
+                    :title="`引用：${reference.title}`"
+                  >
+                    <span>引用：{{ reference.title }}</span>
+                    <small>{{ reference.scopeLabel }} · {{ reference.typeLabel }}</small>
+                    <b>×{{ reference.count }}</b>
+                  </span>
+                </div>
+
+                <div v-if="memoryPanelItems.length" class="memory-list">
+                  <article
+                    v-for="item in memoryPanelItems"
+                    :key="item.key"
+                    class="memory-item"
+                  >
+                    <div class="memory-item__meta">
+                      <strong>{{ item.title }}</strong>
+                      <span>{{ item.scopeLabel }} · {{ item.typeLabel }}</span>
+                    </div>
+                    <p>{{ item.content }}</p>
+                  </article>
+                </div>
+
+                <div v-else class="empty-panel empty-panel--compact">
+                  <strong>尚无可用记忆</strong>
+                  <span>完成采样与追问后，系统会更新记忆上下文。</span>
+                </div>
+
+                <div v-if="memoryErrorMessage" class="inline-alert">
+                  {{ memoryErrorMessage }}
+                </div>
+                </section>
+              </div>
             </section>
           </div>
 
@@ -2841,13 +3229,13 @@ onBeforeUnmount(() => {
                     round.strategyNote
                   }}
                 </p>
-                <div class="tag-row">
-                  <span class="tag-chip tag-chip--passive">{{
-                    round.focus
-                  }}</span>
-                  <span class="tag-chip tag-chip--passive">{{
-                    round.signal
-                  }}</span>
+                <div class="history-item__tags">
+                  <span class="tag-chip tag-chip--passive">
+                    {{ round.focus }}
+                  </span>
+                  <span class="tag-chip tag-chip--passive">
+                    {{ round.signal }}
+                  </span>
                 </div>
               </article>
             </div>
@@ -3263,6 +3651,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+  min-width: 0;
 }
 
 .workflow-hero__meta {
@@ -3467,6 +3856,7 @@ onBeforeUnmount(() => {
 .video-panel,
 .transcript-panel,
 .history-panel,
+.memory-panel,
 .analysis-hero,
 .timeline-strip,
 .analysis-column,
@@ -3481,6 +3871,7 @@ onBeforeUnmount(() => {
 .video-panel,
 .transcript-panel,
 .history-panel,
+.memory-panel,
 .analysis-column {
   display: grid;
   align-content: start;
@@ -3493,6 +3884,20 @@ onBeforeUnmount(() => {
 .audio-meter {
   display: grid;
   gap: 12px;
+}
+
+.transcript-panel--round {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.transcript-panel__scroll {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .profile-panel__identity,
@@ -3581,6 +3986,7 @@ onBeforeUnmount(() => {
 .current-questions,
 .analysis-columns,
 .history-list,
+.memory-list,
 .summary-stack {
   display: grid;
   gap: 10px;
@@ -3608,6 +4014,123 @@ onBeforeUnmount(() => {
   border-radius: 14px;
   background: #ffffff;
   border: 1px solid rgba(157, 189, 202, 0.24);
+}
+
+.memory-panel {
+  margin-top: 0;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(11, 114, 136, 0.05),
+      rgba(255, 255, 255, 0.88)
+    ),
+    var(--surface-subtle);
+}
+
+.memory-panel--inline {
+  padding: 12px;
+}
+
+.memory-panel__head,
+.memory-item__meta {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.memory-panel__head strong,
+.memory-item__meta strong {
+  color: var(--text-main);
+}
+
+.memory-panel__head .meta-label,
+.memory-item__meta span {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.memory-list {
+  max-height: 260px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.memory-reference-row {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0 2px 4px 0;
+  scrollbar-width: thin;
+}
+
+.memory-reference-chip {
+  display: inline-grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  row-gap: 1px;
+  align-items: center;
+  flex: 0 0 auto;
+  max-width: min(100%, 240px);
+  width: max-content;
+  min-width: 0;
+  min-height: 34px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(91, 113, 121, 0.09);
+  color: var(--text-main);
+}
+
+.memory-reference-chip span,
+.memory-reference-chip small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memory-reference-chip span {
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.memory-reference-chip small {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+
+.memory-reference-chip b {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  align-self: center;
+  justify-self: end;
+  min-width: 28px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(11, 114, 136, 0.12);
+  color: var(--accent-strong);
+  font-size: 0.72rem;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.memory-item {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(157, 189, 202, 0.18);
+}
+
+.memory-item p {
+  margin: 0;
+  color: var(--text-muted);
 }
 
 .question-item__meta,
@@ -3648,6 +4171,16 @@ onBeforeUnmount(() => {
 
 .round-summary-stack {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.round-summary-stack .summary-item {
+  min-height: 0;
+}
+
+.round-summary-stack .summary-item p {
+  max-height: 120px;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .panel-subhead {
@@ -3742,6 +4275,9 @@ onBeforeUnmount(() => {
 .tag-chip {
   display: inline-flex;
   align-items: center;
+  align-self: flex-start;
+  flex: 0 1 auto;
+  max-width: min(100%, 320px);
   min-height: 28px;
   padding: 0 10px;
   border-radius: 999px;
@@ -3749,6 +4285,10 @@ onBeforeUnmount(() => {
   color: var(--text-main);
   font-size: 0.8rem;
   font-weight: 600;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tag-chip--passive {
@@ -4204,6 +4744,10 @@ onBeforeUnmount(() => {
 }
 
 .round-actions--compact {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 180px;
+  gap: 12px;
+  align-items: center;
   padding: 12px;
   border: 1px solid rgba(157, 189, 202, 0.18);
   border-radius: 16px;
@@ -4213,6 +4757,20 @@ onBeforeUnmount(() => {
 .round-actions__copy {
   display: grid;
   gap: 4px;
+  min-width: 0;
+}
+
+.round-actions--compact .action-row {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.round-actions--compact .primary-action,
+.round-actions--compact .secondary-action {
+  width: 100%;
+  min-width: 0;
+  white-space: normal;
 }
 
 .history-item {
@@ -4222,6 +4780,17 @@ onBeforeUnmount(() => {
   border-radius: 14px;
   background: #ffffff;
   border: 1px solid rgba(157, 189, 202, 0.22);
+}
+
+.history-item__tags {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  min-width: 0;
+}
+
+.history-item__tags .tag-chip {
+  max-width: min(100%, 520px);
 }
 
 .status-chip--idle {
@@ -4234,7 +4803,8 @@ onBeforeUnmount(() => {
 .status-chip--running,
 .status-chip--partial,
 .status-chip--analysis,
-.status-chip--judgement {
+.status-chip--judgement,
+.status-chip--ready {
   background: rgba(11, 114, 136, 0.12);
   color: var(--accent-strong);
 }
@@ -4743,6 +5313,10 @@ onBeforeUnmount(() => {
     align-items: start;
   }
 
+  .transcript-panel--round {
+    height: auto;
+  }
+
   .verdict-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -4796,6 +5370,20 @@ onBeforeUnmount(() => {
   .sampling-console__detectors,
   .console-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .transcript-panel--round {
+    max-height: none !important;
+    overflow: visible;
+  }
+
+  .transcript-panel__scroll {
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .round-actions--compact {
+    grid-template-columns: 1fr;
   }
 }
 

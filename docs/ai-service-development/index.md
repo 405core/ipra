@@ -12,3 +12,4 @@ order: 4
 
 - [AI-Service 架构说明和示例说明](./ai-service-architecture-and-examples.md)：说明当前双接口架构、HumanOmni 的职责边界、前端动作 JSON 的接入方式、本地业务 LLM 和测试命令。
 - [AI-Service 接口对接文档](./api-integration-guide.md)：面向前端和后端联调，说明视频上传、首轮策略、后续追问、动作 JSON 和 ASR 预留字段。
+- [智能体记忆实现说明](./agent-memory.md)：归档智能体记忆层的定位、数据结构、接口流程、数据库落点、前端展示和验证方式。

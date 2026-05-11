@@ -62,11 +62,55 @@ class LlmRuntimeInfo(ApiModel):
     model: str = "mock-business-llm"
 
 
+class MemoryItem(ApiModel):
+    id: int | None = None
+    scope_type: Literal["session", "passenger", "rule"] | str = Field(alias="scopeType")
+    scope_id: str = Field(alias="scopeId")
+    memory_type: Literal["fact", "gap", "inconsistency", "evidence", "procedure"] | str = Field(alias="memoryType")
+    title: str
+    content: str
+    evidence: dict[str, Any] | list[Any] | str | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    source: str | None = None
+    created_at: str | None = Field(default=None, alias="createdAt")
+    updated_at: str | None = Field(default=None, alias="updatedAt")
+    expires_at: str | None = Field(default=None, alias="expiresAt")
+
+
+class MemoryContext(ApiModel):
+    session_id: str | None = Field(default=None, alias="sessionId")
+    passenger_id: str | None = Field(default=None, alias="passengerId")
+    session_memories: list[MemoryItem] = Field(default_factory=list, alias="sessionMemories")
+    passenger_memories: list[MemoryItem] = Field(default_factory=list, alias="passengerMemories")
+    rule_memories: list[MemoryItem] = Field(default_factory=list, alias="ruleMemories")
+
+
+class MemoryReference(ApiModel):
+    scope_type: str = Field(alias="scopeType")
+    scope_id: str = Field(alias="scopeId")
+    memory_type: str = Field(alias="memoryType")
+    title: str
+    content: str
+    source: str | None = None
+
+
+class MemoryUpdate(ApiModel):
+    scope_type: Literal["session", "passenger"] | str = Field(alias="scopeType")
+    scope_id: str = Field(alias="scopeId")
+    memory_type: Literal["fact", "gap", "inconsistency", "evidence", "procedure"] | str = Field(alias="memoryType")
+    title: str
+    content: str
+    evidence: dict[str, Any] | list[Any] | str | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    source: str = "ai-service"
+
+
 class FirstRoundStrategyRequest(ApiModel):
     session_id: str = Field(alias="sessionId")
     passenger_profile: PassengerProfile = Field(alias="passengerProfile")
     trip_profile: TripProfile = Field(default_factory=TripProfile, alias="tripProfile")
     known_facts: list[str] = Field(default_factory=list, alias="knownFacts")
+    memory_context: MemoryContext | None = Field(default=None, alias="memoryContext")
     constraints: OutputConstraints = Field(default_factory=OutputConstraints)
 
 
@@ -76,6 +120,8 @@ class FirstRoundStrategyResponse(ApiModel):
     risk_assessment: RiskAssessment = Field(alias="riskAssessment")
     strategy: InquiryStrategy
     questions: list[GeneratedQuestion]
+    memory_references: list[MemoryReference] = Field(default_factory=list, alias="memoryReferences")
+    memory_updates: list[MemoryUpdate] = Field(default_factory=list, alias="memoryUpdates")
     operator_note: str = Field(alias="operatorNote")
 
 
@@ -145,6 +191,7 @@ class FollowupGuidanceRequest(ApiModel):
     humanomni_windows: list[HumanOmniWindowSummary] = Field(default_factory=list, alias="humanOmniWindows")
     action_observations: list[ActionObservation] = Field(default_factory=list, alias="actionObservations")
     asr: AsrPayload | None = None
+    memory_context: MemoryContext | None = Field(default=None, alias="memoryContext")
     constraints: OutputConstraints = Field(default_factory=lambda: OutputConstraints(questionCount=3))
 
 
@@ -154,6 +201,8 @@ class FollowupGuidanceResponse(ApiModel):
     llm: LlmRuntimeInfo
     multimodal_assessment: MultimodalAssessment = Field(alias="multimodalAssessment")
     followup_guidance: list[FollowupQuestion] = Field(alias="followupGuidance")
+    memory_references: list[MemoryReference] = Field(default_factory=list, alias="memoryReferences")
+    memory_updates: list[MemoryUpdate] = Field(default_factory=list, alias="memoryUpdates")
     operator_note: str = Field(alias="operatorNote")
     warnings: list[str] = Field(default_factory=list)
 

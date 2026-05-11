@@ -7,6 +7,11 @@ from schemas.inquiry import (
     LlmRuntimeInfo,
     MultimodalAssessment,
 )
+from services.memory_utils import (
+    build_followup_memory_updates,
+    collect_memory_references,
+    memory_reference_text,
+)
 
 
 FOLLOWUP_BANK = [
@@ -41,10 +46,12 @@ def build_mock_followup_guidance(
     humanomni_evidence = _humanomni_evidence(request)
     action_evidence = _action_evidence(request)
     answer_evidence = _answer_evidence(request)
+    memory_evidence = memory_reference_text(request.memory_context)
+    memory_references = collect_memory_references(request.memory_context)
     risk_hints = _risk_hints(request, action_evidence, humanomni_evidence)
     question_count = request.constraints.question_count
 
-    evidence = answer_evidence + humanomni_evidence + action_evidence
+    evidence = answer_evidence + humanomni_evidence + action_evidence + memory_evidence
     if evidence:
         summary = "已结合问答历史、HumanOmni 摘要和外部动作采样形成后续追问参考。"
     else:
@@ -62,6 +69,15 @@ def build_mock_followup_guidance(
         for index, (focus_area, question, reason) in enumerate(selected_followups, start=1)
     ]
 
+    latest_answer = request.qa_history[-1].answer_text if request.qa_history else ""
+    memory_updates = build_followup_memory_updates(
+        session_id=request.session_id,
+        passenger_id=request.passenger_profile.passenger_id,
+        round_no=request.round_no,
+        latest_answer=latest_answer,
+        risk_hints=risk_hints,
+    )
+
     return FollowupGuidanceResponse(
         sessionId=request.session_id,
         roundNo=request.round_no,
@@ -77,6 +93,8 @@ def build_mock_followup_guidance(
             ],
         ),
         followupGuidance=followups,
+        memoryReferences=memory_references,
+        memoryUpdates=memory_updates,
         operatorNote=(
             "建议优先围绕画像与答复中缺失或不一致的事实点继续追问；"
             "动作和情绪线索只能作为选择追问方向的参考。"
