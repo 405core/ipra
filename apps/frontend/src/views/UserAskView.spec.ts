@@ -24,6 +24,7 @@ const inquiryProtectedMocks = vi.hoisted(() => ({
 vi.mock('../app/inquiry-protected-service', () => inquiryProtectedMocks);
 const archiveServiceMocks = vi.hoisted(() => ({
   createInquiryArchive: vi.fn(),
+  uploadInquiryArchiveVideo: vi.fn(),
 }));
 
 vi.mock('../app/archive-service', () => archiveServiceMocks);
@@ -514,8 +515,35 @@ describe('UserAskView realtime speech sampling', () => {
         roundNumber: 2,
         title: '第 2 轮 · AI 追问引导',
         questionCount: 1,
-        status: 'pending',
-        promptAsset: createProtectedAsset('prompt-2'),
+        status: 'uploaded',
+        promptAsset: createProtectedAsset('prompt-1'),
+        summaryAsset: createProtectedAsset('summary-1'),
+      questionId: 'q-1',
+      windowId: 'window-1',
+      startSeconds: 0,
+      endSeconds: 1,
+      modal: 'video_audio',
+      uploadedFile: {
+        filename: 'round-1.mp4',
+        storedPath: '/tmp/humanomni-windows/round-1.mp4',
+        contentType: 'video/mp4',
+        sizeBytes: 4,
+        bucket: null,
+        objectKey: null,
+      },
+      humanOmni: {
+        modelName: 'test',
+        rawSummary: '对象表述平稳。',
+        elapsedSeconds: 1,
+      },
+      humanOmniWindow: {
+        windowId: 'window-1',
+        questionId: 'q-1',
+        startSeconds: 0,
+        endSeconds: 1,
+        modal: 'video_audio',
+        rawSummary: '对象表述平稳。',
+        modelName: 'test',
       },
       historicalRounds: [
         {
@@ -530,6 +558,17 @@ describe('UserAskView realtime speech sampling', () => {
       ],
       completedRounds: 1,
       totalSampleDuration: 1,
+    });
+
+    archiveServiceMocks.uploadInquiryArchiveVideo.mockResolvedValue({
+      uploadedFile: {
+        filename: 'round-1.mp4',
+        storedPath: 'minio://ipra-videos/humanomni-windows/round-1.mp4',
+        contentType: 'video/mp4',
+        sizeBytes: 4,
+        bucket: 'ipra-videos',
+        objectKey: 'humanomni-windows/round-1.mp4',
+      },
     });
 
     archiveServiceMocks.createInquiryArchive.mockResolvedValue({
@@ -1065,11 +1104,16 @@ describe('UserAskView realtime speech sampling', () => {
 
     await findButton(wrapper, '无异常').trigger('click');
     const reasonInput = wrapper.find('textarea[placeholder*="请详细说明"]');
-    await reasonInput.setValue('该旅客回答与采样摘要基本一致，未发现明显异常风险。');
+    await reasonInput.setValue(
+      '该旅客回答与采样摘要基本一致，未发现明显异常风险。',
+    );
     await findButton(wrapper, '归档').trigger('click');
     await flushPromises();
     await nextTick();
 
+    expect(archiveServiceMocks.uploadInquiryArchiveVideo).toHaveBeenCalledTimes(
+      1,
+    );
     expect(archiveServiceMocks.createInquiryArchive).toHaveBeenCalledTimes(1);
     const payload = archiveServiceMocks.createInquiryArchive.mock.calls[0][0];
     expect(payload).toMatchObject({
