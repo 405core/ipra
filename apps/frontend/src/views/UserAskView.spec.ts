@@ -268,6 +268,9 @@ function createProtectedAsset(id: string, url = `/api/sensitive-assets/${id}`) {
     id,
     url,
     context: 'dialog',
+  };
+}
+
 function createPassengerProfile(overrides = {}) {
   return {
     id: 10,
@@ -396,73 +399,113 @@ describe('UserAskView realtime speech sampling', () => {
       totalSampleDuration: 0,
     });
 
-    inquiryProtectedMocks.uploadProtectedInquiryRoundWindow.mockResolvedValue({
-      sessionId: 'session-1',
-      strategyAsset: createProtectedAsset('strategy-1'),
-      memoryAsset: createProtectedAsset('memory-1'),
-      currentRound: {
-        id: 'round-1',
-        roundNumber: 1,
-        title: '第 1 轮 · 首轮策略执行',
-        questionCount: 1,
-        status: 'uploaded',
-        promptAsset: createProtectedAsset('prompt-1'),
-        summaryAsset: createProtectedAsset('summary-1'),
-      questionId: 'q-1',
-      windowId: 'window-1',
-      startSeconds: 0,
-      endSeconds: 1,
-      modal: 'video_audio',
-      uploadedFile: {
-        filename: 'round-1.mp4',
-        storedPath: 'minio://ipra-videos/humanomni-windows/round-1.mp4',
-        contentType: 'video/mp4',
-        sizeBytes: 4,
-        bucket: 'ipra-videos',
-        objectKey: 'humanomni-windows/round-1.mp4',
+    inquiryProtectedMocks.uploadProtectedInquiryRoundWindow.mockImplementation(
+      async (_sessionId: string, roundId: string) => {
+        if (roundId === 'round-2') {
+          return {
+            sessionId: 'session-1',
+            strategyAsset: createProtectedAsset('strategy-1'),
+            memoryAsset: createProtectedAsset('memory-2'),
+            currentRound: {
+              id: 'round-2',
+              roundNumber: 2,
+              title: '第 2 轮 · AI 追问引导',
+              questionCount: 1,
+              status: 'uploaded',
+              promptAsset: createProtectedAsset('prompt-2'),
+              summaryAsset: createProtectedAsset('summary-2'),
+              recordedFileName: 'round-2.mp4',
+              uploadedFile: {
+                filename: 'round-2.mp4',
+                storedPath: 'minio://ipra-videos/humanomni-windows/round-2.mp4',
+                contentType: 'video/mp4',
+                sizeBytes: 4,
+                bucket: 'ipra-videos',
+                objectKey: 'humanomni-windows/round-2.mp4',
+              },
+              humanOmniWindow: {
+                windowId: 'window-2',
+                questionId: 'q-2',
+                startSeconds: 0,
+                endSeconds: 1,
+                modal: 'video_audio',
+                rawSummary: '对象对第二轮追问表述平稳。',
+                modelName: 'test',
+              },
+            },
+            historicalRounds: [
+              {
+                id: 'round-1',
+                roundNumber: 1,
+                title: '第 1 轮 · 首轮策略执行',
+                questionCount: 1,
+                status: 'uploaded',
+                promptAsset: createProtectedAsset('prompt-1'),
+                summaryAsset: createProtectedAsset('summary-1'),
+                recordedFileName: 'round-1.mp4',
+                uploadedFile: {
+                  filename: 'round-1.mp4',
+                  storedPath: 'minio://ipra-videos/humanomni-windows/round-1.mp4',
+                  contentType: 'video/mp4',
+                  sizeBytes: 4,
+                  bucket: 'ipra-videos',
+                  objectKey: 'humanomni-windows/round-1.mp4',
+                },
+                humanOmniWindow: {
+                  windowId: 'window-1',
+                  questionId: 'q-1',
+                  startSeconds: 0,
+                  endSeconds: 1,
+                  modal: 'video_audio',
+                  rawSummary: '对象表述平稳。',
+                  modelName: 'test',
+                },
+              },
+            ],
+            completedRounds: 2,
+            totalSampleDuration: 2,
+          };
+        }
+
+        return {
+          sessionId: 'session-1',
+          strategyAsset: createProtectedAsset('strategy-1'),
+          memoryAsset: createProtectedAsset('memory-1'),
+          currentRound: {
+            id: 'round-1',
+            roundNumber: 1,
+            title: '第 1 轮 · 首轮策略执行',
+            questionCount: 1,
+            status: 'uploaded',
+            promptAsset: createProtectedAsset('prompt-1'),
+            summaryAsset: createProtectedAsset('summary-1'),
+            recordedFileName: 'round-1.mp4',
+            uploadedFile: {
+              filename: 'round-1.mp4',
+              storedPath: 'minio://ipra-videos/humanomni-windows/round-1.mp4',
+              contentType: 'video/mp4',
+              sizeBytes: 4,
+              bucket: 'ipra-videos',
+              objectKey: 'humanomni-windows/round-1.mp4',
+            },
+            humanOmniWindow: {
+              windowId: 'window-1',
+              questionId: 'q-1',
+              startSeconds: 0,
+              endSeconds: 1,
+              modal: 'video_audio',
+              rawSummary: '对象表述平稳。',
+              modelName: 'test',
+            },
+          },
+          historicalRounds: [],
+          completedRounds: 1,
+          totalSampleDuration: 1,
+        };
       },
-      humanOmni: {
-        modelName: 'test',
-        rawSummary: '对象表述平稳。',
-        elapsedSeconds: 1,
-      },
-      humanOmniWindow: {
-        windowId: 'window-1',
-        questionId: 'q-1',
-        startSeconds: 0,
-        endSeconds: 1,
-        modal: 'video_audio',
-        rawSummary: '对象表述平稳。',
-        modelName: 'test',
-      },
-      historicalRounds: [],
-      completedRounds: 1,
-      totalSampleDuration: 1,
-    });
+    );
 
     inquiryProtectedMocks.requestProtectedInquiryFollowup.mockResolvedValue({
-    archiveServiceMocks.createInquiryArchive.mockResolvedValue({
-      id: 1,
-      archiveCode: 'IPRA-ASK-20260511-0001',
-      sessionId: 'session-1',
-      passengerDocumentNum: '440582199402155270',
-      passengerName: '测试旅客',
-      operatorWorkId: 'user',
-      operatorName: '员工',
-      finalJudgement: 'clear',
-      judgementReason: '测试归档理由满足二十字以上的要求。',
-      roundCount: 1,
-      totalDurationSeconds: 1,
-      transcriptCount: 1,
-      status: 'archived',
-      archivedAt: '2026-05-11T08:00:00Z',
-      createdAt: '2026-05-11T08:00:00Z',
-      updatedAt: '2026-05-11T08:00:00Z',
-      rounds: [],
-      videos: [],
-    });
-
-    aiServiceMocks.requestFollowupGuidance.mockResolvedValue({
       sessionId: 'session-1',
       strategyAsset: createProtectedAsset('strategy-1'),
       memoryAsset: createProtectedAsset('memory-2'),
@@ -487,6 +530,27 @@ describe('UserAskView realtime speech sampling', () => {
       ],
       completedRounds: 1,
       totalSampleDuration: 1,
+    });
+
+    archiveServiceMocks.createInquiryArchive.mockResolvedValue({
+      id: 1,
+      archiveCode: 'IPRA-ASK-20260511-0001',
+      sessionId: 'session-1',
+      passengerDocumentNum: '440582199402155270',
+      passengerName: '测试旅客',
+      operatorWorkId: 'user',
+      operatorName: '员工',
+      finalJudgement: 'clear',
+      judgementReason: '测试归档理由满足二十字以上的要求。',
+      roundCount: 1,
+      totalDurationSeconds: 1,
+      transcriptCount: 1,
+      status: 'archived',
+      archivedAt: '2026-05-11T08:00:00Z',
+      createdAt: '2026-05-11T08:00:00Z',
+      updatedAt: '2026-05-11T08:00:00Z',
+      rounds: [],
+      videos: [],
     });
 
     inquiryProtectedMocks.requestProtectedInquiryJudgement.mockResolvedValue({
@@ -552,7 +616,7 @@ describe('UserAskView realtime speech sampling', () => {
     expect(strategyButton.attributes('disabled')).toBeDefined();
     await strategyButton.trigger('click');
 
-    expect(aiServiceMocks.requestFirstRoundStrategy).not.toHaveBeenCalled();
+    expect(inquiryProtectedMocks.generateProtectedInquiryStrategy).not.toHaveBeenCalled();
   });
 
   it('loads the searched passenger profile into the strategy stage', async () => {
@@ -581,8 +645,9 @@ describe('UserAskView realtime speech sampling', () => {
     await findButton(wrapper, '生成策略').trigger('click');
     await flushPromises();
 
-    expect(aiServiceMocks.requestFirstRoundStrategy).toHaveBeenCalledTimes(1);
-    const payload = aiServiceMocks.requestFirstRoundStrategy.mock.calls[0][0];
+    expect(inquiryProtectedMocks.generateProtectedInquiryStrategy).toHaveBeenCalledTimes(1);
+    const payload =
+      inquiryProtectedMocks.generateProtectedInquiryStrategy.mock.calls[0][0];
     expect(payload.passengerProfile).toMatchObject({
       passengerId: '440582199402155270',
       name: '黎泽宝',
@@ -620,7 +685,7 @@ describe('UserAskView realtime speech sampling', () => {
     const strategyButton = findButton(wrapper, '生成策略');
     expect(strategyButton.attributes('disabled')).toBeDefined();
     await strategyButton.trigger('click');
-    expect(aiServiceMocks.requestFirstRoundStrategy).not.toHaveBeenCalled();
+    expect(inquiryProtectedMocks.generateProtectedInquiryStrategy).not.toHaveBeenCalled();
   });
 
   it('passes realtime Iflytek ASR text into followup guidance', async () => {
@@ -806,7 +871,8 @@ describe('UserAskView realtime speech sampling', () => {
     await flushPromises();
 
     expect(
-      aiServiceMocks.requestFollowupGuidance.mock.calls[0][0].asr.text,
+      inquiryProtectedMocks.requestProtectedInquiryFollowup.mock.calls[0][1].asr
+        .text,
     ).toBe(expectedText);
   });
 
@@ -944,7 +1010,7 @@ describe('UserAskView realtime speech sampling', () => {
     await flushPromises();
     await nextTick();
 
-    expect(aiServiceMocks.requestFollowupGuidance).toHaveBeenCalledTimes(1);
+    expect(inquiryProtectedMocks.requestProtectedInquiryFollowup).toHaveBeenCalledTimes(1);
 
     await findButton(wrapper, '开始采样').trigger('click');
     await flushPromises();
@@ -961,7 +1027,7 @@ describe('UserAskView realtime speech sampling', () => {
     await nextRoundButton.trigger('click');
     await flushPromises();
 
-    expect(aiServiceMocks.requestFollowupGuidance).toHaveBeenCalledTimes(1);
+    expect(inquiryProtectedMocks.requestProtectedInquiryFollowup).toHaveBeenCalledTimes(1);
     expect(wrapper.text()).toContain('最多只能进行 2 轮问询');
     expect(elMessageMocks.warning).toHaveBeenCalledWith(
       '最多只能进行 2 轮问询，请进入人工辅助判断。',
@@ -972,7 +1038,7 @@ describe('UserAskView realtime speech sampling', () => {
     await judgementButton.trigger('click');
     await flushPromises();
 
-    expect(aiServiceMocks.requestFollowupGuidance).toHaveBeenCalledTimes(1);
+    expect(inquiryProtectedMocks.requestProtectedInquiryFollowup).toHaveBeenCalledTimes(1);
     expect(wrapper.text()).toContain('人工辅助判断');
   });
 

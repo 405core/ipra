@@ -13,9 +13,13 @@ const adminServiceMocks = vi.hoisted(() => ({
   deleteAdminWatchlist: vi.fn(),
   getAdminInquirySettings: vi.fn(),
   listAdminAuditLogs: vi.fn(),
+  listAdminAuditLogsProtected: vi.fn(),
   listAdminProfiles: vi.fn(),
+  listAdminProfilesProtected: vi.fn(),
   listAdminUsers: vi.fn(),
+  listAdminUsersProtected: vi.fn(),
   listAdminWatchlist: vi.fn(),
+  listAdminWatchlistProtected: vi.fn(),
   updateAdminInquirySettings: vi.fn(),
   updateAdminProfile: vi.fn(),
   updateAdminUser: vi.fn(),
@@ -76,15 +80,50 @@ function findButton(wrapper: VueWrapper, label: string) {
   return button!;
 }
 
+function createProtectedListItem(id: string) {
+  return {
+    id,
+    asset: {
+      id: `asset-${id}`,
+      url: `/api/sensitive-assets/${id}`,
+      context: 'admin',
+    },
+  };
+}
+
 describe('ManagementView settings tab', () => {
   let wrapper: VueWrapper | null = null;
 
   beforeEach(() => {
     vi.clearAllMocks();
     adminServiceMocks.listAdminProfiles.mockResolvedValue({ items: [], total: 0 });
+    adminServiceMocks.listAdminProfilesProtected.mockResolvedValue({
+      items: [createProtectedListItem('profile-1')],
+      total: 1,
+      page: 1,
+      pageSize: 500,
+    });
     adminServiceMocks.listAdminWatchlist.mockResolvedValue({ items: [], total: 0 });
+    adminServiceMocks.listAdminWatchlistProtected.mockResolvedValue({
+      items: [createProtectedListItem('watchlist-1')],
+      total: 1,
+      page: 1,
+      pageSize: 500,
+    });
     adminServiceMocks.listAdminUsers.mockResolvedValue({ items: [], total: 0 });
+    adminServiceMocks.listAdminUsersProtected.mockResolvedValue({
+      items: [createProtectedListItem('user-1')],
+      total: 1,
+      page: 1,
+      pageSize: 500,
+    });
     adminServiceMocks.listAdminAuditLogs.mockResolvedValue({ items: [], total: 0 });
+    adminServiceMocks.listAdminAuditLogsProtected.mockResolvedValue({
+      items: [createProtectedListItem('audit-1')],
+      total: 1,
+      page: 1,
+      pageSize: 500,
+    });
     archiveServiceMocks.listInquiryArchives.mockResolvedValue({ items: [], total: 0 });
     archiveServiceMocks.getInquiryArchive.mockResolvedValue(null);
     archiveServiceMocks.fetchArchiveVideoBlob.mockResolvedValue(new Blob(['video']));

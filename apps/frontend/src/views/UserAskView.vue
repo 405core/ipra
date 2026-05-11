@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import SensitiveAssetImage from '../app/SensitiveAssetImage.vue';
 import {
   computed,
   nextTick,
@@ -9,6 +7,7 @@ import {
   ref,
   watch,
 } from 'vue';
+import SensitiveAssetImage from '../app/SensitiveAssetImage.vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
   resolveAiServiceWebSocketUrl,
@@ -38,6 +37,7 @@ import {
   type ProtectedInquirySessionSnapshot,
 } from '../app/inquiry-protected-service';
 import type { ProtectedAssetRef } from '../app/protected-service';
+import {
   createInquiryArchive,
   type CreateInquiryArchivePayload,
   type CreateInquiryArchiveRoundPayload,
@@ -184,6 +184,8 @@ interface MockTripSupplement {
   companions: string[];
   accommodation: string;
   fundingSource: string;
+}
+
 interface JudgementBriefing {
   multimodalAssessment: MultimodalAssessmentPayload;
   operatorNote: string;
@@ -366,10 +368,12 @@ const memoryContext = ref<AgentMemoryContextPayload | null>(null);
 const memoryLoadState = ref<MemoryLoadState>('idle');
 const memoryErrorMessage = ref('');
 const memoryLastSyncedAt = ref('');
+const latestMemoryReferences = ref<AgentMemoryReferencePayload[]>([]);
 const rounds = ref<InterviewRound[]>([]);
 const currentRoundId = ref<string | null>(null);
 const selectedJudgement = ref<FinalJudgement | null>(null);
 const judgementReason = ref('');
+const judgementBriefing = ref<JudgementBriefing | null>(null);
 const isArchived = ref(false);
 const isArchiving = ref(false);
 const archivedAt = ref('');
@@ -598,7 +602,7 @@ const faceCueItems = computed(() => [
 
 const keyEvidenceTags = computed(() => {
   const tags = completedRounds.value.map((round) => round.title);
-  return [...passengerProfile.tags, ...tags].slice(0, 4);
+  return [...passengerProfile.value.tags, ...tags].slice(0, 4);
 });
 
 const memoryStatusLabel = computed(() => {
@@ -612,6 +616,99 @@ const memoryStatusLabel = computed(() => {
     default:
       return '等待同步';
   }
+});
+
+function formatMemoryScopeLabel(scopeType: string) {
+  switch (scopeType) {
+    case 'session':
+      return '会话';
+    case 'passenger':
+      return '旅客';
+    case 'rule':
+      return '规则';
+    default:
+      return scopeType || '未知';
+  }
+}
+
+function formatMemoryTypeLabel(memoryType: string) {
+  switch (memoryType) {
+    case 'fact':
+      return '事实';
+    case 'gap':
+      return '缺口';
+    case 'inconsistency':
+      return '矛盾';
+    case 'evidence':
+      return '证据';
+    case 'procedure':
+      return '流程';
+    default:
+      return memoryType || '未知';
+  }
+}
+
+const groupedMemoryReferences = computed<MemoryReferenceViewItem[]>(() => {
+  const grouped = new Map<string, MemoryReferenceViewItem>();
+
+  for (const reference of latestMemoryReferences.value) {
+    const scopeLabel = formatMemoryScopeLabel(reference.scopeType);
+    const typeLabel = formatMemoryTypeLabel(reference.memoryType);
+    const key = [
+      reference.scopeType,
+      reference.scopeId,
+      reference.memoryType,
+      reference.title,
+      reference.content,
+    ].join('::');
+    const existing = grouped.get(key);
+    if (existing) {
+      existing.count += 1;
+      continue;
+    }
+    grouped.set(key, {
+      key,
+      title: reference.title,
+      scopeLabel,
+      typeLabel,
+      count: 1,
+    });
+  }
+
+  return [...grouped.values()];
+});
+
+const memoryPanelItems = computed<MemoryPanelItem[]>(() => {
+  const context = memoryContext.value;
+  if (!context) {
+    return [];
+  }
+
+  const items = [
+    ...(context.sessionMemories ?? []).map((item) => ({
+      ...item,
+      scopeType: 'session',
+    })),
+    ...(context.passengerMemories ?? []).map((item) => ({
+      ...item,
+      scopeType: 'passenger',
+    })),
+    ...(context.ruleMemories ?? []).map((item) => ({
+      ...item,
+      scopeType: 'rule',
+    })),
+  ];
+
+  return items.map((item, index) => ({
+    key: `${item.scopeType}-${item.scopeId}-${item.memoryType}-${item.id ?? index}`,
+    title: item.title,
+    content: item.content,
+    scopeLabel: formatMemoryScopeLabel(item.scopeType),
+    typeLabel: formatMemoryTypeLabel(item.memoryType),
+    source: item.source || '',
+    confidence: item.confidence ?? null,
+    updatedAt: item.updatedAt ?? null,
+  }));
 });
 
 const speechRecognitionLabel = computed(() => {
@@ -1099,9 +1196,10 @@ function createProtectedInterviewRound(
     summary: existing?.summary ?? '',
     uploadState: mapProtectedRoundStatus(snapshot.status, existing),
     uploadErrorMessage: existing?.uploadErrorMessage ?? '',
-    humanOmniWindow: existing?.humanOmniWindow ?? null,
+    humanOmniWindow: snapshot.humanOmniWindow ?? existing?.humanOmniWindow ?? null,
     actionObservations: existing?.actionObservations ?? [],
-    recordedFileName: existing?.recordedFileName ?? '',
+    recordedFileName: snapshot.recordedFileName ?? existing?.recordedFileName ?? '',
+    uploadedFile: snapshot.uploadedFile ?? existing?.uploadedFile ?? null,
     asrText: existing?.asrText ?? '',
   };
 }
@@ -1126,6 +1224,7 @@ function syncProtectedSessionState(snapshot: ProtectedInquirySessionSnapshot) {
 async function refreshMemoryContext() {
   if (!selectedPassengerId.value) {
     memoryContext.value = null;
+    latestMemoryReferences.value = [];
     memoryLoadState.value = 'idle';
     return null;
   }
@@ -1145,7 +1244,6 @@ async function refreshMemoryContext() {
       memoryAsset: asset,
     };
     syncMemoryStatus(true);
-    return memoryContext.value;
     const context = await fetchMemoryContext(
       sessionId.value,
       selectedPassengerId.value,
@@ -1173,6 +1271,10 @@ async function saveMemoryUpdates(
   try {
     if (!updates.length && !references.length) {
       return;
+    }
+    latestMemoryReferences.value = references;
+    if (updates.length) {
+      await persistMemoryUpdates(updates);
     }
     await refreshMemoryContext();
   } catch (error) {
@@ -1300,10 +1402,6 @@ function buildOpeningRound() {
     questionCount: 0,
     promptAsset: null,
     summaryAsset: null,
-    focus: '首轮关注：时间线与终端空窗',
-    strategyNote: '系统默认围绕时间线断点、设备空窗与照明波动启动首轮问询。',
-    signal: '对象需先对 10:45 至 10:50 的时间线和设备空窗给出稳定说明。',
-    questions: [],
     focus: strategyFocusAreas.value.length
       ? strategyFocusAreas.value.join(' / ')
       : '首轮关注：出境目的与行程一致性',
@@ -2003,14 +2101,11 @@ async function generateStrategy() {
     });
     const response = await generateProtectedInquiryStrategy({
       sessionId: sessionId.value,
-      passengerId: mockedPassengerSupplement.passengerId,
-      passengerProfile: buildPassengerPayload() as unknown as Record<string, unknown>,
-      tripProfile: buildTripPayload() as unknown as Record<string, unknown>,
-      knownFacts: buildKnownFacts(),
-      passengerProfile: buildPassengerPayload(profile),
-      tripProfile: buildTripPayload(profile),
+      passengerId: profile.documentNum,
+      passengerProfile:
+        buildPassengerPayload(profile) as unknown as Record<string, unknown>,
+      tripProfile: buildTripPayload(profile) as unknown as Record<string, unknown>,
       knownFacts: buildKnownFacts(profile),
-      memoryContext: context,
       constraints: buildOutputConstraints(6),
     });
     syncProtectedSessionState(response);
@@ -2190,9 +2285,6 @@ async function endSampling() {
       buildSummarizeWindowFormData(round, recordedFile),
     );
     syncProtectedSessionState(response);
-    round.humanOmniWindow = response.humanOmniWindow;
-    round.recordedFileName = response.uploadedFile.filename;
-    round.uploadedFile = response.uploadedFile;
     round.uploadState = 'uploaded';
     round.uploadErrorMessage = '';
     updateCurrentRoundSummary(round);
@@ -3321,16 +3413,11 @@ onBeforeUnmount(() => {
                   <h4>首轮问题包</h4>
                 </div>
 
-                <span class="soft-chip">
-                  {{
-                    isGeneratingStrategy
-                      ? '系统生成中'
-                      : strategyGenerated
-                        ? '策略已生成'
-                        : '等待生成'
-                    isStrategyLocked
-                      ? '等待数据检索'
-                      : isGeneratingStrategy
+	                <span class="soft-chip">
+	                  {{
+	                    isStrategyLocked
+	                      ? '等待数据检索'
+	                      : isGeneratingStrategy
                         ? '系统生成中'
                         : strategyGenerated
                           ? `${generatedQuestions.length} 个问题已生成`
@@ -3347,19 +3434,13 @@ onBeforeUnmount(() => {
                 }}
               </p>
 
-              <SensitiveAssetImage
-                v-if="protectedStrategyAsset"
-                :src="protectedStrategyAsset.url"
-                alt="首轮策略敏感图片"
-              />
-                  isStrategyLocked
-                    ? profileLockMessage
-                    : strategySummary ||
-                      '系统将根据用户画像与风险标签生成首轮策略与问题包。'
-                }}
-              </p>
+	              <SensitiveAssetImage
+	                v-if="protectedStrategyAsset"
+	                :src="protectedStrategyAsset.url"
+	                alt="首轮策略敏感图片"
+	              />
 
-              <div
+	              <div
                 v-if="
                   !isStrategyLocked &&
                   (strategyRiskAssessment || strategyOperatorNote)
@@ -3935,101 +4016,7 @@ onBeforeUnmount(() => {
                   {{ samplingState.errorMessage }}
                 </div>
 
-                <div
-                  class="summary-stack summary-stack--compact round-summary-stack"
-                >
-                  <div class="summary-item">
-                    <span class="meta-label">窗口上传</span>
-                    <div class="summary-item__inline">
-                      <strong>{{
-                        roundUploadStateLabel(currentRound.uploadState)
-                      }}</strong>
-                      <span
-                        class="status-chip"
-                        :class="roundUploadStateClass(currentRound.uploadState)"
-                      >
-                        {{ roundUploadStateLabel(currentRound.uploadState) }}
-                      </span>
-                    </div>
-                    <p>
-                      {{
-                        currentRound.recordedFileName ||
-                        '结束采样后会生成本轮真实 MP4/H.264 音视频片段并上传至 HumanOmni 摘要接口。'
-                      }}
-                    </p>
-                  </div>
-
-                  <div class="summary-item">
-                    <span class="meta-label">窗口摘要</span>
-                    <p>
-                      {{
-                        currentRound.humanOmniWindow?.rawSummary ||
-                        (currentRound.uploadState === 'uploading'
-                          ? '正在等待系统返回窗口摘要。'
-                          : '尚未生成窗口摘要。')
-                      }}
-                    </p>
-                  </div>
-                </div>
-
-                <div
-                  v-if="currentRound.uploadErrorMessage"
-                  class="inline-alert"
-                >
-                  {{ currentRound.uploadErrorMessage }}
-                </div>
-
-                <div v-if="roundServiceError" class="inline-alert">
-                  {{ roundServiceError }}
-                </div>
-
-                <section class="memory-panel memory-panel--inline">
-                  <div class="memory-panel__head">
-                    <div>
-                      <span class="meta-label">智能体记忆</span>
-                      <strong>{{ memoryStatusLabel }}</strong>
-                    </div>
-                    <span
-                      class="status-chip"
-                      :class="`status-chip--${memoryLoadState}`"
-                    >
-                      {{ memoryLastSyncedAt || '未同步' }}
-                    </span>
-                  </div>
-                  <p>
-                    {{
-                      currentRound.recordedFileName ||
-                      '结束采样后会生成本轮真实 MP4/H.264 音视频片段并上传至 HumanOmni 摘要接口。'
-                    }}
-                  </p>
-                </div>
-
-                <div class="summary-item">
-                  <span class="meta-label">窗口摘要</span>
-                  <SensitiveAssetImage
-                    v-if="currentRound.summaryAsset"
-                    :src="currentRound.summaryAsset.url"
-                    alt="当前轮摘要敏感图片"
-                  />
-                  <p v-else>
-                    {{
-                      currentRound.uploadState === 'uploading'
-                        ? '正在等待系统返回窗口摘要'
-                        : '尚未生成窗口摘要'
-                    }}
-                  </p>
-                </div>
-              </div>
-
-              <div v-if="currentRound.uploadErrorMessage" class="inline-alert">
-                {{ currentRound.uploadErrorMessage }}
-              </div>
-
-              <div v-if="roundServiceError" class="inline-alert">
-                {{ roundServiceError }}
-              </div>
-
-              <section class="memory-panel memory-panel--inline">
+	              <section class="memory-panel memory-panel--inline">
                 <div class="memory-panel__head">
                   <div>
                     <span class="meta-label">智能体记忆</span>

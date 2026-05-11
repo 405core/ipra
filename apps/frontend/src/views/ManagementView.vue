@@ -280,28 +280,6 @@ const filteredArchives = computed(() =>
     )
   )
 );
-const filteredAuditLogs = computed(() =>
-  auditLogs.value.filter((item) => {
-    if (auditFilters.value.result && item.result !== auditFilters.value.result) {
-      return false;
-    }
-    if (auditActorWorkId.value.trim() && item.actorWorkId !== auditActorWorkId.value.trim()) {
-      return false;
-    }
-    return matchesSearch(
-      [
-        item.actorWorkId,
-        item.actorName,
-        item.action,
-        item.resource,
-        item.result,
-        item.path,
-        item.method,
-      ],
-      auditQuery.value
-    );
-  })
-);
 const selectedProfileDocumentTypeLabel = computed(() =>
   describeFilterLabel('证件类型', profileDocumentTypeOptions.value, profileFilters.value.documentType)
 );
