@@ -8,6 +8,7 @@ import {
   validateAuthSession,
 } from '../auth';
 import { ElMessage } from '../app/el-message';
+import { recordAuditEvent } from '../app/audit-service';
 import { openTouchInput } from '../app/touch-input';
 import {
   createAdminProfile,
@@ -15,6 +16,7 @@ import {
   createAdminWatchlist,
   deleteAdminProfile,
   deleteAdminWatchlist,
+  listAdminAuditLogs,
   listAdminProfiles,
   listAdminUsers,
   listAdminWatchlist,
@@ -25,15 +27,17 @@ import {
   type AdminUserItem,
   type AdminWatchlistItem,
 } from '../app/admin-service';
+import type { AuditLogItem } from '../app/audit-service';
 import type { PassengerProfileRecord } from '../app/profile-service';
 
-type TabKey = 'profiles' | 'watchlist' | 'users';
+type TabKey = 'profiles' | 'watchlist' | 'users' | 'audit';
 type FilterPickerKey =
   | 'profiles-document-type'
   | 'profiles-nationality'
   | 'profiles-gender'
   | 'users-role'
   | 'users-status'
+  | 'audit-result'
   | null;
 
 interface FilterOption {
@@ -72,6 +76,7 @@ const tabs: Array<{ key: TabKey; label: string }> = [
   { key: 'profiles', label: '基础画像' },
   { key: 'watchlist', label: '高风险名单' },
   { key: 'users', label: '管理用户' },
+  { key: 'audit', label: '审计日志' },
 ];
 
 const activeTab = ref<TabKey>('profiles');
@@ -80,16 +85,20 @@ const statusMessages = ref<Record<TabKey, string>>({
   profiles: '正在加载基础画像...',
   watchlist: '正在加载高风险名单...',
   users: '正在加载用户...',
+  audit: '正在加载审计日志...',
 });
 
 const profileQuery = ref('');
 const watchlistQuery = ref('');
 const userQuery = ref('');
+const auditQuery = ref('');
+const auditActorWorkId = ref('');
 const touchInputHint = '单击正常输入，双击打开触控键盘';
 
 const profiles = ref<PassengerProfileRecord[]>([]);
 const watchlist = ref<AdminWatchlistItem[]>([]);
 const users = ref<AdminUserItem[]>([]);
+const auditLogs = ref<AuditLogItem[]>([]);
 const isProfileFormVisible = ref(false);
 const isWatchlistFormVisible = ref(false);
 const isUserFormVisible = ref(false);
@@ -101,6 +110,9 @@ const profileFilters = ref({
 const userFilters = ref({
   role: '',
   status: '',
+});
+const auditFilters = ref({
+  result: '',
 });
 
 const profileForm = ref<ProfileFormState>(createEmptyProfileForm());
@@ -160,6 +172,12 @@ const userStatusOptions: FilterOption[] = [
   { value: 'active', label: '启用' },
   { value: 'disabled', label: '停用' },
 ];
+const auditResultOptions: FilterOption[] = [
+  { value: '', label: '全部结果' },
+  { value: 'success', label: '成功' },
+  { value: 'denied', label: '拒绝' },
+  { value: 'failure', label: '失败' },
+];
 const filteredProfiles = computed(() =>
   profiles.value.filter((item) => {
     const documentType = readProfileField(item, 'basicInfo', 'documentType');
@@ -194,6 +212,28 @@ const filteredUsers = computed(() =>
     return matchesSearch(buildUserSearchText(item), userQuery.value);
   })
 );
+const filteredAuditLogs = computed(() =>
+  auditLogs.value.filter((item) => {
+    if (auditFilters.value.result && item.result !== auditFilters.value.result) {
+      return false;
+    }
+    if (auditActorWorkId.value.trim() && item.actorWorkId !== auditActorWorkId.value.trim()) {
+      return false;
+    }
+    return matchesSearch(
+      [
+        item.actorWorkId,
+        item.actorName,
+        item.action,
+        item.resource,
+        item.result,
+        item.path,
+        item.method,
+      ],
+      auditQuery.value
+    );
+  })
+);
 const selectedProfileDocumentTypeLabel = computed(() =>
   describeFilterLabel('证件类型', profileDocumentTypeOptions.value, profileFilters.value.documentType)
 );
@@ -208,6 +248,9 @@ const selectedUserRoleLabel = computed(() =>
 );
 const selectedUserStatusLabel = computed(() =>
   describeFilterLabel('状态', userStatusOptions, userFilters.value.status)
+);
+const selectedAuditResultLabel = computed(() =>
+  describeFilterLabel('结果', auditResultOptions, auditFilters.value.result)
 );
 
 onMounted(() => {
@@ -234,7 +277,7 @@ watch(isAnyFormVisible, (visible) => {
 });
 
 async function refreshAll() {
-  await Promise.all([loadProfiles(), loadWatchlist(), loadUsers()]);
+  await Promise.all([loadProfiles(), loadWatchlist(), loadUsers(), loadAuditLogs()]);
 }
 
 async function loadProfiles() {
@@ -253,6 +296,12 @@ async function loadUsers() {
   const result = await listAdminUsers('');
   users.value = result.items;
   statusMessages.value.users = `已加载用户 ${result.total} 条。`;
+}
+
+async function loadAuditLogs() {
+  const result = await listAdminAuditLogs({ limit: 500 });
+  auditLogs.value = result.items;
+  statusMessages.value.audit = `已加载审计日志 ${result.total} 条。`;
 }
 
 async function syncCurrentSession() {
@@ -440,6 +489,16 @@ async function toggleUserStatus(item: AdminUserItem) {
 }
 
 async function logout() {
+  try {
+    await recordAuditEvent({
+      action: 'logout',
+      resource: '退出登录',
+      result: 'success',
+      path: '/admin/home',
+    });
+  } catch {
+    // noop
+  }
   clearAuthSession();
   await router.push('/login');
 }
@@ -537,6 +596,14 @@ function clearUserFilters() {
   void loadUsers();
 }
 
+function clearAuditFilters() {
+  auditQuery.value = '';
+  auditActorWorkId.value = '';
+  auditFilters.value.result = '';
+  openFilterPicker.value = null;
+  void loadAuditLogs();
+}
+
 function applyProfileDocumentTypeFilter(value: string) {
   profileFilters.value.documentType = value;
   openFilterPicker.value = null;
@@ -559,6 +626,11 @@ function applyUserRoleFilter(value: string) {
 
 function applyUserStatusFilter(value: string) {
   userFilters.value.status = value;
+  openFilterPicker.value = null;
+}
+
+function applyAuditResultFilter(value: string) {
+  auditFilters.value.result = value;
   openFilterPicker.value = null;
 }
 
@@ -904,6 +976,26 @@ function formatUserRoleLabel(value: string) {
 function formatUserStatusLabel(value: string) {
   return value === 'active' ? '启用' : value === 'disabled' ? '停用' : value || '未填写';
 }
+
+function formatAuditResultLabel(value: string) {
+  return value === 'success' ? '成功' : value === 'denied' ? '拒绝' : value === 'failure' ? '失败' : value || '未知';
+}
+
+function formatAuditTime(value: string) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return parsed.toLocaleString('zh-CN', {
+    hour12: false,
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
 </script>
 
 <template>
@@ -1105,6 +1197,82 @@ function formatUserStatusLabel(value: string) {
       </section>
 
       <section v-else class="admin-panel">
+        <template v-if="activeTab === 'audit'">
+          <div class="admin-toolbar">
+            <div class="admin-toolbar__search-block">
+              <input
+                v-model="auditQuery"
+                class="admin-toolbar__search-input"
+                type="text"
+                inputmode="search"
+                placeholder="输入操作人、动作、资源或路径"
+              />
+            </div>
+            <div class="admin-toolbar__actions">
+              <input
+                v-model="auditActorWorkId"
+                class="admin-toolbar__search-input admin-toolbar__search-input--compact"
+                type="text"
+                inputmode="search"
+                placeholder="按工号筛选"
+              />
+              <div class="filter-picker">
+                <button
+                  class="filter-chip"
+                  :class="{ 'is-active': auditFilters.result }"
+                  type="button"
+                  @click.stop="toggleFilterPicker('audit-result')"
+                >
+                  {{ selectedAuditResultLabel }}
+                </button>
+                <div
+                  v-if="openFilterPicker === 'audit-result'"
+                  class="filter-picker__menu"
+                  @click.stop
+                >
+                  <button
+                    v-for="option in auditResultOptions"
+                    :key="option.value || 'all-audit-result'"
+                    type="button"
+                    @click="applyAuditResultFilter(option.value)"
+                  >
+                    {{ option.label }}
+                  </button>
+                </div>
+              </div>
+              <button type="button" class="ghost" @click="clearAuditFilters">清空筛选</button>
+              <button type="button" class="ghost ghost--strong" @click="loadAuditLogs">刷新日志</button>
+            </div>
+          </div>
+
+          <p class="admin-filter-summary">当前筛选后 {{ filteredAuditLogs.length }} 条审计日志。</p>
+
+          <div class="admin-audit-list">
+            <article v-for="item in filteredAuditLogs" :key="item.id" class="admin-audit-item">
+              <div class="admin-audit-item__head">
+                <div>
+                  <strong>{{ item.resource }}</strong>
+                  <p>{{ item.action }}</p>
+                </div>
+                <span
+                  class="admin-row__status"
+                  :class="item.result === 'success' ? 'is-active' : 'is-disabled'"
+                >
+                  <span class="admin-row__status-dot"></span>
+                  {{ formatAuditResultLabel(item.result) }}
+                </span>
+              </div>
+              <div class="admin-audit-item__meta">
+                <span>{{ formatAuditTime(item.createdAt) }}</span>
+                <span>{{ item.actorName || '未知操作人' }} / {{ item.actorWorkId || '-' }}</span>
+                <span>{{ item.method }} {{ item.path }}</span>
+                <span>状态码 {{ item.statusCode }}</span>
+              </div>
+            </article>
+          </div>
+        </template>
+
+        <template v-else>
         <div class="admin-toolbar">
           <div class="admin-toolbar__search-block">
             <input
@@ -1218,6 +1386,7 @@ function formatUserStatusLabel(value: string) {
             </tbody>
           </table>
         </div>
+        </template>
       </section>
     </section>
   </main>
@@ -1738,6 +1907,10 @@ function formatUserStatusLabel(value: string) {
   min-height: 64px;
 }
 
+.admin-toolbar__search-input--compact {
+  min-height: 64px;
+}
+
 .admin-form-grid {
   align-items: stretch;
 }
@@ -1758,6 +1931,42 @@ function formatUserStatusLabel(value: string) {
 .admin-filter-summary {
   margin: 0 0 18px;
   color: #7a5c50;
+}
+
+.admin-audit-list {
+  display: grid;
+  gap: 14px;
+}
+
+.admin-audit-item {
+  padding: 18px 20px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(212, 188, 173, 0.56);
+}
+
+.admin-audit-item__head,
+.admin-audit-item__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-audit-item__head {
+  align-items: flex-start;
+}
+
+.admin-audit-item__head p,
+.admin-audit-item__meta {
+  margin: 0;
+  color: #7a5c50;
+}
+
+.admin-audit-item__meta {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  margin-top: 10px;
 }
 
 .admin-toolbar input,

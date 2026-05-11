@@ -711,168 +711,170 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 
 <template>
   <section class="user-page">
-    <section class="panel-grid">
-      <section class="search-column">
-        <form class="surface-card surface-card--search" @submit.prevent="submitSearch">
+    <section class="user-shell">
+      <section class="panel-grid">
+        <section class="search-column">
+          <form class="surface-card surface-card--search" @submit.prevent="submitSearch">
+            <div class="panel-heading">
+              <div>
+                <h3>手动检索</h3>
+              </div>
+            </div>
+
+            <label class="search-box" for="passenger-query">
+              <input
+                id="passenger-query"
+                v-model="query"
+                :title="touchInputHint"
+                type="text"
+                placeholder="输入旅客证件号"
+                @dblclick.stop.prevent="openSearchKeyboard"
+              />
+              <button type="submit" :disabled="isSearching">
+                {{ isSearching ? '检索中...' : '查询' }}
+              </button>
+            </label>
+
+            <div v-if="recentSearches.length" class="tag-row">
+              <span class="tag-row__label">最近搜索</span>
+              <button
+                v-for="item in recentSearches"
+                :key="item"
+                class="tag-chip"
+                type="button"
+                @click="applyRecentSearch(item)"
+              >
+                {{ item }}
+              </button>
+            </div>
+          </form>
+
+          <section class="surface-card surface-card--results">
+            <div class="block-heading">
+              <div>
+                <h3>检索结果 ({{ results.length }})</h3>
+              </div>
+            </div>
+
+            <div v-if="results.length" class="results-list">
+              <article
+                v-for="record in results"
+                :key="record.id"
+                class="result-strip"
+                :class="{ 'is-high-risk': record.isHighRisk }"
+              >
+                <div class="result-strip__content">
+                  <div class="result-strip__headline">
+                    <strong>{{ record.fullName }}</strong>
+                    <span v-if="record.isHighRisk" class="result-strip__pill is-high-risk">高风险预警</span>
+                    <span class="result-strip__pill">
+                      {{ formatDocumentTypeLabel(readProfileField(record, 'basicInfo', 'documentType')) || '未填证件类型' }}
+                    </span>
+                    <span class="result-strip__pill">
+                      {{ formatGenderLabel(readProfileField(record, 'basicInfo', 'gender')) || '未填性别' }}
+                    </span>
+                    <span class="result-strip__identity">{{ record.documentNum }}</span>
+                  </div>
+
+                  <div class="result-strip__fact-list">
+                    <span
+                      v-for="detail in buildResultDetailEntries(record)"
+                      :key="`${record.id}-${detail.label}`"
+                      class="result-strip__fact"
+                    >
+                      <span class="result-strip__fact-label">{{ detail.label }}</span>
+                      <strong class="result-strip__fact-value">{{ detail.value }}</strong>
+                    </span>
+                  </div>
+
+                  <div
+                    v-if="buildResultTags(record).length || buildResultNotes(record).length"
+                    class="result-strip__tags"
+                  >
+                    <span
+                      v-for="tag in buildResultTags(record)"
+                      :key="`${record.id}-${tag}`"
+                      class="result-strip__tag"
+                    >
+                      {{ tag }}
+                    </span>
+                    <span
+                      v-for="note in buildResultNotes(record)"
+                      :key="`${record.id}-${note.label}`"
+                      class="result-strip__tag result-strip__tag--muted"
+                    >
+                      {{ note.label }}
+                    </span>
+                  </div>
+                </div>
+
+                <div class="result-strip__actions">
+                  <button class="primary-action" type="button" @click="openAskWorkspace">
+                    发起辅助问询
+                  </button>
+                </div>
+              </article>
+            </div>
+
+            <div v-else class="empty-state">
+              <p>{{ resultEmptyTitle }}</p>
+              <span>{{ resultEmptyDetail }}</span>
+            </div>
+          </section>
+        </section>
+
+        <section class="surface-card surface-card--camera">
           <div class="panel-heading">
             <div>
-              <h3>手动检索</h3>
+              <h3>实时扫描</h3>
             </div>
           </div>
 
-          <label class="search-box" for="passenger-query">
-            <input
-              id="passenger-query"
-              v-model="query"
-              :title="touchInputHint"
-              type="text"
-              placeholder="输入旅客证件号"
-              @dblclick.stop.prevent="openSearchKeyboard"
+          <div class="camera-preview" :class="{ 'is-live': isCameraActive, 'has-capture': capturedFrame }">
+            <video
+              v-show="isCameraActive"
+              ref="cameraVideo"
+              class="camera-preview__video"
+              autoplay
+              muted
+              playsinline
+            ></video>
+            <img
+              v-if="capturedFrame && !isCameraActive"
+              :src="capturedFrame"
+              class="camera-preview__image"
+              alt="已确认的证件画面"
             />
-            <button type="submit" :disabled="isSearching">
-              {{ isSearching ? '检索中...' : '查询' }}
-            </button>
-          </label>
-
-          <div v-if="recentSearches.length" class="tag-row">
-            <span class="tag-row__label">最近搜索</span>
-            <button
-              v-for="item in recentSearches"
-              :key="item"
-              class="tag-chip"
-              type="button"
-              @click="applyRecentSearch(item)"
-            >
-              {{ item }}
-            </button>
-          </div>
-        </form>
-
-        <section class="surface-card surface-card--results">
-          <div class="block-heading">
-            <div>
-              <h3>检索结果 ({{ results.length }})</h3>
+            <div v-if="!isCameraActive && !capturedFrame" class="camera-preview__placeholder">
+              <strong>等待开启摄像头</strong>
+              <span>开启后将自动持续扫描当前证件画面。</span>
             </div>
+            <div class="camera-preview__frame"></div>
           </div>
 
-          <div v-if="results.length" class="results-list">
-            <article
-              v-for="record in results"
-              :key="record.id"
-              class="result-strip"
-              :class="{ 'is-high-risk': record.isHighRisk }"
+          <canvas ref="captureCanvas" class="sr-only"></canvas>
+
+          <p class="status-copy camera-status camera-status--secondary">{{ cameraPanelStatus }}</p>
+
+          <div class="camera-actions">
+            <button
+              class="camera-action camera-action--primary"
+              type="button"
+              :disabled="isCameraStarting"
+              @click="toggleCamera"
             >
-              <div class="result-strip__content">
-                <div class="result-strip__headline">
-                  <strong>{{ record.fullName }}</strong>
-                  <span v-if="record.isHighRisk" class="result-strip__pill is-high-risk">高风险预警</span>
-                  <span class="result-strip__pill">
-                    {{ formatDocumentTypeLabel(readProfileField(record, 'basicInfo', 'documentType')) || '未填证件类型' }}
-                  </span>
-                  <span class="result-strip__pill">
-                    {{ formatGenderLabel(readProfileField(record, 'basicInfo', 'gender')) || '未填性别' }}
-                  </span>
-                  <span class="result-strip__identity">{{ record.documentNum }}</span>
-                </div>
-
-                <div class="result-strip__fact-list">
-                  <span
-                    v-for="detail in buildResultDetailEntries(record)"
-                    :key="`${record.id}-${detail.label}`"
-                    class="result-strip__fact"
-                  >
-                    <span class="result-strip__fact-label">{{ detail.label }}</span>
-                    <strong class="result-strip__fact-value">{{ detail.value }}</strong>
-                  </span>
-                </div>
-
-                <div
-                  v-if="buildResultTags(record).length || buildResultNotes(record).length"
-                  class="result-strip__tags"
-                >
-                  <span
-                    v-for="tag in buildResultTags(record)"
-                    :key="`${record.id}-${tag}`"
-                    class="result-strip__tag"
-                  >
-                    {{ tag }}
-                  </span>
-                  <span
-                    v-for="note in buildResultNotes(record)"
-                    :key="`${record.id}-${note.label}`"
-                    class="result-strip__tag result-strip__tag--muted"
-                  >
-                    {{ note.label }}
-                  </span>
-                </div>
-              </div>
-
-              <div class="result-strip__actions">
-                <button class="primary-action" type="button" @click="openAskWorkspace">
-                  发起辅助问询
-                </button>
-              </div>
-            </article>
-          </div>
-
-          <div v-else class="empty-state">
-            <p>{{ resultEmptyTitle }}</p>
-            <span>{{ resultEmptyDetail }}</span>
+              {{ isCameraActive ? '关闭' : isCameraStarting ? '开启中...' : '开启' }}
+            </button>
+            <button
+              class="camera-action"
+              type="button"
+              :disabled="!isCameraActive"
+              @click="confirmCameraFrame"
+            >
+              确定
+            </button>
           </div>
         </section>
-      </section>
-
-      <section class="surface-card surface-card--camera">
-        <div class="panel-heading">
-          <div>
-            <h3>实时扫描</h3>
-          </div>
-        </div>
-
-        <div class="camera-preview" :class="{ 'is-live': isCameraActive, 'has-capture': capturedFrame }">
-          <video
-            v-show="isCameraActive"
-            ref="cameraVideo"
-            class="camera-preview__video"
-            autoplay
-            muted
-            playsinline
-          ></video>
-          <img
-            v-if="capturedFrame && !isCameraActive"
-            :src="capturedFrame"
-            class="camera-preview__image"
-            alt="已确认的证件画面"
-          />
-          <div v-if="!isCameraActive && !capturedFrame" class="camera-preview__placeholder">
-            <strong>等待开启摄像头</strong>
-            <span>开启后将自动持续扫描当前证件画面。</span>
-          </div>
-          <div class="camera-preview__frame"></div>
-        </div>
-
-        <canvas ref="captureCanvas" class="sr-only"></canvas>
-
-        <p class="status-copy camera-status camera-status--secondary">{{ cameraPanelStatus }}</p>
-
-        <div class="camera-actions">
-          <button
-            class="camera-action camera-action--primary"
-            type="button"
-            :disabled="isCameraStarting"
-            @click="toggleCamera"
-          >
-            {{ isCameraActive ? '关闭' : isCameraStarting ? '开启中...' : '开启' }}
-          </button>
-          <button
-            class="camera-action"
-            type="button"
-            :disabled="!isCameraActive"
-            @click="confirmCameraFrame"
-          >
-            确定
-          </button>
-        </div>
       </section>
     </section>
   </section>
@@ -892,12 +894,23 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 }
 
 .user-page {
-  display: grid;
-  gap: 22px;
-  width: min(1480px, 100%);
   min-height: calc(100vh - 146px);
-  margin: 0 auto;
+  display: grid;
   align-content: center;
+}
+
+.user-shell {
+  box-sizing: border-box;
+  display: grid;
+  width: min(1180px, 100%);
+  height: calc(100vh - 146px);
+  margin: 0 auto;
+  padding: 26px 28px;
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(157, 189, 202, 0.36);
+  box-shadow: 0 22px 46px rgba(14, 40, 48, 0.08);
+  overflow: hidden;
 }
 
 .surface-card,
@@ -962,14 +975,21 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
   gap: 18px;
 }
 
+.panel-grid {
+  min-height: 0;
+  height: 100%;
+}
+
 .search-column {
   display: grid;
   gap: 14px;
-  min-height: 100%;
+  min-height: 0;
+  height: 100%;
   grid-template-rows: auto minmax(0, 1fr);
 }
 
 .surface-card {
+  min-height: 0;
   padding: 18px 20px;
 }
 
@@ -981,10 +1001,10 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 
 .surface-card--camera {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
   gap: 12px;
   padding: 14px 16px 16px;
   height: 100%;
-  align-content: start;
 }
 
 .surface-card--results {
@@ -993,6 +1013,7 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
   padding: 18px 20px 20px;
   min-height: 0;
   grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .panel-badge {
@@ -1113,11 +1134,11 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 .camera-preview {
   position: relative;
   overflow: hidden;
-  min-height: 220px;
+  min-height: 0;
+  height: 100%;
   border-radius: 22px;
   background: linear-gradient(160deg, rgba(11, 114, 136, 0.08), rgba(255, 255, 255, 0.96));
   border: 1px solid rgba(157, 189, 202, 0.36);
-  aspect-ratio: 1.58 / 1;
 }
 
 .camera-preview__video,
@@ -1208,6 +1229,7 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 .results-list {
   display: grid;
   gap: 14px;
+  height: 100%;
   margin-top: 16px;
   min-height: 0;
   align-content: start;
@@ -1523,6 +1545,13 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
     align-content: start;
   }
 
+  .user-shell {
+    height: auto;
+    padding: 22px 20px;
+    border-radius: 24px;
+    overflow: visible;
+  }
+
   .panel-heading,
   .block-heading {
     flex-direction: column;
@@ -1546,6 +1575,12 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 
   .camera-actions {
     grid-template-columns: 1fr;
+  }
+
+  .camera-preview {
+    min-height: 220px;
+    height: auto;
+    aspect-ratio: 1.58 / 1;
   }
 }
 </style>

@@ -19,6 +19,7 @@ import {
   type RiskAssessmentPayload,
   type TripProfilePayload,
 } from '../app/ai-service';
+import { recordAuditEvent } from '../app/audit-service';
 import {
   fetchMemoryContext,
   persistMemoryUpdates,
@@ -1654,6 +1655,15 @@ async function generateStrategy() {
   openStageLoading('strategy');
 
   try {
+    void recordAuditEvent({
+      action: 'generate_strategy',
+      resource: '辅助问询',
+      result: 'success',
+      path: '/home/ask',
+      detail: {
+        sessionId: sessionId.value,
+      },
+    });
     const context = await refreshMemoryContext();
     const response = await requestFirstRoundStrategy({
       sessionId: sessionId.value,
@@ -1724,6 +1734,16 @@ async function startSampling() {
   resetSpeechRecognitionState('等待语音输入。');
 
   try {
+    void recordAuditEvent({
+      action: 'start_sampling',
+      resource: '辅助问询',
+      result: 'success',
+      path: '/home/ask',
+      detail: {
+        roundId: round.id,
+        roundNumber: round.roundNumber,
+      },
+    });
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: 'user',
@@ -1844,6 +1864,17 @@ async function endSampling() {
     round.uploadState = 'uploaded';
     round.uploadErrorMessage = '';
     updateCurrentRoundSummary(round);
+    void recordAuditEvent({
+      action: 'end_sampling',
+      resource: '辅助问询',
+      result: 'success',
+      path: '/home/ask',
+      detail: {
+        roundId: round.id,
+        roundNumber: round.roundNumber,
+        recordedFileName: round.recordedFileName,
+      },
+    });
   } catch (error) {
     round.uploadState = 'error';
     round.uploadErrorMessage = normalizeErrorMessage(
@@ -1884,6 +1915,16 @@ async function enterNextRound() {
     resetSamplingIndicators();
     resetRealtimeDetectionViewState();
     await saveMemoryUpdates(response.memoryUpdates, response.memoryReferences);
+    void recordAuditEvent({
+      action: 'enter_next_round',
+      resource: '辅助问询',
+      result: 'success',
+      path: '/home/ask',
+      detail: {
+        currentRoundNumber: round.roundNumber,
+        nextRoundNumber,
+      },
+    });
   } catch (error) {
     roundServiceError.value = normalizeErrorMessage(
       error,
@@ -1906,6 +1947,15 @@ async function enterJudgementStage() {
 
   if (currentStage.value !== 'interview' || !round) {
     currentStage.value = 'judgement';
+    void recordAuditEvent({
+      action: 'enter_judgement_stage',
+      resource: '辅助问询',
+      result: 'success',
+      path: '/home/ask',
+      detail: {
+        mode: 'direct',
+      },
+    });
     return;
   }
 
@@ -1928,6 +1978,16 @@ async function enterJudgementStage() {
     };
     await saveMemoryUpdates(response.memoryUpdates, response.memoryReferences);
     currentStage.value = 'judgement';
+    void recordAuditEvent({
+      action: 'enter_judgement_stage',
+      resource: '辅助问询',
+      result: 'success',
+      path: '/home/ask',
+      detail: {
+        roundId: round.id,
+        roundNumber: round.roundNumber,
+      },
+    });
   } catch (error) {
     roundServiceError.value = normalizeErrorMessage(
       error,
@@ -1948,6 +2008,17 @@ function archiveCase() {
     hour12: false,
   });
   isArchived.value = true;
+  void recordAuditEvent({
+    action: 'archive_case',
+    resource: '辅助问询',
+    result: 'success',
+    path: '/home/ask',
+    detail: {
+      archivedAt: archivedAt.value,
+      sessionId: sessionId.value,
+      finalJudgement: selectedJudgement.value,
+    },
+  });
 }
 
 function strategyRiskToneClass(level: RiskAssessmentPayload['level']) {
