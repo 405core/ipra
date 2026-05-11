@@ -306,6 +306,8 @@ def _first_round_user_prompt(prompt: str, request: FirstRoundStrategyRequest) ->
     return (
         f"{prompt}\n\n"
         "请根据输入生成首轮问询策略。只返回 JSON 对象。\n"
+        "首轮必须先体现预评估与逻辑研判，再输出能试探真实出境目的、暴露前后不一致或隐瞒意图的中性问题。\n"
+        "问题应采用情境化提问、时间线回溯、细节补全、对照确认或开放式复述，不得虚构证据或诱导特定答案。\n"
         "memoryContext 中的记忆只能作为追问上下文和事实核验线索，不得单独构成风险结论。\n"
         "不要输出 llm、memoryReferences 或 memoryUpdates，这些字段由服务端补齐。\n"
         "JSON 结构必须为：\n"
@@ -325,6 +327,8 @@ def _followup_user_prompt(prompt: str, request: FollowupGuidanceRequest) -> str:
     return (
         f"{prompt}\n\n"
         "请根据输入生成后续追问指引。只返回 JSON 对象。\n"
+        "必须融合基础画像、问答历史、HumanOmni 音视频摘要、动作采样 JSON 与可选 ASR 文本，给出语义线索和视频/动作线索共同支持的异常提示。\n"
+        "如果 ASR 缺失或视频窗口不足，必须在 limitations 或 warnings 中说明证据限制。\n"
         f"followupGuidance 必须恰好包含 {question_count} 条追问建议，priority 从 1 到 {question_count}，不要少于或多于该数量。\n"
         "memoryContext 中的记忆只能作为追问上下文和事实核验线索，不得单独构成风险结论。\n"
         "不要输出 llm、memoryReferences 或 memoryUpdates，这些字段由服务端补齐。\n"
