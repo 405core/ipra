@@ -13,6 +13,7 @@ type Config struct {
 	Database DatabaseConfig
 	Auth     AuthConfig
 	OCR      OCRConfig
+	MinIO    MinIOConfig
 }
 
 type DatabaseConfig struct {
@@ -34,6 +35,14 @@ type OCRConfig struct {
 	IDCardAppCode   string
 	IDCardAppKey    string
 	IDCardAppSecret string
+}
+
+type MinIOConfig struct {
+	Endpoint    string
+	AccessKey   string
+	SecretKey   string
+	BucketVideo string
+	Secure      bool
 }
 
 func Load() (Config, error) {
@@ -64,6 +73,13 @@ func Load() (Config, error) {
 			IDCardAppCode:   os.Getenv("OCR_IDCARD_APP_CODE"),
 			IDCardAppKey:    os.Getenv("OCR_IDCARD_APP_KEY"),
 			IDCardAppSecret: os.Getenv("OCR_IDCARD_APP_SECRET"),
+		},
+		MinIO: MinIOConfig{
+			Endpoint:    os.Getenv("MINIO_ENDPOINT"),
+			AccessKey:   firstNonEmpty(os.Getenv("MINIO_ACCESS_KEY"), os.Getenv("MINIO_ROOT_USER")),
+			SecretKey:   firstNonEmpty(os.Getenv("MINIO_SECRET_KEY"), os.Getenv("MINIO_ROOT_PASSWORD")),
+			BucketVideo: firstNonEmpty(os.Getenv("MINIO_BUCKET_VIDEO"), os.Getenv("MINIO_BUCKET")),
+			Secure:      parseEnvBool(os.Getenv("MINIO_SECURE")),
 		},
 	}
 
@@ -242,4 +258,13 @@ func firstNonEmpty(value string, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func parseEnvBool(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
 }

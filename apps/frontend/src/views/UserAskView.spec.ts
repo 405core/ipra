@@ -16,6 +16,12 @@ const aiServiceMocks = vi.hoisted(() => ({
 
 vi.mock('../app/ai-service', () => aiServiceMocks);
 
+const archiveServiceMocks = vi.hoisted(() => ({
+  createInquiryArchive: vi.fn(),
+}));
+
+vi.mock('../app/archive-service', () => archiveServiceMocks);
+
 const profileServiceMocks = vi.hoisted(() => ({
   searchPassengerProfiles: vi.fn(),
 }));
@@ -399,9 +405,11 @@ describe('UserAskView realtime speech sampling', () => {
       modal: 'video_audio',
       uploadedFile: {
         filename: 'round-1.mp4',
-        storedPath: '/tmp/round-1.mp4',
+        storedPath: 'minio://ipra-videos/humanomni-windows/round-1.mp4',
         contentType: 'video/mp4',
         sizeBytes: 4,
+        bucket: 'ipra-videos',
+        objectKey: 'humanomni-windows/round-1.mp4',
       },
       humanOmni: {
         modelName: 'test',
@@ -417,6 +425,27 @@ describe('UserAskView realtime speech sampling', () => {
         rawSummary: '对象表述平稳。',
         modelName: 'test',
       },
+    });
+
+    archiveServiceMocks.createInquiryArchive.mockResolvedValue({
+      id: 1,
+      archiveCode: 'IPRA-ASK-20260511-0001',
+      sessionId: 'session-1',
+      passengerDocumentNum: '440582199402155270',
+      passengerName: '测试旅客',
+      operatorWorkId: 'user',
+      operatorName: '员工',
+      finalJudgement: 'clear',
+      judgementReason: '测试归档理由满足二十字以上的要求。',
+      roundCount: 1,
+      totalDurationSeconds: 1,
+      transcriptCount: 1,
+      status: 'archived',
+      archivedAt: '2026-05-11T08:00:00Z',
+      createdAt: '2026-05-11T08:00:00Z',
+      updatedAt: '2026-05-11T08:00:00Z',
+      rounds: [],
+      videos: [],
     });
 
     aiServiceMocks.requestFollowupGuidance.mockResolvedValue({
@@ -901,5 +930,54 @@ describe('UserAskView realtime speech sampling', () => {
 
     expect(aiServiceMocks.requestFollowupGuidance).toHaveBeenCalledTimes(1);
     expect(wrapper.text()).toContain('人工辅助判断');
+  });
+
+  it('persists archive payload and locks the completed view after archiving', async () => {
+    adminServiceMocks.getInquirySettings.mockResolvedValue({
+      maxRounds: 1,
+      minRounds: 1,
+      maxAllowedRounds: 10,
+      updatedAt: '2026-05-11T08:00:00Z',
+    });
+
+    const wrapper = mount(UserAskView);
+    mountedWrappers.push(wrapper);
+    await enterInterviewStage(wrapper);
+
+    await findButton(wrapper, '开始采样').trigger('click');
+    await flushPromises();
+    await nextTick();
+    await finishSampling(wrapper);
+
+    await findButton(wrapper, '进入人工辅助判断').trigger('click');
+    await flushPromises();
+    await nextTick();
+
+    await findButton(wrapper, '无异常').trigger('click');
+    const reasonInput = wrapper.find('textarea[placeholder*="请详细说明"]');
+    await reasonInput.setValue('该旅客回答与采样摘要基本一致，未发现明显异常风险。');
+    await findButton(wrapper, '归档').trigger('click');
+    await flushPromises();
+    await nextTick();
+
+    expect(archiveServiceMocks.createInquiryArchive).toHaveBeenCalledTimes(1);
+    const payload = archiveServiceMocks.createInquiryArchive.mock.calls[0][0];
+    expect(payload).toMatchObject({
+      finalJudgement: 'clear',
+      passengerDocumentNum: '440582199402155270',
+      rounds: [
+        {
+          roundNo: 1,
+          videos: [
+            {
+              minioBucket: 'ipra-videos',
+              minioObjectKey: 'humanomni-windows/round-1.mp4',
+            },
+          ],
+        },
+      ],
+    });
+    expect(wrapper.text()).toContain('流程已完成归档');
+    expect(wrapper.text()).toContain('IPRA-ASK-20260511-0001');
   });
 });

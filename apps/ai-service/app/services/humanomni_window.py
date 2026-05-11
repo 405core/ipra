@@ -58,12 +58,17 @@ async def summarize_uploaded_window(
         instruct=instruct or DEFAULT_INSTRUCT,
     )
     stored_path = str(saved_path)
+    stored_bucket: str | None = None
+    stored_object_key: str | None = None
     if is_minio_enabled():
-        stored_path = store_file(
+        stored_object = store_file(
             saved_path,
             _build_object_name(session_id, resolved_window_id, saved_path.suffix.lower()),
             file.content_type,
         )
+        stored_path = stored_object.stored_path
+        stored_bucket = stored_object.bucket or None
+        stored_object_key = stored_object.object_key or None
         _delete_if_exists(saved_path)
 
     summary = result.raw_summary
@@ -80,6 +85,8 @@ async def summarize_uploaded_window(
             storedPath=stored_path,
             contentType=file.content_type,
             sizeBytes=size_bytes,
+            bucket=stored_bucket,
+            objectKey=stored_object_key,
         ),
         humanOmni=result,
         humanOmniWindow=HumanOmniWindowSummary(

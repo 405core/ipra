@@ -17,6 +17,14 @@ var envKeys = []string{
 	"DB_NAME",
 	"DB_SSLMODE",
 	"JWT_SECRET",
+	"MINIO_ENDPOINT",
+	"MINIO_ACCESS_KEY",
+	"MINIO_SECRET_KEY",
+	"MINIO_ROOT_USER",
+	"MINIO_ROOT_PASSWORD",
+	"MINIO_BUCKET_VIDEO",
+	"MINIO_BUCKET",
+	"MINIO_SECURE",
 }
 
 func TestLoadUsesEnvFilesAndLocalOverrides(t *testing.T) {

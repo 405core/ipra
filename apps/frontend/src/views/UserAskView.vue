@@ -26,8 +26,15 @@ import {
   type RealtimeAsrEvent,
   type RiskAssessmentPayload,
   type TripProfilePayload,
+  type UploadedWindowFilePayload,
 } from '../app/ai-service';
 import { recordAuditEvent } from '../app/audit-service';
+import {
+  createInquiryArchive,
+  type CreateInquiryArchivePayload,
+  type CreateInquiryArchiveRoundPayload,
+  type CreateInquiryArchiveVideoPayload,
+} from '../app/archive-service';
 import {
   fetchMemoryContext,
   persistMemoryUpdates,
@@ -116,6 +123,7 @@ interface InterviewRound {
   humanOmniWindow: HumanOmniWindowSummaryPayload | null;
   actionObservations: ActionObservationPayload[];
   recordedFileName: string;
+  uploadedFile: UploadedWindowFilePayload | null;
   asrText: string;
 }
 
@@ -333,8 +341,9 @@ const selectedJudgement = ref<FinalJudgement | null>(null);
 const judgementReason = ref('');
 const judgementBriefing = ref<JudgementBriefing | null>(null);
 const isArchived = ref(false);
+const isArchiving = ref(false);
 const archivedAt = ref('');
-const archiveCode = ref('IPRA-ASK-20260503-014');
+const archiveCode = ref('');
 const stageLoadingMode = ref<StageLoadingMode | null>(null);
 const stageLoadingPhraseIndex = ref(0);
 const speechRecognitionPhase = ref<SpeechRecognitionPhase>('idle');
@@ -466,6 +475,7 @@ const canArchive = computed(
   () =>
     Boolean(selectedJudgement.value) &&
     judgementReason.value.trim().length >= 20 &&
+    !isArchiving.value &&
     !isArchived.value,
 );
 
@@ -1319,6 +1329,7 @@ function buildOpeningRound() {
     humanOmniWindow: null,
     actionObservations: [],
     recordedFileName: '',
+    uploadedFile: null,
     asrText: '',
   } satisfies InterviewRound;
 }
@@ -1386,6 +1397,7 @@ function buildFollowUpRoundFromResponse(
     humanOmniWindow: null,
     actionObservations: [],
     recordedFileName: '',
+    uploadedFile: null,
     asrText: '',
   } satisfies InterviewRound;
 }
@@ -2055,6 +2067,7 @@ async function startSampling() {
   round.humanOmniWindow = null;
   round.actionObservations = [];
   round.recordedFileName = '';
+  round.uploadedFile = null;
   round.asrText = '';
   round.transcripts = [];
   resetSpeechRecognitionState('等待语音输入。');
@@ -2187,6 +2200,7 @@ async function endSampling() {
     );
     round.humanOmniWindow = response.humanOmniWindow;
     round.recordedFileName = response.uploadedFile.filename;
+    round.uploadedFile = response.uploadedFile;
     round.uploadState = 'uploaded';
     round.uploadErrorMessage = '';
     updateCurrentRoundSummary(round);
@@ -2350,25 +2364,162 @@ async function enterJudgementStage() {
   }
 }
 
-function archiveCase() {
+async function archiveCase() {
   if (!canArchive.value) {
     return;
   }
 
-  archivedAt.value = new Date().toLocaleString('zh-CN', {
-    hour12: false,
-  });
-  isArchived.value = true;
-  void recordAuditEvent({
-    action: 'archive_case',
-    resource: '辅助问询',
-    result: 'success',
-    path: '/home/ask',
-    detail: {
-      archivedAt: archivedAt.value,
-      sessionId: sessionId.value,
-      finalJudgement: selectedJudgement.value,
+  isArchiving.value = true;
+  roundServiceError.value = '';
+
+  try {
+    const response = await createInquiryArchive(buildArchivePayload());
+    archiveCode.value = response.archiveCode;
+    archivedAt.value = formatArchiveTimestamp(response.archivedAt);
+    isArchived.value = true;
+    ElMessage.success('问询归档已保存。');
+    void recordAuditEvent({
+      action: 'archive_case',
+      resource: '辅助问询',
+      result: 'success',
+      path: '/home/ask',
+      detail: {
+        archiveCode: response.archiveCode,
+        archivedAt: response.archivedAt,
+        sessionId: sessionId.value,
+        finalJudgement: selectedJudgement.value,
+      },
+    });
+  } catch (error) {
+    roundServiceError.value = normalizeErrorMessage(
+      error,
+      '问询归档保存失败，请检查后端和 MinIO 配置。',
+    );
+    ElMessage.error(roundServiceError.value);
+  } finally {
+    isArchiving.value = false;
+  }
+}
+
+function buildArchivePayload(): CreateInquiryArchivePayload {
+  const profile = requireSelectedProfile();
+  return {
+    sessionId: sessionId.value,
+    passengerProfileId: profile.id || null,
+    passengerDocumentNum: profile.documentNum,
+    passengerName: profile.fullName,
+    passengerSnapshot: {
+      profile,
+      passengerProfile: buildPassengerPayload(profile),
+      tripProfile: buildTripPayload(profile),
+      riskLevel: passengerProfile.value.riskLevel,
+      riskLabel: passengerProfile.value.riskLabel,
     },
+    finalJudgement: selectedJudgement.value || '',
+    judgementReason: judgementReason.value.trim(),
+    judgementBriefing: judgementBriefing.value
+      ? {
+          ...judgementBriefing.value,
+        }
+      : {},
+    multimodalAssessment: judgementBriefing.value?.multimodalAssessment || {},
+    totalDurationSeconds: totalSampleDuration.value,
+    transcriptCount: totalTranscriptCount.value,
+    rounds: completedRounds.value.map(buildArchiveRoundPayload),
+  };
+}
+
+function buildArchiveRoundPayload(
+  round: InterviewRound,
+): CreateInquiryArchiveRoundPayload {
+  const riskHints = [
+    round.signal,
+    ...(round.humanOmniWindow?.rawSummary ? ['HumanOmni 摘要已生成'] : []),
+  ].filter(Boolean);
+
+  return {
+    roundNo: round.roundNumber,
+    roundClientId: round.id,
+    title: round.title,
+    focus: round.focus,
+    strategyNote: round.strategyNote,
+    questions: round.questions,
+    transcripts: round.transcripts,
+    answerText: collectSubjectTranscript(round),
+    roundSummary: round.summary,
+    humanOmniSummary: round.humanOmniWindow?.rawSummary || '',
+    actionObservations: round.actionObservations,
+    riskHints,
+    durationSeconds: round.durationSeconds,
+    videos: buildArchiveVideos(round),
+  };
+}
+
+function buildArchiveVideos(round: InterviewRound): CreateInquiryArchiveVideoPayload[] {
+  const uploadedFile = round.uploadedFile;
+  const objectInfo = resolveMinioObjectInfo(uploadedFile);
+  if (!uploadedFile || !objectInfo) {
+    return [];
+  }
+
+  return [
+    {
+      videoKind: 'round_clip',
+      windowId: round.humanOmniWindow?.windowId || null,
+      questionId: round.humanOmniWindow?.questionId || round.questions[0]?.id || null,
+      videoUrl: uploadedFile.storedPath,
+      minioBucket: objectInfo.bucket,
+      minioObjectKey: objectInfo.objectKey,
+      fileName: uploadedFile.filename,
+      contentType: uploadedFile.contentType || 'video/mp4',
+      sizeBytes: uploadedFile.sizeBytes,
+      modal: round.humanOmniWindow?.modal || 'video_audio',
+      startSeconds: round.humanOmniWindow?.startSeconds ?? 0,
+      endSeconds: round.humanOmniWindow?.endSeconds ?? Math.max(1, round.durationSeconds),
+      humanOmniModel: round.humanOmniWindow?.modelName || null,
+      humanOmniRawSummary: round.humanOmniWindow?.rawSummary || null,
+      uploadPayload: {
+        ...uploadedFile,
+      },
+    },
+  ];
+}
+
+function resolveMinioObjectInfo(uploadedFile: UploadedWindowFilePayload | null) {
+  if (!uploadedFile) {
+    return null;
+  }
+  if (uploadedFile.bucket && uploadedFile.objectKey) {
+    return {
+      bucket: uploadedFile.bucket,
+      objectKey: uploadedFile.objectKey,
+    };
+  }
+
+  const storedPath = uploadedFile.storedPath.trim();
+  if (!storedPath.startsWith('minio://')) {
+    return null;
+  }
+
+  const withoutScheme = storedPath.slice('minio://'.length);
+  const slashIndex = withoutScheme.indexOf('/');
+  if (slashIndex <= 0 || slashIndex === withoutScheme.length - 1) {
+    return null;
+  }
+
+  return {
+    bucket: withoutScheme.slice(0, slashIndex),
+    objectKey: withoutScheme.slice(slashIndex + 1),
+  };
+}
+
+function formatArchiveTimestamp(value: string) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleString('zh-CN', {
+    hour12: false,
   });
 }
 
@@ -4123,7 +4274,7 @@ onBeforeUnmount(() => {
               :disabled="!canArchive"
               @click="archiveCase"
             >
-              归档
+              {{ isArchiving ? '归档中...' : '归档' }}
             </button>
           </div>
         </template>

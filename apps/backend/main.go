@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"ipra/backend/internal/archive"
 	"ipra/backend/internal/audit"
 	"ipra/backend/internal/auth"
 	"ipra/backend/internal/config"
@@ -38,6 +39,7 @@ func main() {
 	authHandler := auth.NewHandler(db, tokenManager, auditRecorder)
 	profileHandler := profile.NewHandler(db, cfg.OCR)
 	inquiryHandler := inquiry.NewHandler()
+	archiveHandler := archive.NewHandler(db, cfg.MinIO)
 	memoryHandler := memory.NewHandler(memory.NewGormStore(db))
 	settingsStore := settings.NewGormStore(db)
 	if err := settingsStore.EnsureSchema(context.Background()); err != nil {
@@ -46,7 +48,7 @@ func main() {
 	settingsHandler := settings.NewHandler(settingsStore)
 	auditHandler := audit.NewHandler(auditRecorder, authHandler.AuthMiddleware(), authHandler.ResolveAuditIdentity)
 
-	r := newRouter(authHandler, profileHandler, inquiryHandler, memoryHandler, settingsHandler, auditHandler, auditRecorder)
+	r := newRouter(authHandler, profileHandler, inquiryHandler, archiveHandler, memoryHandler, settingsHandler, auditHandler, auditRecorder)
 
 	addr := ":" + cfg.Port
 	log.Printf("backend listening on %s (%s)", addr, cfg.AppEnv)
@@ -59,6 +61,7 @@ func newRouter(
 	authHandler *auth.Handler,
 	profileHandler *profile.Handler,
 	inquiryHandler *inquiry.Handler,
+	archiveHandler *archive.Handler,
 	memoryHandler *memory.Handler,
 	settingsHandler *settings.Handler,
 	auditHandler *audit.Handler,
@@ -87,6 +90,10 @@ func newRouter(
 		if memoryHandler != nil {
 			memoryHandler.Register(r, authHandler.AuthMiddleware())
 			memoryHandler.RegisterAdminRoutes(r, authHandler.AuthMiddleware())
+		}
+		if archiveHandler != nil {
+			archiveHandler.Register(r, authHandler.AuthMiddleware())
+			archiveHandler.RegisterAdminRoutes(r, authHandler.AuthMiddleware())
 		}
 		if settingsHandler != nil {
 			settingsHandler.Register(r, authHandler.AuthMiddleware())
