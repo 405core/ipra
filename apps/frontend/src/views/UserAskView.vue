@@ -413,9 +413,11 @@ let speechInterimTranscript = '';
 let isStoppingSpeechRecognition = false;
 let speechRecognitionHadError = false;
 let speechRecognitionFatalError = false;
+let speechRecognitionStopTimerId: number | null = null;
 let interviewPanelResizeObserver: ResizeObserver | null = null;
 const ASR_TARGET_SAMPLE_RATE = 16000;
 const ASR_FRAME_BYTES = 1280;
+const ASR_STOP_GRACE_MS = 2500;
 let stageLoadingTimerId: number | null = null;
 const MP4_H264_MIME_TYPES = [
   'video/mp4;codecs=avc1.64001F,mp4a.40.2',
@@ -1154,10 +1156,16 @@ function buildQaHistory() {
     .filter((round) => round.completed && round.uploadState === 'uploaded')
     .map((round) => {
       const answerText = collectSubjectTranscript(round);
+      const questionList = round.questions
+        .map(
+          (question, index) =>
+            `${index + 1}. ${question.title}：${question.prompt}`,
+        )
+        .join('\n');
       return {
-        questionId: round.questions[0]?.id || null,
+        questionId: round.id,
         roundNo: round.roundNumber,
-        question: round.questions[0]?.prompt || round.title,
+        question: questionList || round.title,
         answerText,
         answerStartSeconds: 0,
         answerEndSeconds: Math.max(1, round.durationSeconds),
@@ -2316,6 +2324,13 @@ function stopAsrAudioProcessing() {
   asrProcessorNode = null;
 }
 
+function clearSpeechRecognitionStopTimer() {
+  if (speechRecognitionStopTimerId !== null) {
+    window.clearTimeout(speechRecognitionStopTimerId);
+    speechRecognitionStopTimerId = null;
+  }
+}
+
 function startSpeechRecognition(round: InterviewRound) {
   if (typeof WebSocket === 'undefined') {
     speechRecognitionPhase.value = 'unsupported';
@@ -2335,6 +2350,7 @@ function startSpeechRecognition(round: InterviewRound) {
   speechInterimTranscript = '';
   speechRecognitionHadError = false;
   speechRecognitionFatalError = false;
+  clearSpeechRecognitionStopTimer();
   asrPcmByteQueue = [];
   asrStableSegments = new Map<number, string>();
   asrInterimSegments = new Map<number, string>();
@@ -2378,6 +2394,7 @@ function startSpeechRecognition(round: InterviewRound) {
     speechRecognitionMessage.value = '讯飞实时转写连接异常。';
   };
   socket.onclose = (event) => {
+    clearSpeechRecognitionStopTimer();
     stopAsrAudioProcessing();
     if (asrWebSocket === socket) {
       asrWebSocket = null;
@@ -2385,7 +2402,9 @@ function startSpeechRecognition(round: InterviewRound) {
 
     if (isStoppingSpeechRecognition) {
       speechRecognitionPhase.value = 'ended';
-      speechRecognitionMessage.value = '讯飞实时转写已结束。';
+      speechRecognitionMessage.value = speechFinalTranscript.trim()
+        ? '讯飞实时转写已完成。'
+        : '讯飞实时转写已结束，未返回有效文本。';
       isStoppingSpeechRecognition = false;
       return;
     }
@@ -2412,14 +2431,23 @@ function stopSpeechRecognition(options: { reset?: boolean } = {}) {
   if (socket) {
     isStoppingSpeechRecognition = true;
     speechRecognitionPhase.value = 'stopping';
+    speechRecognitionMessage.value = '正在等待讯飞返回最终转写。';
     if (socket.readyState === WebSocket.OPEN) {
       socket.send(JSON.stringify({ type: 'end' }));
+      clearSpeechRecognitionStopTimer();
+      speechRecognitionStopTimerId = window.setTimeout(() => {
+        if (asrWebSocket === socket) {
+          socket.close();
+        }
+      }, ASR_STOP_GRACE_MS);
+    } else {
+      socket.close();
+      asrWebSocket = null;
     }
-    socket.close();
-    asrWebSocket = null;
   }
 
   if (options.reset) {
+    clearSpeechRecognitionStopTimer();
     resetSpeechRecognitionState();
   }
 }
@@ -4862,6 +4890,17 @@ onBeforeUnmount(() => {
 
 .history-item__tags .tag-chip {
   max-width: min(100%, 520px);
+  min-height: 28px;
+  height: auto;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  align-items: flex-start;
+  overflow: visible;
+  text-align: left;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .status-chip--idle {
