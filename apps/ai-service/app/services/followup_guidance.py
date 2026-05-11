@@ -38,6 +38,57 @@ FOLLOWUP_BANK = [
 ]
 
 
+def _answer_mentions_any(answer: str, tokens: list[str]) -> bool:
+    return any(token in answer for token in tokens)
+
+
+def _select_followup_bank(request: FollowupGuidanceRequest, question_count: int) -> list[tuple[str, str, str]]:
+    latest_answer = request.qa_history[-1].answer_text if request.qa_history else ""
+    selected: list[tuple[str, str, str]] = []
+
+    if _answer_mentions_any(latest_answer, ["朋友", "接待", "安排"]):
+        selected.append(
+            (
+                "联系人核验",
+                "您刚才提到由朋友或他人安排，能否说明对方身份、联系方式以及具体负责哪一部分安排？",
+                "旅客已提到他人安排，不再重复询问是否有同行或接待人，改为核验联系人身份和安排边界。",
+            )
+        )
+
+    if _answer_mentions_any(latest_answer, ["酒店", "住宿", "住", "地址"]):
+        selected.append(
+            (
+                "住宿凭证",
+                "您刚才提到住宿已经安排，是否可以补充酒店名称、入住日期或预订凭证来源？",
+                "旅客已回答住宿方向，继续核验可验证细节而非重复询问住在哪里。",
+            )
+        )
+
+    if _answer_mentions_any(latest_answer, ["钱", "费用", "付款", "垫付", "承担"]):
+        selected.append(
+            (
+                "资金凭证",
+                "您刚才提到费用或付款安排，能否说明付款人、付款时间以及是否有对应记录？",
+                "旅客已回答资金方向，继续核验付款链条和凭证缺口。",
+            )
+        )
+
+    if _answer_mentions_any(latest_answer, ["不确定", "可能", "应该", "看", "到时候"]):
+        selected.append(
+            (
+                "不确定表述",
+                "您刚才有些安排还不太确定，能否按时间顺序说明哪些已经确认、哪些还在等待对方确认？",
+                "针对不确定表述补齐时间线，避免重复泛问已回答主题。",
+            )
+        )
+
+    for item in FOLLOWUP_BANK:
+        if item not in selected:
+            selected.append(item)
+
+    return [selected[index % len(selected)] for index in range(question_count)]
+
+
 def build_mock_followup_guidance(
     request: FollowupGuidanceRequest,
     runtime: dict[str, str],
@@ -57,7 +108,7 @@ def build_mock_followup_guidance(
     else:
         summary = "当前缺少可用的问答、HumanOmni 或动作采样信息，建议先补齐基础答复。"
 
-    selected_followups = [FOLLOWUP_BANK[index % len(FOLLOWUP_BANK)] for index in range(question_count)]
+    selected_followups = _select_followup_bank(request, question_count)
     followups = [
         FollowupQuestion(
             priority=index,
