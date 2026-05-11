@@ -140,6 +140,21 @@ def main() -> int:
             safetensors_count = len(list(business_model_path.glob("*.safetensors")))
             print_item("business LLM safetensors shards", safetensors_count > 0, str(safetensors_count))
             ok = ok and safetensors_count > 0
+    elif business_provider == "openai_compatible":
+        business_base_url = os.getenv("BUSINESS_LLM_BASE_URL", "").strip()
+        business_model = os.getenv("BUSINESS_LLM_MODEL", "").strip()
+        print_item("business LLM base URL", bool(business_base_url), business_base_url or "missing")
+        print_item("business LLM model", bool(business_model), business_model or "missing")
+        api_key_present = bool(os.getenv("BUSINESS_LLM_API_KEY", "").strip())
+        print_item("business LLM API key", True, "set" if api_key_present else "empty; allowed for internal deployments")
+        httpx_present = has_module("httpx")
+        print_item("python package httpx", httpx_present, "required for OpenAI-compatible business LLM")
+        ok = ok and bool(business_base_url) and bool(business_model) and httpx_present
+    elif business_provider == "mock":
+        print_item("business LLM mock provider", True, "schema-only first-round tests; follow-up requires real business LLM")
+    else:
+        print_item("business LLM provider", False, "expected transformers_local, openai_compatible, or mock")
+        ok = False
 
     for package in REQUIRED_PACKAGES:
         present = has_module(package)

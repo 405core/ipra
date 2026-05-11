@@ -65,6 +65,21 @@ BUSINESS_LLM_TORCH_DTYPE=auto
 BUSINESS_LLM_DEVICE_MAP=auto
 ```
 
+DeepSeek V3.2 全精度服务器部署时，建议由 vLLM、SGLang、TGI 或其他网关单独暴露 OpenAI-compatible API，AI-Service 通过 `openai_compatible` provider 调用：
+
+```text
+BUSINESS_LLM_PROVIDER=openai_compatible
+BUSINESS_LLM_MODEL=deepseek-ai/DeepSeek-V3.2
+BUSINESS_LLM_BASE_URL=http://deepseek-server:8000/v1
+BUSINESS_LLM_API_KEY=local-or-internal-token
+BUSINESS_LLM_TIMEOUT_SECONDS=900
+BUSINESS_LLM_MAX_NEW_TOKENS=1536
+BUSINESS_LLM_TEMPERATURE=1.0
+BUSINESS_LLM_TOP_P=0.95
+```
+
+详细部署说明见 `docs/ai-service-development/deepseek-v32-deployment.md`。
+
 Mock 配置示例：
 
 ```text
