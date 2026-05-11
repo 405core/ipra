@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	dbschema "ipra/backend/internal/database"
+	"ipra/backend/internal/sensitive"
 )
 
 type adminUserPayload struct {
@@ -28,6 +29,7 @@ func (h *Handler) RegisterAdminRoutes(r gin.IRouter) {
 	adminGroup.Use(h.requireAuth(), requireAdminRoleForAuth())
 
 	adminGroup.GET("", h.handleAdminListUsers)
+	adminGroup.GET("/protected", h.handleAdminProtectedUsers)
 	adminGroup.POST("", h.handleAdminCreateUser)
 	adminGroup.PUT("/:id", h.handleAdminUpdateUser)
 	adminGroup.PATCH("/:id/status", h.handleAdminUpdateUserStatus)
@@ -77,6 +79,99 @@ func (h *Handler) handleAdminListUsers(c *gin.Context) {
 	c.JSON(http.StatusOK, adminUserListResult{
 		Items: items,
 		Total: total,
+	})
+}
+
+func (h *Handler) handleAdminProtectedUsers(c *gin.Context) {
+	if h.sensitive == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"message": "敏感图片服务未启用"})
+		return
+	}
+
+	claims, ok := ClaimsFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "未授权"})
+		return
+	}
+
+	limit := 20
+	if rawLimit := strings.TrimSpace(c.Query("limit")); rawLimit != "" {
+		if parsed, err := strconv.Atoi(rawLimit); err == nil && parsed > 0 {
+			if parsed > 500 {
+				parsed = 500
+			}
+			limit = parsed
+		}
+	}
+
+	query := strings.TrimSpace(c.Query("query"))
+	dbQuery := h.db.Model(&dbschema.SystemUser{})
+	if query != "" {
+		pattern := "%" + query + "%"
+		dbQuery = dbQuery.Where(
+			`work_id ILIKE ? OR name ILIKE ? OR role ILIKE ? OR status ILIKE ?`,
+			pattern,
+			pattern,
+			pattern,
+			pattern,
+		)
+	}
+
+	var total int64
+	if err := dbQuery.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "查询用户失败"})
+		return
+	}
+
+	var users []dbschema.SystemUser
+	if err := dbQuery.Order("updated_at DESC").Limit(limit).Find(&users).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "查询用户失败"})
+		return
+	}
+
+	items := make([]sensitive.ListItem, 0, len(users))
+	for _, user := range users {
+		document := sensitive.Document{
+			Eyebrow:  "用户管理",
+			Title:    firstNonEmptyString(strings.TrimSpace(user.Name), "系统用户"),
+			Subtitle: "工号 " + firstNonEmptyString(strings.TrimSpace(user.WorkID), "-"),
+			Tags: compactUserStrings([]string{
+				"角色 " + NormalizeRole(user.Role),
+				"状态 " + NormalizeStatus(user.Status),
+			}),
+			Sections: []sensitive.Section{
+				{
+					Heading: "账号信息",
+					Lines: compactUserStrings([]string{
+						"姓名：" + firstNonEmptyString(strings.TrimSpace(user.Name), "-"),
+						"工号：" + firstNonEmptyString(strings.TrimSpace(user.WorkID), "-"),
+						"角色：" + NormalizeRole(user.Role),
+						"状态：" + NormalizeStatus(user.Status),
+					}),
+				},
+			},
+			Footer: []string{
+				"更新时间 " + user.UpdatedAt.Local().Format("2006-01-02 15:04:05"),
+			},
+		}
+		items = append(items, sensitive.ListItem{
+			ID: strconv.FormatUint(user.ID, 10),
+			Asset: h.sensitive.Put(
+				claims.UserID,
+				document,
+				sensitive.PresetList,
+				sensitive.FormatWebP,
+				buildSensitiveWatermarkContext(c, claims, "admin:users"),
+			),
+			Actions: []string{"edit", "toggle-status"},
+		})
+	}
+
+	c.JSON(http.StatusOK, sensitive.ListResponse{
+		Items:    items,
+		Total:    total,
+		Page:     1,
+		PageSize: len(items),
 	})
 }
 
@@ -239,4 +334,14 @@ func requireAdminRoleForAuth() gin.HandlerFunc {
 		}
 		c.Next()
 	}
+}
+
+func compactUserStrings(values []string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }

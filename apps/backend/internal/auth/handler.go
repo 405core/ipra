@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 	"ipra/backend/internal/audit"
 	dbschema "ipra/backend/internal/database"
+	"ipra/backend/internal/sensitive"
 )
 
 const authClaimsContextKey = "authClaims"
@@ -17,6 +18,7 @@ type Handler struct {
 	db           *gorm.DB
 	audit        *audit.Recorder
 	tokenManager *TokenManager
+	sensitive    *sensitive.Manager
 }
 
 type loginRequest struct {
@@ -38,6 +40,13 @@ func NewHandler(db *gorm.DB, tokenManager *TokenManager, auditRecorder *audit.Re
 		audit:        auditRecorder,
 		tokenManager: tokenManager,
 	}
+}
+
+func (h *Handler) SetSensitiveManager(manager *sensitive.Manager) {
+	if h == nil {
+		return
+	}
+	h.sensitive = manager
 }
 
 func (h *Handler) Register(r gin.IRouter) {
@@ -263,6 +272,26 @@ func (h *Handler) ResolveAuditIdentity(c *gin.Context) (audit.Identity, bool) {
 		Name:   claims.Name,
 		Role:   NormalizeRole(claims.Role),
 	}, true
+}
+
+func buildSensitiveWatermarkContext(c *gin.Context, claims Claims, page string) sensitive.WatermarkContext {
+	return sensitive.NewWatermarkContext(
+		strings.TrimSpace(claims.WorkID),
+		strings.TrimSpace(claims.Name),
+		strings.TrimSpace(claims.Role),
+		strings.TrimSpace(c.ClientIP()),
+		c.Request.Method+" "+firstNonEmptyString(c.FullPath(), c.Request.URL.Path),
+		page,
+	)
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func parseBearerToken(header string) (string, bool) {

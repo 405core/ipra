@@ -8,6 +8,13 @@ import (
 )
 
 type Config struct {
+	AppEnv    string
+	Port      string
+	Database  DatabaseConfig
+	Auth      AuthConfig
+	OCR       OCRConfig
+	Sensitive SensitiveConfig
+	AIService AIServiceConfig
 	AppEnv   string
 	Port     string
 	Database DatabaseConfig
@@ -37,6 +44,14 @@ type OCRConfig struct {
 	IDCardAppSecret string
 }
 
+type SensitiveConfig struct {
+	Enabled        bool
+	ProtectedOnly  bool
+	FontCandidates []string
+}
+
+type AIServiceConfig struct {
+	BaseURL string
 type MinIOConfig struct {
 	Endpoint    string
 	AccessKey   string
@@ -74,6 +89,18 @@ func Load() (Config, error) {
 			IDCardAppKey:    os.Getenv("OCR_IDCARD_APP_KEY"),
 			IDCardAppSecret: os.Getenv("OCR_IDCARD_APP_SECRET"),
 		},
+		Sensitive: SensitiveConfig{
+			Enabled: parseBoolEnv(firstNonEmpty(os.Getenv("SENSITIVE_IMAGE_MODE"), "1")),
+			ProtectedOnly: parseBoolEnv(firstNonEmpty(os.Getenv("SENSITIVE_PROTECTED_ONLY"), "1")),
+			FontCandidates: splitCSV(
+				firstNonEmpty(
+					os.Getenv("SENSITIVE_FONT_CANDIDATES"),
+					"/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc,/usr/share/fonts/truetype/wqy/wqy-zenhei.ttf,/usr/share/fonts/opentype/unifont/unifont.otf,/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+				),
+			),
+		},
+		AIService: AIServiceConfig{
+			BaseURL: firstNonEmpty(os.Getenv("AI_SERVICE_BASE_URL"), "http://127.0.0.1:9000"),
 		MinIO: MinIOConfig{
 			Endpoint:    os.Getenv("MINIO_ENDPOINT"),
 			AccessKey:   firstNonEmpty(os.Getenv("MINIO_ACCESS_KEY"), os.Getenv("MINIO_ROOT_USER")),
@@ -260,6 +287,9 @@ func firstNonEmpty(value string, fallback string) string {
 	return fallback
 }
 
+func parseBoolEnv(value string) bool {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case "1", "TRUE", "YES", "ON":
 func parseEnvBool(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "1", "true", "yes", "y", "on":
@@ -267,4 +297,15 @@ func parseEnvBool(value string) bool {
 	default:
 		return false
 	}
+}
+
+func splitCSV(value string) []string {
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }
