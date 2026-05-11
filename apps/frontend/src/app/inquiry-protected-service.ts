@@ -1,4 +1,8 @@
 import { loadAuthSession } from '../auth';
+import type {
+  HumanOmniWindowSummaryPayload,
+  UploadedWindowFilePayload,
+} from './ai-service';
 import type { ProtectedAssetRef } from './protected-service';
 
 export interface ProtectedInquiryRoundSnapshot {
@@ -9,6 +13,9 @@ export interface ProtectedInquiryRoundSnapshot {
   status: string;
   promptAsset?: ProtectedAssetRef;
   summaryAsset?: ProtectedAssetRef;
+  recordedFileName?: string;
+  uploadedFile?: UploadedWindowFilePayload;
+  humanOmniWindow?: HumanOmniWindowSummaryPayload;
 }
 
 export interface ProtectedInquirySessionSnapshot {

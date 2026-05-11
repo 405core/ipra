@@ -99,6 +99,7 @@ type ProtectedRound struct {
 	Status             string
 	DurationSeconds    int
 	RecordedFileName   string
+	UploadedFile       map[string]any
 	AnswerText         string
 	PromptQuestions    []string
 	HumanOmniSummary   string
@@ -108,13 +109,16 @@ type ProtectedRound struct {
 }
 
 type ProtectedRoundSnapshot struct {
-	ID            string               `json:"id"`
-	RoundNumber   int                  `json:"roundNumber"`
-	Title         string               `json:"title"`
-	QuestionCount int                  `json:"questionCount"`
-	Status        string               `json:"status"`
-	PromptAsset   *sensitive.AssetRef  `json:"promptAsset,omitempty"`
-	SummaryAsset  *sensitive.AssetRef  `json:"summaryAsset,omitempty"`
+	ID               string              `json:"id"`
+	RoundNumber      int                 `json:"roundNumber"`
+	Title            string              `json:"title"`
+	QuestionCount    int                 `json:"questionCount"`
+	Status           string              `json:"status"`
+	PromptAsset      *sensitive.AssetRef `json:"promptAsset,omitempty"`
+	SummaryAsset     *sensitive.AssetRef `json:"summaryAsset,omitempty"`
+	RecordedFileName string              `json:"recordedFileName,omitempty"`
+	UploadedFile     map[string]any      `json:"uploadedFile,omitempty"`
+	HumanOmniWindow  map[string]any      `json:"humanOmniWindow,omitempty"`
 }
 
 type ProtectedSessionSnapshot struct {
@@ -359,6 +363,7 @@ func (h *Handler) handleProtectedWindowSummary(c *gin.Context) {
 
 	round.DurationSeconds = durationSeconds
 	round.RecordedFileName = extractStringMap(aiResponse, "uploadedFile", "filename")
+	round.UploadedFile = extractNestedMap(aiResponse, "uploadedFile")
 	round.AnswerText = answerText
 	round.HumanOmniWindow = extractNestedMap(aiResponse, "humanOmniWindow")
 	round.ActionObservations = actionObservations
@@ -973,13 +978,16 @@ func (h *Handler) snapshotProtectedSession(sessionID string) ProtectedSessionSna
 	var currentRound *ProtectedRoundSnapshot
 	for _, round := range session.Rounds {
 		snapshot := ProtectedRoundSnapshot{
-			ID:            round.ID,
-			RoundNumber:   round.RoundNumber,
-			Title:         round.Title,
-			QuestionCount: round.QuestionCount,
-			Status:        round.Status,
-			PromptAsset:   round.PromptAsset,
-			SummaryAsset:  round.SummaryAsset,
+			ID:               round.ID,
+			RoundNumber:      round.RoundNumber,
+			Title:            round.Title,
+			QuestionCount:    round.QuestionCount,
+			Status:           round.Status,
+			PromptAsset:      round.PromptAsset,
+			SummaryAsset:     round.SummaryAsset,
+			RecordedFileName: round.RecordedFileName,
+			UploadedFile:     cloneMap(round.UploadedFile),
+			HumanOmniWindow:  cloneMap(round.HumanOmniWindow),
 		}
 		if round.ID == session.CurrentRoundID {
 			currentRound = &snapshot

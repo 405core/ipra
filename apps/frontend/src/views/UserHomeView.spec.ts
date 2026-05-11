@@ -7,7 +7,7 @@ import UserHomeView from './UserHomeView.vue';
 
 const profileServiceMocks = vi.hoisted(() => ({
   recognizeIDCard: vi.fn(),
-  searchPassengerProfiles: vi.fn(),
+  searchPassengerProfilesProtected: vi.fn(),
 }));
 
 vi.mock('../app/profile-service', () => profileServiceMocks);
@@ -39,33 +39,31 @@ function findButton(wrapper: VueWrapper, label: string) {
   return button!;
 }
 
-function createPassengerProfile() {
+function createProtectedResult() {
   return {
-    id: 10,
-    fullName: '黎泽宝',
-    documentNum: '440582199402155270',
-    isHighRisk: false,
-    updatedAt: '2026-05-11T08:00:00Z',
-    profileData: {
-      basicInfo: {
-        documentType: 'PASSPORT',
-        gender: 'male',
-        nationality: '中国',
-        birthDate: '1990-04-12',
-      },
-      tripInfo: {
-        pnr: 'CZ3101',
-        flightNo: 'CZ3101',
-        destination: 'BKK',
-      },
-      occupation: {
-        occupation: '外贸业务员',
-      },
-      riskInfo: {
-        riskTags: ['资金核验'],
+    id: '10',
+    asset: {
+      id: 'asset-10',
+      url: '/api/sensitive-assets/asset-10',
+      context: 'home:data',
+    },
+    actions: ['open-ask'],
+  };
+}
+
+const SensitiveAssetImageStub = {
+  props: ['src', 'alt'],
+  template: '<div class="sensitive-image-stub"></div>',
+};
+
+function mountView() {
+  return mount(UserHomeView, {
+    global: {
+      stubs: {
+        SensitiveAssetImage: SensitiveAssetImageStub,
       },
     },
-  };
+  });
 }
 
 describe('UserHomeView assistant inquiry entry', () => {
@@ -76,9 +74,12 @@ describe('UserHomeView assistant inquiry entry', () => {
     vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(
       () => undefined,
     );
-    profileServiceMocks.searchPassengerProfiles.mockResolvedValue([
-      createPassengerProfile(),
-    ]);
+    profileServiceMocks.searchPassengerProfilesProtected.mockResolvedValue({
+      items: [createProtectedResult()],
+      total: 1,
+      page: 1,
+      pageSize: 20,
+    });
   });
 
   afterEach(() => {
@@ -88,7 +89,7 @@ describe('UserHomeView assistant inquiry entry', () => {
   });
 
   it('passes the selected document number when starting assistant inquiry', async () => {
-    wrapper = mount(UserHomeView);
+    wrapper = mountView();
 
     await wrapper.find('#passenger-query').setValue('440582199402155270');
     await wrapper.find('form.surface-card--search').trigger('submit');

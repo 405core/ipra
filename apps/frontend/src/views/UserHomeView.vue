@@ -148,12 +148,11 @@ async function loadProfiles(rawValue = query.value) {
       : `未找到证件号为 "${trimmed}" 的旅客记录。`;
   } catch (error) {
     results.value = [];
-    protectedResultError.value = normalizeErrorMessage(error, '查询旅客画像失败，请稍后重试。');
-    searchStatus.value = protectedResultError.value;
-    searchStatus.value = normalizeErrorMessage(
+    protectedResultError.value = normalizeErrorMessage(
       error,
       '查询旅客画像失败，请稍后重试。',
     );
+    searchStatus.value = protectedResultError.value;
   } finally {
     isSearching.value = false;
   }
@@ -186,11 +185,16 @@ async function applyRecentSearch(item: string) {
   await loadProfiles(item);
 }
 
-async function openAskWorkspace(profile: PassengerProfileRecord) {
+async function openAskWorkspace(_profile: ProtectedListItem) {
+  const documentNum = (query.value || lastSearchedQuery.value).trim();
+  if (!documentNum) {
+    return;
+  }
+
   await router.push({
     name: 'home-ask',
     query: {
-      documentNum: profile.documentNum,
+      documentNum,
     },
   });
 }
@@ -545,202 +549,6 @@ async function requestCameraStream() {
   });
 }
 
-function buildRouteLabel(tripInfo: Record<string, unknown>) {
-  const route = asString(tripInfo.route);
-  if (route) {
-    return route;
-  }
-
-  const flightNo = asString(tripInfo.flightNo);
-  const origin = asString(tripInfo.origin);
-  const destination = asString(tripInfo.destination);
-
-  if (flightNo && origin && destination) {
-    return `${flightNo} (${origin} -> ${destination})`;
-  }
-  if (origin && destination) {
-    return `${origin} -> ${destination}`;
-  }
-  if (destination) {
-    return `目的地 ${destination}`;
-  }
-  return '未录入行程信息';
-}
-
-function buildWatchTags(
-  profile: PassengerProfileRecord,
-  riskRecords: Array<Record<string, unknown>>,
-  riskTags: string[],
-) {
-  const tags = [...riskTags];
-
-  for (const record of riskRecords) {
-    const type = asString(record.type);
-    if (type) {
-      tags.push(type);
-    }
-  }
-
-  if (profile.isHighRisk) {
-    tags.unshift('高风险名单');
-  }
-
-  const unique = [...new Set(tags.filter(Boolean))];
-  return unique.slice(0, 4);
-}
-
-function buildResultDetailEntries(
-  profile: PassengerProfileRecord,
-): ProfileDetailEntry[] {
-  const profileData = asRecord(profile.profileData);
-  const basicInfo = asRecord(profileData.basicInfo);
-  const tripInfo = asRecord(profileData.tripInfo);
-  const occupation = asRecord(profileData.occupation);
-  const occupationSummary = [
-    asString(occupation.occupation),
-    asString(occupation.company),
-  ]
-    .filter(Boolean)
-    .join(' · ');
-
-  return [
-    { label: '国籍', value: asString(basicInfo.nationality) || '未填写' },
-    { label: '出生', value: asString(basicInfo.birthDate) || '未填写' },
-    { label: '电话', value: asString(basicInfo.phone) || '未填写' },
-    { label: 'PNR', value: asString(tripInfo.pnr) || '未填写' },
-    { label: '航班', value: asString(tripInfo.flightNo) || '未填写' },
-    { label: '目的地', value: asString(tripInfo.destination) || '未填写' },
-    { label: '目的', value: asString(tripInfo.purposeDeclared) || '未填写' },
-    { label: '职业 / 单位', value: occupationSummary || '未填写' },
-  ];
-}
-
-function buildResultTags(profile: PassengerProfileRecord) {
-  const profileData = asRecord(profile.profileData);
-  const riskInfo = asRecord(profileData.riskInfo);
-  const riskTags = asStringArray(riskInfo.riskTags);
-  const riskRecords = Object.keys(riskInfo).length ? [riskInfo] : [];
-  return buildWatchTags(profile, riskRecords, riskTags);
-}
-
-function buildResultNotes(
-  profile: PassengerProfileRecord,
-): ProfileDetailEntry[] {
-  const profileData = asRecord(profile.profileData);
-  const riskInfo = asRecord(profileData.riskInfo);
-  const notes: ProfileDetailEntry[] = [];
-
-  if (asString(profile.riskReason)) {
-    notes.push({
-      label: '预警原因',
-      value: asString(profile.riskReason),
-    });
-  }
-
-  if (asString(riskInfo.criminalRecord)) {
-    notes.push({
-      label: '违法犯罪记录',
-      value: asString(riskInfo.criminalRecord),
-    });
-  }
-
-  if (asString(riskInfo.note)) {
-    notes.push({
-      label: '备注',
-      value: asString(riskInfo.note),
-    });
-  }
-
-  return notes;
-}
-
-function readProfileField(
-  profile: PassengerProfileRecord,
-  section: 'basicInfo' | 'tripInfo' | 'occupation' | 'riskInfo',
-  field: string,
-) {
-  const profileData = asRecord(profile.profileData);
-  const sectionData = asRecord(profileData[section]);
-  return asString(sectionData[field]);
-}
-
-function formatDocumentTypeLabel(value: string) {
-  const normalized = value.trim().toUpperCase();
-  switch (normalized) {
-    case 'PASSPORT':
-      return '护照';
-    case 'ID_CARD':
-      return '身份证';
-    case 'HKMTP':
-      return '港澳通行证';
-    default:
-      return value || '未填写';
-  }
-}
-
-function formatGenderLabel(value: string) {
-  switch (value.trim().toLowerCase()) {
-    case 'male':
-    case 'm':
-    case '1':
-      return '男';
-    case 'female':
-    case 'f':
-    case '2':
-      return '女';
-    case 'unknown':
-    case '0':
-      return '未知';
-    default:
-      return value || '未填写';
-  }
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  if (!value || Array.isArray(value) || typeof value !== 'object') {
-    return {};
-  }
-  return value as Record<string, unknown>;
-}
-
-function asRecordArray(value: unknown) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value
-    .map((item) => asRecord(item))
-    .filter((item) => Object.keys(item).length > 0);
-}
-
-function asStringArray(value: unknown) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  return value
-    .map((item) => (typeof item === 'string' ? item.trim() : ''))
-    .filter((item) => item.length > 0);
-}
-
-function asString(value: unknown) {
-  return typeof value === 'string' ? value.trim() : '';
-}
-
-function formatDateTime(value: string) {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-
-  return parsed.toLocaleString('zh-CN', {
-    hour12: false,
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
 function normalizeErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback;
 }
@@ -803,70 +611,10 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
                 class="result-strip"
               >
                 <div class="result-strip__content">
-                  <SensitiveAssetImage :src="record.asset.url" alt="检索结果敏感图片" />
-                  <div class="result-strip__headline">
-                    <strong>{{ record.fullName }}</strong>
-                    <span
-                      v-if="record.isHighRisk"
-                      class="result-strip__pill is-high-risk"
-                      >高风险预警</span
-                    >
-                    <span class="result-strip__pill">
-                      {{
-                        formatDocumentTypeLabel(
-                          readProfileField(record, 'basicInfo', 'documentType'),
-                        ) || '未填证件类型'
-                      }}
-                    </span>
-                    <span class="result-strip__pill">
-                      {{
-                        formatGenderLabel(
-                          readProfileField(record, 'basicInfo', 'gender'),
-                        ) || '未填性别'
-                      }}
-                    </span>
-                    <span class="result-strip__identity">{{
-                      record.documentNum
-                    }}</span>
-                  </div>
-
-                  <div class="result-strip__fact-list">
-                    <span
-                      v-for="detail in buildResultDetailEntries(record)"
-                      :key="`${record.id}-${detail.label}`"
-                      class="result-strip__fact"
-                    >
-                      <span class="result-strip__fact-label">{{
-                        detail.label
-                      }}</span>
-                      <strong class="result-strip__fact-value">{{
-                        detail.value
-                      }}</strong>
-                    </span>
-                  </div>
-
-                  <div
-                    v-if="
-                      buildResultTags(record).length ||
-                      buildResultNotes(record).length
-                    "
-                    class="result-strip__tags"
-                  >
-                    <span
-                      v-for="tag in buildResultTags(record)"
-                      :key="`${record.id}-${tag}`"
-                      class="result-strip__tag"
-                    >
-                      {{ tag }}
-                    </span>
-                    <span
-                      v-for="note in buildResultNotes(record)"
-                      :key="`${record.id}-${note.label}`"
-                      class="result-strip__tag result-strip__tag--muted"
-                    >
-                      {{ note.label }}
-                    </span>
-                  </div>
+                  <SensitiveAssetImage
+                    :src="record.asset.url"
+                    alt="检索结果敏感图片"
+                  />
                 </div>
 
                 <div class="result-strip__actions">

@@ -15,12 +15,7 @@ type Config struct {
 	OCR       OCRConfig
 	Sensitive SensitiveConfig
 	AIService AIServiceConfig
-	AppEnv   string
-	Port     string
-	Database DatabaseConfig
-	Auth     AuthConfig
-	OCR      OCRConfig
-	MinIO    MinIOConfig
+	MinIO     MinIOConfig
 }
 
 type DatabaseConfig struct {
@@ -52,6 +47,8 @@ type SensitiveConfig struct {
 
 type AIServiceConfig struct {
 	BaseURL string
+}
+
 type MinIOConfig struct {
 	Endpoint    string
 	AccessKey   string
@@ -90,7 +87,7 @@ func Load() (Config, error) {
 			IDCardAppSecret: os.Getenv("OCR_IDCARD_APP_SECRET"),
 		},
 		Sensitive: SensitiveConfig{
-			Enabled: parseBoolEnv(firstNonEmpty(os.Getenv("SENSITIVE_IMAGE_MODE"), "1")),
+			Enabled:       parseBoolEnv(firstNonEmpty(os.Getenv("SENSITIVE_IMAGE_MODE"), "1")),
 			ProtectedOnly: parseBoolEnv(firstNonEmpty(os.Getenv("SENSITIVE_PROTECTED_ONLY"), "1")),
 			FontCandidates: splitCSV(
 				firstNonEmpty(
@@ -101,12 +98,13 @@ func Load() (Config, error) {
 		},
 		AIService: AIServiceConfig{
 			BaseURL: firstNonEmpty(os.Getenv("AI_SERVICE_BASE_URL"), "http://127.0.0.1:9000"),
+		},
 		MinIO: MinIOConfig{
-			Endpoint:    os.Getenv("MINIO_ENDPOINT"),
+			Endpoint:    strings.TrimSpace(os.Getenv("MINIO_ENDPOINT")),
 			AccessKey:   firstNonEmpty(os.Getenv("MINIO_ACCESS_KEY"), os.Getenv("MINIO_ROOT_USER")),
 			SecretKey:   firstNonEmpty(os.Getenv("MINIO_SECRET_KEY"), os.Getenv("MINIO_ROOT_PASSWORD")),
 			BucketVideo: firstNonEmpty(os.Getenv("MINIO_BUCKET_VIDEO"), os.Getenv("MINIO_BUCKET")),
-			Secure:      parseEnvBool(os.Getenv("MINIO_SECURE")),
+			Secure:      parseBoolEnv(firstNonEmpty(os.Getenv("MINIO_SECURE"), "0")),
 		},
 	}
 
@@ -289,10 +287,7 @@ func firstNonEmpty(value string, fallback string) string {
 
 func parseBoolEnv(value string) bool {
 	switch strings.ToUpper(strings.TrimSpace(value)) {
-	case "1", "TRUE", "YES", "ON":
-func parseEnvBool(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "1", "true", "yes", "y", "on":
+	case "1", "TRUE", "YES", "Y", "ON":
 		return true
 	default:
 		return false

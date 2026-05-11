@@ -259,6 +259,8 @@ export async function listAdminAuditLogsProtected(query: {
     `/api/audit-logs/protected?${params.toString()}`,
     '查询审计日志失败。'
   );
+}
+
 export async function getInquirySettings() {
   const response = await authorizedFetch('/api/inquiry/settings');
   return parsePayload<InquirySettings>(response, '读取问询设置失败。');

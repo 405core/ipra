@@ -43,7 +43,6 @@ func main() {
 	memoryStore := memory.NewGormStore(db)
 	memoryHandler := memory.NewHandler(memoryStore)
 	archiveHandler := archive.NewHandler(db, cfg.MinIO)
-	memoryHandler := memory.NewHandler(memory.NewGormStore(db))
 	settingsStore := settings.NewGormStore(db)
 	if err := settingsStore.EnsureSchema(context.Background()); err != nil {
 		log.Fatalf("ensure settings schema: %v", err)
@@ -66,8 +65,17 @@ func main() {
 	inquiryHandler.SetMemoryStore(memoryStore)
 	inquiryHandler.SetAIServiceBaseURL(cfg.AIService.BaseURL)
 
-	r := newRouter(authHandler, profileHandler, inquiryHandler, memoryHandler, auditHandler, auditRecorder, sensitiveManager)
-	r := newRouter(authHandler, profileHandler, inquiryHandler, archiveHandler, memoryHandler, settingsHandler, auditHandler, auditRecorder)
+	r := newRouter(
+		authHandler,
+		profileHandler,
+		inquiryHandler,
+		archiveHandler,
+		memoryHandler,
+		settingsHandler,
+		auditHandler,
+		auditRecorder,
+		sensitiveManager,
+	)
 
 	addr := ":" + cfg.Port
 	log.Printf("backend listening on %s (%s)", addr, cfg.AppEnv)
@@ -113,6 +121,7 @@ func newRouter(
 		}
 		if inquiryHandler != nil {
 			inquiryHandler.RegisterProtected(r, authHandler.AuthMiddleware())
+		}
 		if archiveHandler != nil {
 			archiveHandler.Register(r, authHandler.AuthMiddleware())
 			archiveHandler.RegisterAdminRoutes(r, authHandler.AuthMiddleware())
