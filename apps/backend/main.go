@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"ipra/backend/internal/archive"
 	"ipra/backend/internal/audit"
 	"ipra/backend/internal/auth"
 	"ipra/backend/internal/config"
@@ -16,6 +17,7 @@ import (
 	"ipra/backend/internal/memory"
 	"ipra/backend/internal/profile"
 	"ipra/backend/internal/sensitive"
+	"ipra/backend/internal/settings"
 )
 
 func main() {
@@ -40,6 +42,13 @@ func main() {
 	inquiryHandler := inquiry.NewHandler()
 	memoryStore := memory.NewGormStore(db)
 	memoryHandler := memory.NewHandler(memoryStore)
+	archiveHandler := archive.NewHandler(db, cfg.MinIO)
+	memoryHandler := memory.NewHandler(memory.NewGormStore(db))
+	settingsStore := settings.NewGormStore(db)
+	if err := settingsStore.EnsureSchema(context.Background()); err != nil {
+		log.Fatalf("ensure settings schema: %v", err)
+	}
+	settingsHandler := settings.NewHandler(settingsStore)
 	auditHandler := audit.NewHandler(auditRecorder, authHandler.AuthMiddleware(), authHandler.ResolveAuditIdentity)
 	var sensitiveManager *sensitive.Manager
 	if cfg.Sensitive.Enabled {
@@ -58,6 +67,7 @@ func main() {
 	inquiryHandler.SetAIServiceBaseURL(cfg.AIService.BaseURL)
 
 	r := newRouter(authHandler, profileHandler, inquiryHandler, memoryHandler, auditHandler, auditRecorder, sensitiveManager)
+	r := newRouter(authHandler, profileHandler, inquiryHandler, archiveHandler, memoryHandler, settingsHandler, auditHandler, auditRecorder)
 
 	addr := ":" + cfg.Port
 	log.Printf("backend listening on %s (%s)", addr, cfg.AppEnv)
@@ -70,7 +80,9 @@ func newRouter(
 	authHandler *auth.Handler,
 	profileHandler *profile.Handler,
 	inquiryHandler *inquiry.Handler,
+	archiveHandler *archive.Handler,
 	memoryHandler *memory.Handler,
+	settingsHandler *settings.Handler,
 	auditHandler *audit.Handler,
 	auditRecorder *audit.Recorder,
 	sensitiveManager *sensitive.Manager,
@@ -101,6 +113,12 @@ func newRouter(
 		}
 		if inquiryHandler != nil {
 			inquiryHandler.RegisterProtected(r, authHandler.AuthMiddleware())
+		if archiveHandler != nil {
+			archiveHandler.Register(r, authHandler.AuthMiddleware())
+			archiveHandler.RegisterAdminRoutes(r, authHandler.AuthMiddleware())
+		}
+		if settingsHandler != nil {
+			settingsHandler.Register(r, authHandler.AuthMiddleware())
 		}
 		if profileHandler != nil {
 			profileHandler.Register(r, authHandler.AuthMiddleware())

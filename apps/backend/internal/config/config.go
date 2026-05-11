@@ -15,6 +15,12 @@ type Config struct {
 	OCR       OCRConfig
 	Sensitive SensitiveConfig
 	AIService AIServiceConfig
+	AppEnv   string
+	Port     string
+	Database DatabaseConfig
+	Auth     AuthConfig
+	OCR      OCRConfig
+	MinIO    MinIOConfig
 }
 
 type DatabaseConfig struct {
@@ -46,6 +52,12 @@ type SensitiveConfig struct {
 
 type AIServiceConfig struct {
 	BaseURL string
+type MinIOConfig struct {
+	Endpoint    string
+	AccessKey   string
+	SecretKey   string
+	BucketVideo string
+	Secure      bool
 }
 
 func Load() (Config, error) {
@@ -89,6 +101,12 @@ func Load() (Config, error) {
 		},
 		AIService: AIServiceConfig{
 			BaseURL: firstNonEmpty(os.Getenv("AI_SERVICE_BASE_URL"), "http://127.0.0.1:9000"),
+		MinIO: MinIOConfig{
+			Endpoint:    os.Getenv("MINIO_ENDPOINT"),
+			AccessKey:   firstNonEmpty(os.Getenv("MINIO_ACCESS_KEY"), os.Getenv("MINIO_ROOT_USER")),
+			SecretKey:   firstNonEmpty(os.Getenv("MINIO_SECRET_KEY"), os.Getenv("MINIO_ROOT_PASSWORD")),
+			BucketVideo: firstNonEmpty(os.Getenv("MINIO_BUCKET_VIDEO"), os.Getenv("MINIO_BUCKET")),
+			Secure:      parseEnvBool(os.Getenv("MINIO_SECURE")),
 		},
 	}
 
@@ -272,6 +290,9 @@ func firstNonEmpty(value string, fallback string) string {
 func parseBoolEnv(value string) bool {
 	switch strings.ToUpper(strings.TrimSpace(value)) {
 	case "1", "TRUE", "YES", "ON":
+func parseEnvBool(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "y", "on":
 		return true
 	default:
 		return false

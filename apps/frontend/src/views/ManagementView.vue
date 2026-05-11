@@ -19,29 +19,43 @@ import {
   deleteAdminProfile,
   deleteAdminWatchlist,
   listAdminAuditLogsProtected,
+  getAdminInquirySettings,
+  listAdminAuditLogs,
   listAdminProfiles,
   listAdminProfilesProtected,
   listAdminUsers,
   listAdminUsersProtected,
   listAdminWatchlist,
   listAdminWatchlistProtected,
+  updateAdminInquirySettings,
   updateAdminProfile,
   updateAdminUser,
   updateAdminUserStatus,
   updateAdminWatchlist,
   type AdminUserItem,
   type AdminWatchlistItem,
+  type InquirySettings,
 } from '../app/admin-service';
 import type { ProtectedListItem } from '../app/protected-service';
+import {
+  fetchArchiveVideoBlob,
+  getInquiryArchive,
+  listInquiryArchives,
+  type InquiryArchiveDetailPayload,
+  type InquiryArchiveListItem,
+  type InquiryArchiveVideoPayload,
+} from '../app/archive-service';
+import type { AuditLogItem } from '../app/audit-service';
 import type { PassengerProfileRecord } from '../app/profile-service';
 
-type TabKey = 'profiles' | 'watchlist' | 'users' | 'audit';
+type TabKey = 'profiles' | 'watchlist' | 'users' | 'archives' | 'audit' | 'settings';
 type FilterPickerKey =
   | 'profiles-document-type'
   | 'profiles-nationality'
   | 'profiles-gender'
   | 'users-role'
   | 'users-status'
+  | 'archives-judgement'
   | 'audit-result'
   | null;
 
@@ -81,7 +95,9 @@ const tabs: Array<{ key: TabKey; label: string }> = [
   { key: 'profiles', label: '基础画像' },
   { key: 'watchlist', label: '高风险名单' },
   { key: 'users', label: '管理用户' },
+  { key: 'archives', label: '问询归档' },
   { key: 'audit', label: '审计日志' },
+  { key: 'settings', label: '系统设置' },
 ];
 
 const activeTab = ref<TabKey>('profiles');
@@ -90,12 +106,17 @@ const statusMessages = ref<Record<TabKey, string>>({
   profiles: '正在加载基础画像...',
   watchlist: '正在加载高风险名单...',
   users: '正在加载用户...',
+  archives: '正在加载问询归档...',
   audit: '正在加载审计日志...',
+  settings: '正在加载系统设置...',
 });
 
 const profileQuery = ref('');
 const watchlistQuery = ref('');
 const userQuery = ref('');
+const archiveQuery = ref('');
+const archiveDocumentNum = ref('');
+const archiveOperatorWorkId = ref('');
 const auditQuery = ref('');
 const auditActorWorkId = ref('');
 const touchInputHint = '单击正常输入，双击打开触控键盘';
@@ -107,9 +128,18 @@ const protectedWatchlist = ref<ProtectedListItem[]>([]);
 const users = ref<AdminUserItem[]>([]);
 const protectedUsers = ref<ProtectedListItem[]>([]);
 const protectedAuditLogs = ref<ProtectedListItem[]>([]);
+const archives = ref<InquiryArchiveListItem[]>([]);
+const auditLogs = ref<AuditLogItem[]>([]);
+const inquirySettings = ref<InquirySettings | null>(null);
+const inquiryMaxRoundsInput = ref(3);
+const isSavingInquirySettings = ref(false);
 const isProfileFormVisible = ref(false);
 const isWatchlistFormVisible = ref(false);
 const isUserFormVisible = ref(false);
+const isArchiveDetailVisible = ref(false);
+const selectedArchive = ref<InquiryArchiveDetailPayload | null>(null);
+const archiveVideoUrls = ref<Record<number, string>>({});
+const isLoadingArchiveDetail = ref(false);
 const profileFilters = ref({
   documentType: '',
   nationality: '',
@@ -118,6 +148,9 @@ const profileFilters = ref({
 const userFilters = ref({
   role: '',
   status: '',
+});
+const archiveFilters = ref({
+  judgement: '',
 });
 const auditFilters = ref({
   result: '',
@@ -148,7 +181,11 @@ const editingWatchlistId = ref<number | null>(null);
 
 const currentUserId = computed(() => session.value?.user.id ?? null);
 const isAnyFormVisible = computed(
-  () => isProfileFormVisible.value || isWatchlistFormVisible.value || isUserFormVisible.value
+  () =>
+    isProfileFormVisible.value ||
+    isWatchlistFormVisible.value ||
+    isUserFormVisible.value ||
+    isArchiveDetailVisible.value
 );
 const isEditingCurrentUser = computed(
   () => userForm.value.id != null && userForm.value.id === currentUserId.value
@@ -186,6 +223,12 @@ const auditResultOptions: FilterOption[] = [
   { value: 'denied', label: '拒绝' },
   { value: 'failure', label: '失败' },
 ];
+const archiveJudgementOptions: FilterOption[] = [
+  { value: '', label: '全部判定' },
+  { value: 'concealment', label: '隐瞒' },
+  { value: 'falseStatement', label: '虚假陈述' },
+  { value: 'clear', label: '无异常' },
+];
 const filteredProfiles = computed(() =>
   profiles.value.filter((item) => {
     const documentType = readProfileField(item, 'basicInfo', 'documentType');
@@ -221,6 +264,44 @@ const filteredUsers = computed(() =>
   })
 );
 const filteredAuditLogs = computed(() => protectedAuditLogs.value);
+const filteredArchives = computed(() =>
+  archives.value.filter((item) =>
+    matchesSearch(
+      [
+        item.archiveCode,
+        item.sessionId,
+        item.passengerName,
+        item.passengerDocumentNum,
+        item.operatorName,
+        item.operatorWorkId,
+        formatArchiveJudgementLabel(item.finalJudgement),
+      ],
+      archiveQuery.value
+    )
+  )
+);
+const filteredAuditLogs = computed(() =>
+  auditLogs.value.filter((item) => {
+    if (auditFilters.value.result && item.result !== auditFilters.value.result) {
+      return false;
+    }
+    if (auditActorWorkId.value.trim() && item.actorWorkId !== auditActorWorkId.value.trim()) {
+      return false;
+    }
+    return matchesSearch(
+      [
+        item.actorWorkId,
+        item.actorName,
+        item.action,
+        item.resource,
+        item.result,
+        item.path,
+        item.method,
+      ],
+      auditQuery.value
+    );
+  })
+);
 const selectedProfileDocumentTypeLabel = computed(() =>
   describeFilterLabel('证件类型', profileDocumentTypeOptions.value, profileFilters.value.documentType)
 );
@@ -235,6 +316,9 @@ const selectedUserRoleLabel = computed(() =>
 );
 const selectedUserStatusLabel = computed(() =>
   describeFilterLabel('状态', userStatusOptions, userFilters.value.status)
+);
+const selectedArchiveJudgementLabel = computed(() =>
+  describeFilterLabel('判定', archiveJudgementOptions, archiveFilters.value.judgement)
 );
 const selectedAuditResultLabel = computed(() =>
   describeFilterLabel('结果', auditResultOptions, auditFilters.value.result)
@@ -251,6 +335,7 @@ onMounted(() => {
 useProtectedPage('/admin/home');
 
 onBeforeUnmount(() => {
+  revokeArchiveVideoUrls();
   if (typeof document !== 'undefined') {
     document.removeEventListener('click', handleDocumentClick);
     document.removeEventListener('keydown', handleDocumentKeydown);
@@ -266,7 +351,14 @@ watch(isAnyFormVisible, (visible) => {
 });
 
 async function refreshAll() {
-  await Promise.all([loadProfiles(), loadWatchlist(), loadUsers(), loadAuditLogs()]);
+  await Promise.all([
+    loadProfiles(),
+    loadWatchlist(),
+    loadUsers(),
+    loadArchives(),
+    loadAuditLogs(),
+    loadInquirySettings(),
+  ]);
 }
 
 async function loadProfiles() {
@@ -293,6 +385,18 @@ async function loadUsers() {
   statusMessages.value.users = `已加载用户 ${result.total} 条。`;
 }
 
+async function loadArchives() {
+  const result = await listInquiryArchives({
+    query: archiveQuery.value,
+    documentNum: archiveDocumentNum.value,
+    operatorWorkId: archiveOperatorWorkId.value,
+    judgement: archiveFilters.value.judgement,
+    limit: 500,
+  });
+  archives.value = result.items;
+  statusMessages.value.archives = `已加载问询归档 ${result.total} 条。`;
+}
+
 async function loadAuditLogs() {
   const result = await listAdminAuditLogsProtected({
     query: auditQuery.value,
@@ -302,6 +406,13 @@ async function loadAuditLogs() {
   });
   protectedAuditLogs.value = result.items;
   statusMessages.value.audit = `已加载审计日志 ${result.total} 条。`;
+}
+
+async function loadInquirySettings() {
+  const result = await getAdminInquirySettings();
+  inquirySettings.value = result;
+  inquiryMaxRoundsInput.value = result.maxRounds;
+  statusMessages.value.settings = `当前总交互轮次上限为 ${result.maxRounds} 轮。`;
 }
 
 async function syncCurrentSession() {
@@ -488,6 +599,30 @@ async function toggleUserStatus(item: AdminUserItem) {
   }
 }
 
+async function saveInquirySettings() {
+  const nextValue = Number(inquiryMaxRoundsInput.value);
+  if (!Number.isInteger(nextValue) || nextValue < 1 || nextValue > 10) {
+    statusMessages.value.settings = '总交互轮次上限需在 1-10 之间。';
+    ElMessage.warning(statusMessages.value.settings);
+    return;
+  }
+
+  isSavingInquirySettings.value = true;
+  try {
+    const result = await updateAdminInquirySettings(nextValue);
+    inquirySettings.value = result;
+    inquiryMaxRoundsInput.value = result.maxRounds;
+    statusMessages.value.settings = '系统设置已保存。';
+    ElMessage.success(statusMessages.value.settings);
+  } catch (error) {
+    statusMessages.value.settings =
+      error instanceof Error ? error.message : '系统设置保存失败。';
+    ElMessage.error(statusMessages.value.settings);
+  } finally {
+    isSavingInquirySettings.value = false;
+  }
+}
+
 async function logout() {
   try {
     await recordAuditEvent({
@@ -526,6 +661,10 @@ function handleDocumentKeydown(event: KeyboardEvent) {
   }
   if (isUserFormVisible.value) {
     closeUserForm();
+    return;
+  }
+  if (isArchiveDetailVisible.value) {
+    closeArchiveDetail();
   }
 }
 
@@ -574,6 +713,13 @@ function closeUserForm() {
   isUserFormVisible.value = false;
 }
 
+function closeArchiveDetail() {
+  openFilterPicker.value = null;
+  isArchiveDetailVisible.value = false;
+  selectedArchive.value = null;
+  revokeArchiveVideoUrls();
+}
+
 function clearProfileFilters() {
   profileQuery.value = '';
   profileFilters.value.documentType = '';
@@ -594,6 +740,15 @@ function clearUserFilters() {
   userFilters.value.status = '';
   openFilterPicker.value = null;
   void loadUsers();
+}
+
+function clearArchiveFilters() {
+  archiveQuery.value = '';
+  archiveDocumentNum.value = '';
+  archiveOperatorWorkId.value = '';
+  archiveFilters.value.judgement = '';
+  openFilterPicker.value = null;
+  void loadArchives();
 }
 
 function clearAuditFilters() {
@@ -629,9 +784,57 @@ function applyUserStatusFilter(value: string) {
   openFilterPicker.value = null;
 }
 
+function applyArchiveJudgementFilter(value: string) {
+  archiveFilters.value.judgement = value;
+  openFilterPicker.value = null;
+  void loadArchives();
+}
+
 function applyAuditResultFilter(value: string) {
   auditFilters.value.result = value;
   openFilterPicker.value = null;
+}
+
+async function openArchiveDetail(item: InquiryArchiveListItem) {
+  isArchiveDetailVisible.value = true;
+  selectedArchive.value = null;
+  isLoadingArchiveDetail.value = true;
+  revokeArchiveVideoUrls();
+
+  try {
+    const detail = await getInquiryArchive(item.id);
+    selectedArchive.value = detail;
+    await loadArchiveVideos(detail.videos);
+  } catch (error) {
+    statusMessages.value.archives =
+      error instanceof Error ? error.message : '查询问询归档详情失败。';
+    ElMessage.error(statusMessages.value.archives);
+    isArchiveDetailVisible.value = false;
+  } finally {
+    isLoadingArchiveDetail.value = false;
+  }
+}
+
+async function loadArchiveVideos(videos: InquiryArchiveVideoPayload[]) {
+  const entries = (
+    await Promise.all(
+    videos.map(async (video) => {
+      try {
+        const blob = await fetchArchiveVideoBlob(video.id);
+        return [video.id, URL.createObjectURL(blob)] as const;
+      } catch {
+        return null;
+      }
+    })
+    )
+  ).filter((entry): entry is readonly [number, string] => Boolean(entry));
+
+  archiveVideoUrls.value = Object.fromEntries(entries);
+}
+
+function revokeArchiveVideoUrls() {
+  Object.values(archiveVideoUrls.value).forEach((url) => URL.revokeObjectURL(url));
+  archiveVideoUrls.value = {};
 }
 
 async function openFormFieldInput(options: {
@@ -981,6 +1184,36 @@ function formatAuditResultLabel(value: string) {
   return value === 'success' ? '成功' : value === 'denied' ? '拒绝' : value === 'failure' ? '失败' : value || '未知';
 }
 
+function formatArchiveJudgementLabel(value: string) {
+  if (value === 'concealment') {
+    return '隐瞒';
+  }
+  if (value === 'falseStatement') {
+    return '虚假陈述';
+  }
+  if (value === 'clear') {
+    return '无异常';
+  }
+  return value || '待判定';
+}
+
+function archiveJudgementClass(value: string) {
+  if (value === 'concealment') {
+    return 'is-alert';
+  }
+  if (value === 'falseStatement') {
+    return 'is-warning';
+  }
+  return 'is-active';
+}
+
+function formatDuration(seconds: number) {
+  const safeSeconds = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const remainingSeconds = safeSeconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`;
+}
+
 function formatAuditTime(value: string) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
@@ -995,6 +1228,28 @@ function formatAuditTime(value: string) {
     minute: '2-digit',
     second: '2-digit',
   });
+}
+
+function formatArchiveTime(value: string) {
+  return formatAuditTime(value);
+}
+
+function asArray(value: unknown) {
+  return Array.isArray(value) ? value : [];
+}
+
+function stringifyDetail(value: unknown) {
+  if (value == null) {
+    return '';
+  }
+  if (typeof value === 'string') {
+    return value;
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
 </script>
 
@@ -1180,6 +1435,126 @@ function formatAuditTime(value: string) {
         </div>
       </section>
 
+      <section v-else-if="activeTab === 'archives'" class="admin-panel">
+        <div class="admin-toolbar">
+          <div class="admin-toolbar__search-block">
+            <input
+              v-model="archiveQuery"
+              class="admin-toolbar__search-input"
+              type="text"
+              inputmode="search"
+              placeholder="输入归档编号、姓名、证件号或会话 ID"
+              @keyup.enter="loadArchives"
+            />
+          </div>
+          <div class="admin-toolbar__actions">
+            <input
+              v-model="archiveDocumentNum"
+              class="admin-toolbar__search-input admin-toolbar__search-input--compact"
+              type="text"
+              inputmode="search"
+              placeholder="按证件号"
+              @keyup.enter="loadArchives"
+            />
+            <input
+              v-model="archiveOperatorWorkId"
+              class="admin-toolbar__search-input admin-toolbar__search-input--compact"
+              type="text"
+              inputmode="search"
+              placeholder="按工号"
+              @keyup.enter="loadArchives"
+            />
+            <div class="filter-picker">
+              <button
+                class="filter-chip"
+                :class="{ 'is-active': archiveFilters.judgement }"
+                type="button"
+                @click.stop="toggleFilterPicker('archives-judgement')"
+              >
+                {{ selectedArchiveJudgementLabel }}
+              </button>
+              <div
+                v-if="openFilterPicker === 'archives-judgement'"
+                class="filter-picker__menu"
+                @click.stop
+              >
+                <button
+                  v-for="option in archiveJudgementOptions"
+                  :key="option.value || 'all-archive-judgement'"
+                  type="button"
+                  @click="applyArchiveJudgementFilter(option.value)"
+                >
+                  {{ option.label }}
+                </button>
+              </div>
+            </div>
+            <button type="button" class="ghost" @click="clearArchiveFilters">清空筛选</button>
+            <button type="button" class="ghost ghost--strong" @click="loadArchives">刷新归档</button>
+          </div>
+        </div>
+
+        <p class="admin-filter-summary">
+          当前筛选后 {{ filteredArchives.length }} 条问询归档。{{ statusMessages.archives }}
+        </p>
+
+        <div class="admin-table">
+          <article
+            v-for="item in filteredArchives"
+            :key="item.id"
+            class="admin-row admin-row--archive"
+          >
+            <div class="admin-row__profile-content">
+              <div class="admin-row__headline">
+                <strong>{{ item.archiveCode }}</strong>
+                <span
+                  class="admin-row__status"
+                  :class="archiveJudgementClass(item.finalJudgement)"
+                >
+                  <span class="admin-row__status-dot"></span>
+                  {{ formatArchiveJudgementLabel(item.finalJudgement) }}
+                </span>
+                <span class="admin-row__identity">{{ item.sessionId }}</span>
+              </div>
+              <div class="admin-row__fact-list">
+                <span class="admin-row__fact">
+                  <span class="admin-row__fact-label">旅客</span>
+                  <strong class="admin-row__fact-value">
+                    {{ item.passengerName || '未记录' }}
+                  </strong>
+                </span>
+                <span class="admin-row__fact">
+                  <span class="admin-row__fact-label">证件号</span>
+                  <strong class="admin-row__fact-value">
+                    {{ item.passengerDocumentNum || '-' }}
+                  </strong>
+                </span>
+                <span class="admin-row__fact">
+                  <span class="admin-row__fact-label">采样</span>
+                  <strong class="admin-row__fact-value">
+                    {{ item.roundCount }} 轮 · {{ formatDuration(item.totalDurationSeconds) }}
+                  </strong>
+                </span>
+                <span class="admin-row__fact">
+                  <span class="admin-row__fact-label">操作人</span>
+                  <strong class="admin-row__fact-value">
+                    {{ item.operatorName || '-' }} / {{ item.operatorWorkId || '-' }}
+                  </strong>
+                </span>
+                <span class="admin-row__fact">
+                  <span class="admin-row__fact-label">归档时间</span>
+                  <strong class="admin-row__fact-value">
+                    {{ formatArchiveTime(item.archivedAt) }}
+                  </strong>
+                </span>
+              </div>
+            </div>
+            <div class="admin-row__actions">
+              <button type="button" @click="openArchiveDetail(item)">查看详情</button>
+            </div>
+          </article>
+        </div>
+      </section>
+
       <section v-else class="admin-panel">
         <template v-if="activeTab === 'audit'">
           <div class="admin-toolbar">
@@ -1235,6 +1610,41 @@ function formatAuditTime(value: string) {
             <article v-for="item in filteredAuditLogs" :key="item.id" class="admin-audit-item">
               <SensitiveAssetImage :src="item.asset.url" alt="审计日志敏感图片" />
             </article>
+          </div>
+        </template>
+
+        <template v-else-if="activeTab === 'settings'">
+          <div class="settings-panel">
+            <div class="settings-panel__body">
+              <div>
+                <p class="settings-panel__eyebrow">辅助问询</p>
+                <h2>总交互轮次上限</h2>
+                <p>{{ statusMessages.settings }}</p>
+              </div>
+              <label class="settings-field">
+                <span>轮次上限</span>
+                <input
+                  v-model.number="inquiryMaxRoundsInput"
+                  type="number"
+                  min="1"
+                  max="10"
+                  step="1"
+                  inputmode="numeric"
+                />
+              </label>
+            </div>
+            <div class="admin-form-actions">
+              <button type="button" class="ghost" @click="loadInquirySettings">
+                刷新
+              </button>
+              <button
+                type="button"
+                :disabled="isSavingInquirySettings"
+                @click="saveInquirySettings"
+              >
+                {{ isSavingInquirySettings ? '保存中...' : '保存设置' }}
+              </button>
+            </div>
           </div>
         </template>
 
@@ -1706,6 +2116,147 @@ function formatAuditTime(value: string) {
       </div>
     </section>
   </Teleport>
+
+  <Teleport to="body">
+    <section
+      v-if="isArchiveDetailVisible"
+      class="admin-dialog"
+      @click.self="closeArchiveDetail"
+    >
+      <div class="admin-form-card admin-form-card--dialog admin-form-card--archive">
+        <div class="admin-form-card__header">
+          <div>
+            <h3>
+              {{
+                selectedArchive?.archiveCode ||
+                (isLoadingArchiveDetail ? '正在加载问询归档' : '问询归档详情')
+              }}
+            </h3>
+            <p>
+              {{
+                selectedArchive
+                  ? `${selectedArchive.passengerName || '未记录旅客'} / ${
+                      selectedArchive.passengerDocumentNum || '-'
+                    }`
+                  : '正在读取归档主表、轮次、视频与系统摘要。'
+              }}
+            </p>
+          </div>
+          <button type="button" class="ghost" @click="closeArchiveDetail">关闭窗口</button>
+        </div>
+
+        <div v-if="selectedArchive" class="archive-detail">
+          <section class="archive-detail__summary">
+            <div>
+              <span class="meta-label">最终判定</span>
+              <strong>{{ formatArchiveJudgementLabel(selectedArchive.finalJudgement) }}</strong>
+            </div>
+            <div>
+              <span class="meta-label">归档时间</span>
+              <strong>{{ formatArchiveTime(selectedArchive.archivedAt) }}</strong>
+            </div>
+            <div>
+              <span class="meta-label">采样</span>
+              <strong>
+                {{ selectedArchive.roundCount }} 轮 ·
+                {{ formatDuration(selectedArchive.totalDurationSeconds) }}
+              </strong>
+            </div>
+            <div>
+              <span class="meta-label">归档人</span>
+              <strong>
+                {{ selectedArchive.operatorName || '-' }} /
+                {{ selectedArchive.operatorWorkId || '-' }}
+              </strong>
+            </div>
+          </section>
+
+          <section class="archive-detail__block">
+            <span class="meta-label">详细理由</span>
+            <p>{{ selectedArchive.judgementReason }}</p>
+          </section>
+
+          <section class="archive-detail__grid">
+            <div class="archive-detail__block">
+              <span class="meta-label">系统摘要</span>
+              <pre>{{ stringifyDetail(selectedArchive.judgementBriefing) }}</pre>
+            </div>
+            <div class="archive-detail__block">
+              <span class="meta-label">旅客快照</span>
+              <pre>{{ stringifyDetail(selectedArchive.passengerSnapshot) }}</pre>
+            </div>
+          </section>
+
+          <section class="archive-round-list">
+            <article
+              v-for="round in selectedArchive.rounds"
+              :key="round.id"
+              class="archive-round"
+            >
+              <header>
+                <div>
+                  <span class="meta-label">第 {{ round.roundNo }} 轮</span>
+                  <h4>{{ round.title || round.focus || '问询轮次' }}</h4>
+                </div>
+                <span class="admin-row__pill">{{ formatDuration(round.durationSeconds) }}</span>
+              </header>
+
+              <div class="archive-detail__block">
+                <span class="meta-label">本轮摘要</span>
+                <p>{{ round.roundSummary || round.humanOmniSummary || '未记录摘要' }}</p>
+              </div>
+
+              <div class="archive-detail__grid">
+                <div class="archive-detail__block">
+                  <span class="meta-label">问题</span>
+                  <pre>{{ stringifyDetail(round.questions) }}</pre>
+                </div>
+                <div class="archive-detail__block">
+                  <span class="meta-label">转写</span>
+                  <pre>{{ stringifyDetail(round.transcripts) }}</pre>
+                </div>
+              </div>
+
+              <div v-if="asArray(round.riskHints).length" class="admin-row__tags">
+                <span
+                  v-for="hint in asArray(round.riskHints)"
+                  :key="String(hint)"
+                  class="admin-row__tag"
+                >
+                  {{ hint }}
+                </span>
+              </div>
+
+              <div v-if="round.videos.length" class="archive-video-list">
+                <article
+                  v-for="video in round.videos"
+                  :key="video.id"
+                  class="archive-video"
+                >
+                  <div class="archive-video__meta">
+                    <strong>{{ video.fileName || video.windowId || '归档视频' }}</strong>
+                    <span>{{ video.contentType || video.modal }} · {{ video.sizeBytes }} bytes</span>
+                  </div>
+                  <video
+                    v-if="archiveVideoUrls[video.id]"
+                    :src="archiveVideoUrls[video.id]"
+                    controls
+                    preload="metadata"
+                  ></video>
+                  <p v-else>视频正在加载或暂不可用。</p>
+                </article>
+              </div>
+            </article>
+          </section>
+        </div>
+
+        <div v-else class="empty-panel empty-panel--compact">
+          <strong>正在加载归档详情</strong>
+          <span>请稍候。</span>
+        </div>
+      </div>
+    </section>
+  </Teleport>
 </template>
 
 <style scoped lang="scss">
@@ -1907,10 +2458,48 @@ function formatAuditTime(value: string) {
   margin-top: 10px;
 }
 
+.settings-panel {
+  display: grid;
+  gap: 18px;
+}
+
+.settings-panel__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 240px);
+  gap: 20px;
+  align-items: end;
+}
+
+.settings-panel__eyebrow {
+  margin: 0 0 8px;
+  color: #8f6a5d;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.settings-panel h2,
+.settings-panel p {
+  margin: 0;
+}
+
+.settings-panel p {
+  margin-top: 8px;
+  color: #7a5c50;
+}
+
+.settings-field {
+  display: grid;
+  gap: 8px;
+  color: #6f493c;
+  font-weight: 700;
+}
+
 .admin-toolbar input,
 .admin-form-grid input,
 .admin-form-grid select,
-.admin-form-grid textarea {
+.admin-form-grid textarea,
+.settings-field input {
   width: 100%;
   min-height: 44px;
   padding: 12px 14px;
@@ -1993,6 +2582,10 @@ function formatAuditTime(value: string) {
 .admin-form-card--watchlist,
 .admin-form-card--user {
   width: min(720px, 100%);
+}
+
+.admin-form-card--archive {
+  width: min(1120px, 100%);
 }
 
 .admin-form-card__header {
@@ -2228,6 +2821,103 @@ function formatAuditTime(value: string) {
   color: #8a5b4f;
 }
 
+.admin-row__status.is-alert {
+  background: rgba(181, 57, 57, 0.14);
+  color: #a3312e;
+}
+
+.admin-row__status.is-warning {
+  background: rgba(196, 126, 47, 0.16);
+  color: #95611d;
+}
+
+.archive-detail,
+.archive-round-list {
+  display: grid;
+  gap: 16px;
+}
+
+.archive-detail__summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.archive-detail__summary > div,
+.archive-detail__block,
+.archive-round,
+.archive-video {
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(215, 193, 180, 0.52);
+  background: #fffdfa;
+}
+
+.archive-detail__summary strong,
+.archive-detail__block p,
+.archive-round h4 {
+  margin: 0;
+}
+
+.meta-label {
+  display: block;
+  margin-bottom: 6px;
+  color: #8a6b5e;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.archive-detail__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.archive-detail pre {
+  max-height: 220px;
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #44352f;
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+
+.archive-round header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.archive-video-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.archive-video {
+  display: grid;
+  gap: 10px;
+}
+
+.archive-video__meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  color: #6b5349;
+}
+
+.archive-video video {
+  width: 100%;
+  max-height: 420px;
+  border-radius: 14px;
+  background: #1f1a17;
+}
+
 .admin-user-table-wrap {
   overflow-x: auto;
   border-radius: 18px;
@@ -2328,6 +3018,15 @@ function formatAuditTime(value: string) {
 
   .admin-user-table .is-actions {
     width: 190px;
+  }
+
+  .settings-panel__body {
+    grid-template-columns: 1fr;
+  }
+
+  .archive-detail__summary,
+  .archive-detail__grid {
+    grid-template-columns: 1fr;
   }
 
   .admin-dialog {

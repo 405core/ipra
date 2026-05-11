@@ -2,6 +2,15 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import SensitiveAssetImage from '../app/SensitiveAssetImage.vue';
 import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+} from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import {
   resolveAiServiceWebSocketUrl,
   type AgentMemoryContextPayload,
   type AgentMemoryReferencePayload,
@@ -16,6 +25,7 @@ import {
   type RealtimeAsrEvent,
   type RiskAssessmentPayload,
   type TripProfilePayload,
+  type UploadedWindowFilePayload,
 } from '../app/ai-service';
 import { recordAuditEvent } from '../app/audit-service';
 import {
@@ -28,6 +38,19 @@ import {
   type ProtectedInquirySessionSnapshot,
 } from '../app/inquiry-protected-service';
 import type { ProtectedAssetRef } from '../app/protected-service';
+  createInquiryArchive,
+  type CreateInquiryArchivePayload,
+  type CreateInquiryArchiveRoundPayload,
+  type CreateInquiryArchiveVideoPayload,
+} from '../app/archive-service';
+import {
+  fetchMemoryContext,
+  persistMemoryUpdates,
+} from '../app/memory-service';
+import {
+  searchPassengerProfiles,
+  type PassengerProfileRecord,
+} from '../app/profile-service';
 import {
   createIdleRealtimeDetectionState,
   createRealtimeDetectionController,
@@ -36,6 +59,8 @@ import {
   type RealtimeDetectionState,
 } from '../app/realtime-mediapipe';
 import { useProtectedPage } from '../app/use-protected-page';
+import { getInquirySettings } from '../app/admin-service';
+import { ElMessage } from '../app/el-message';
 import { loadAuthSession } from '../auth';
 
 type WorkflowStage = 'strategy' | 'interview' | 'judgement';
@@ -58,8 +83,9 @@ type SpeechRecognitionPhase =
   | 'unsupported'
   | 'error';
 type MemoryLoadState = 'idle' | 'loading' | 'ready' | 'error';
+type ProfileLoadState = 'idle' | 'loading' | 'ready' | 'locked' | 'error';
 
-interface MockPassengerProfile {
+interface PassengerProfileViewModel {
   name: string;
   alias: string;
   documentId: string;
@@ -109,6 +135,7 @@ interface InterviewRound {
   humanOmniWindow: HumanOmniWindowSummaryPayload | null;
   actionObservations: ActionObservationPayload[];
   recordedFileName: string;
+  uploadedFile: UploadedWindowFilePayload | null;
   asrText: string;
 }
 
@@ -157,52 +184,37 @@ interface MockTripSupplement {
   companions: string[];
   accommodation: string;
   fundingSource: string;
+interface JudgementBriefing {
+  multimodalAssessment: MultimodalAssessmentPayload;
+  operatorNote: string;
+  warnings: string[];
+  generatedAt: string;
+}
+
+interface MemoryPanelItem {
+  key: string;
+  title: string;
+  content: string;
+  scopeLabel: string;
+  typeLabel: string;
+  source: string;
+  confidence?: number | null;
+  updatedAt?: string | null;
+}
+
+interface MemoryReferenceViewItem {
+  key: string;
+  title: string;
+  scopeLabel: string;
+  typeLabel: string;
+  count: number;
 }
 
 const session = loadAuthSession();
 const inspectorName = session?.user.name || '普通员工';
 const inspectorWorkId = session?.user.workId || 'EMP-0000';
-
-const passengerProfile: MockPassengerProfile = {
-  name: 'ZHANG WEI',
-  alias: '张伟',
-  documentId: 'E92834102',
-  pnr: 'CX880-LAX',
-  route: 'CX880 (HKG -> LAX)',
-  seat: '12A / Business',
-  eta: '预计 14:20 抵达',
-  riskLevel: 'high',
-  riskLabel: '高风险预警',
-  summary:
-    '最近 3 个月内存在异常行程组合，且与重点名单出现高重合度，需要通过多轮问询核验时间线与设备空窗。',
-  observation: '10:45 至 10:50 出现终端记录空窗，且现场监控存在约 5 分钟断点。',
-  tags: ['异常行程', '设备空窗', '名单重合', '需人工复核'],
-};
-
-const mockedPassengerSupplement: MockPassengerSupplement = {
-  passengerId: 'pax-e92834102',
-  age: 34,
-  gender: 'male',
-  nationality: '中国',
-  occupation: '仓储调度员',
-  monthlyIncome: '12000-18000 CNY',
-  travelHistory: ['2026-01 深圳-香港当日往返', '2026-03 香港-洛杉矶公务行'],
-  documents: {
-    documentType: 'passport',
-    visaStatus: 'B1/B2 valid',
-    issuingCountry: 'CN',
-  },
-};
-
-const mockedTripSupplement: MockTripSupplement = {
-  purposeDeclared: '商务随行与设备交接',
-  stayDays: 7,
-  ticketType: '单程',
-  returnTicketStatus: '未见返程票',
-  companions: ['同行联系人待核验'],
-  accommodation: 'LAX Transit Hotel (mock)',
-  fundingSource: '本人承担',
-};
+const route = useRoute();
+const router = useRouter();
 
 const workflowStages: StageItem[] = [
   {
@@ -335,6 +347,15 @@ const strategyBlueprints = [
 const currentStage = ref<WorkflowStage>('strategy');
 const sessionId = ref(createSessionId());
 const protectedSession = ref<ProtectedInquirySessionSnapshot | null>(null);
+const maxInteractionRounds = ref(3);
+const inquirySettingsMessage = ref('');
+const hasLoadedInquirySettings = ref(false);
+const roundLimitDialogVisible = ref(false);
+const strategySummary = ref('');
+const generatedQuestions = ref<StrategyQuestion[]>([]);
+const strategyFocusAreas = ref<string[]>([]);
+const strategyOperatorNote = ref('');
+const strategyRiskAssessment = ref<RiskAssessmentPayload | null>(null);
 const strategyGenerationCount = ref(0);
 const isGeneratingStrategy = ref(false);
 const isEndingSampling = ref(false);
@@ -350,12 +371,16 @@ const currentRoundId = ref<string | null>(null);
 const selectedJudgement = ref<FinalJudgement | null>(null);
 const judgementReason = ref('');
 const isArchived = ref(false);
+const isArchiving = ref(false);
 const archivedAt = ref('');
-const archiveCode = ref('IPRA-ASK-20260503-014');
+const archiveCode = ref('');
 const stageLoadingMode = ref<StageLoadingMode | null>(null);
 const stageLoadingPhraseIndex = ref(0);
 const speechRecognitionPhase = ref<SpeechRecognitionPhase>('idle');
 const speechRecognitionMessage = ref('等待开始采样。');
+const selectedProfile = ref<PassengerProfileRecord | null>(null);
+const profileLoadState = ref<ProfileLoadState>('idle');
+const profileLoadError = ref('');
 
 const videoElement = ref<HTMLVideoElement | null>(null);
 const overlayCanvas = ref<HTMLCanvasElement | null>(null);
@@ -442,7 +467,10 @@ const totalSampleDuration = computed(() =>
 
 const strategyGenerated = computed(() => Boolean(protectedSession.value?.strategyAsset));
 const canEnterInterview = computed(
-  () => strategyGenerated.value && !isGeneratingStrategy.value,
+  () =>
+    strategyGenerated.value &&
+    !isGeneratingStrategy.value &&
+    !isStrategyLocked.value,
 );
 const canStartSampling = computed(
   () =>
@@ -450,6 +478,11 @@ const canStartSampling = computed(
     !isEndingSampling.value &&
     !isRequestingGuidance.value &&
     !isArchived.value,
+);
+const hasReachedInteractionLimit = computed(
+  () =>
+    Boolean(currentRound.value?.completed) &&
+    (currentRound.value?.roundNumber ?? 0) >= maxInteractionRounds.value,
 );
 const canAdvanceRound = computed(
   () =>
@@ -463,6 +496,7 @@ const canAdvanceRound = computed(
 const canEnterJudgement = computed(
   () =>
     (protectedSession.value?.completedRounds ?? 0) > 0 &&
+    (rounds.value.length > 1 || hasReachedInteractionLimit.value) &&
     Boolean(currentRound.value?.completed) &&
     currentRound.value?.uploadState === 'uploaded' &&
     samplingState.value.phase !== 'active' &&
@@ -473,6 +507,7 @@ const canArchive = computed(
   () =>
     Boolean(selectedJudgement.value) &&
     judgementReason.value.trim().length >= 20 &&
+    !isArchiving.value &&
     !isArchived.value,
 );
 
@@ -626,6 +661,296 @@ function formatTranscriptTime(seconds: number) {
 
 function riskToneClass(level: RiskLevel) {
   return level === 'high' ? 'risk-chip--high' : 'risk-chip--medium';
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || Array.isArray(value) || typeof value !== 'object') {
+    return {};
+  }
+  return value as Record<string, unknown>;
+}
+
+function asString(value: unknown) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function asStringArray(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => (typeof item === 'string' ? item.trim() : ''))
+    .filter(Boolean);
+}
+
+function asOptionalNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value.trim(), 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function firstNonEmpty(...values: Array<string | undefined | null>) {
+  return values.map((value) => value?.trim() ?? '').find(Boolean) ?? '';
+}
+
+function normalizeRouteQueryValue(value: unknown) {
+  if (Array.isArray(value)) {
+    return asString(value[0]);
+  }
+  return asString(value);
+}
+
+function formatDocumentTypeLabel(value: string) {
+  const normalized = value.trim().toUpperCase();
+  switch (normalized) {
+    case 'PASSPORT':
+      return '护照';
+    case 'ID_CARD':
+      return '身份证';
+    case 'HKMTP':
+      return '港澳通行证';
+    default:
+      return value || '未填写';
+  }
+}
+
+function formatGenderLabel(value: string) {
+  switch (value.trim().toLowerCase()) {
+    case 'male':
+    case 'm':
+    case '1':
+      return '男';
+    case 'female':
+    case 'f':
+    case '2':
+      return '女';
+    case 'unknown':
+    case '0':
+      return '未知';
+    default:
+      return value || '未填写';
+  }
+}
+
+function buildRouteLabel(tripInfo: Record<string, unknown>) {
+  const route = asString(tripInfo.route);
+  if (route) {
+    return route;
+  }
+
+  const flightNo = asString(tripInfo.flightNo);
+  const origin = asString(tripInfo.origin);
+  const destination = asString(tripInfo.destination);
+  if (flightNo && origin && destination) {
+    return `${flightNo} (${origin} -> ${destination})`;
+  }
+  if (origin && destination) {
+    return `${origin} -> ${destination}`;
+  }
+  if (destination) {
+    return `目的地 ${destination}`;
+  }
+  return '未填写';
+}
+
+function buildProfileTags(profile: PassengerProfileRecord) {
+  const profileData = asRecord(profile.profileData);
+  const riskInfo = asRecord(profileData.riskInfo);
+  const tags = asStringArray(riskInfo.riskTags);
+
+  if (profile.isHighRisk) {
+    tags.unshift('高风险名单');
+  }
+  if (asString(riskInfo.type)) {
+    tags.push(asString(riskInfo.type));
+  }
+  if (asString(riskInfo.controlLevel)) {
+    tags.push(asString(riskInfo.controlLevel));
+  }
+
+  return [...new Set(tags.filter(Boolean))].slice(0, 4);
+}
+
+function buildTravelHistory(profile: PassengerProfileRecord) {
+  const profileData = asRecord(profile.profileData);
+  const travelHistory = asRecord(profileData.travelHistory);
+  const values: string[] = [];
+
+  const recentDestinations = asStringArray(travelHistory.recentDestinations);
+  if (recentDestinations.length) {
+    values.push(`主要去往：${recentDestinations.join('、')}`);
+  }
+  if (asString(travelHistory.travelHistorySummary)) {
+    values.push(asString(travelHistory.travelHistorySummary));
+  }
+  if (asString(travelHistory.lastDepartureDate)) {
+    values.push(`最近出境：${asString(travelHistory.lastDepartureDate)}`);
+  }
+  if (asString(travelHistory.abnormalOverstayRecord)) {
+    values.push(`异常滞留：${asString(travelHistory.abnormalOverstayRecord)}`);
+  }
+  if (asString(travelHistory.visaRefusalRecord)) {
+    values.push(`拒签/遣返：${asString(travelHistory.visaRefusalRecord)}`);
+  }
+
+  return values;
+}
+
+function buildPassengerProfileView(
+  profile: PassengerProfileRecord | null,
+): PassengerProfileViewModel {
+  if (!profile) {
+    return {
+      name: '',
+      alias: '',
+      documentId: '',
+      pnr: '',
+      route: '',
+      seat: '',
+      eta: '',
+      riskLevel: 'medium',
+      riskLabel: '画像未载入',
+      summary: '',
+      observation: '',
+      tags: [],
+    };
+  }
+
+  const profileData = asRecord(profile.profileData);
+  const basicInfo = asRecord(profileData.basicInfo);
+  const tripInfo = asRecord(profileData.tripInfo);
+  const occupation = asRecord(profileData.occupation);
+  const riskInfo = asRecord(profileData.riskInfo);
+  const tags = buildProfileTags(profile);
+  const summary = firstNonEmpty(
+    asString(profile.riskReason),
+    asString(riskInfo.note),
+    asString(riskInfo.criminalRecord),
+    profile.isHighRisk
+      ? '命中高风险名单，需要优先核验证件、行程与同行关系。'
+      : '',
+    '基础画像已载入，等待生成首轮策略。',
+  );
+  const observation = [
+    asString(tripInfo.purposeDeclared)
+      ? `目的：${asString(tripInfo.purposeDeclared)}`
+      : '',
+    asString(tripInfo.returnTicketStatus)
+      ? `返程：${asString(tripInfo.returnTicketStatus)}`
+      : '',
+    asString(occupation.fundingSource)
+      ? `资金：${asString(occupation.fundingSource)}`
+      : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  return {
+    name: profile.fullName || '未填写',
+    alias: profile.fullName || '未填写',
+    documentId: profile.documentNum,
+    pnr: asString(tripInfo.pnr) || '未填写',
+    route: buildRouteLabel(tripInfo),
+    seat: asString(tripInfo.seat) || '未填写',
+    eta: asString(tripInfo.departureDate) || '未填写',
+    riskLevel: profile.isHighRisk ? 'high' : 'medium',
+    riskLabel: profile.isHighRisk ? '高风险预警' : '画像已载入',
+    summary,
+    observation: observation || '暂无重点观察项',
+    tags: tags.length ? tags : ['待策略生成'],
+  };
+}
+
+const passengerProfile = computed(() =>
+  buildPassengerProfileView(selectedProfile.value),
+);
+const hasSelectedProfile = computed(
+  () => profileLoadState.value === 'ready' && Boolean(selectedProfile.value),
+);
+const isProfileLoading = computed(() => profileLoadState.value === 'loading');
+const isStrategyLocked = computed(() => !hasSelectedProfile.value);
+const profileLockMessage = computed(() => {
+  if (isProfileLoading.value) {
+    return '正在读取旅客画像，请稍候。';
+  }
+  return profileLoadError.value || '请先在数据检索中选择旅客后发起辅助问询。';
+});
+const profileHeaderStatusLabel = computed(() =>
+  hasSelectedProfile.value ? '画像已载入' : '画像未载入',
+);
+const selectedPassengerId = computed(
+  () => selectedProfile.value?.documentNum.trim() || '',
+);
+
+function resetProfileDependentState() {
+  currentStage.value = 'strategy';
+  strategySummary.value = '';
+  generatedQuestions.value = [];
+  strategyFocusAreas.value = [];
+  strategyOperatorNote.value = '';
+  strategyRiskAssessment.value = null;
+  strategyGenerationCount.value = 0;
+  strategyRequestError.value = '';
+  roundServiceError.value = '';
+  memoryContext.value = null;
+  memoryLoadState.value = 'idle';
+  memoryErrorMessage.value = '';
+  memoryLastSyncedAt.value = '';
+  latestMemoryReferences.value = [];
+  rounds.value = [];
+  currentRoundId.value = null;
+  judgementReason.value = '';
+  judgementBriefing.value = null;
+  selectedJudgement.value = null;
+}
+
+async function loadSelectedProfile(documentNum: string) {
+  resetProfileDependentState();
+  const trimmedDocumentNum = documentNum.trim();
+  if (!trimmedDocumentNum) {
+    selectedProfile.value = null;
+    profileLoadState.value = 'locked';
+    profileLoadError.value = '请先在数据检索中选择旅客后发起辅助问询。';
+    return;
+  }
+
+  profileLoadState.value = 'loading';
+  profileLoadError.value = '';
+  selectedProfile.value = null;
+
+  try {
+    const profiles = await searchPassengerProfiles(trimmedDocumentNum);
+    const matchedProfile =
+      profiles.find((item) => item.documentNum === trimmedDocumentNum) ??
+      profiles[0] ??
+      null;
+
+    if (!matchedProfile || matchedProfile.id === 0) {
+      profileLoadState.value = 'locked';
+      profileLoadError.value =
+        '未查询到该证件号的基础画像，请先完成数据检索或导入。';
+      return;
+    }
+
+    selectedProfile.value = matchedProfile;
+    profileLoadState.value = 'ready';
+    profileLoadError.value = '';
+  } catch (error) {
+    profileLoadState.value = 'error';
+    profileLoadError.value = normalizeErrorMessage(
+      error,
+      '旅客画像读取失败，请返回数据检索后重试。',
+    );
+  }
+}
+
+function returnToDataSearch() {
+  void router.push({ name: 'home-data' });
 }
 
 function stageStatus(stage: WorkflowStage) {
@@ -799,6 +1124,12 @@ function syncProtectedSessionState(snapshot: ProtectedInquirySessionSnapshot) {
 }
 
 async function refreshMemoryContext() {
+  if (!selectedPassengerId.value) {
+    memoryContext.value = null;
+    memoryLoadState.value = 'idle';
+    return null;
+  }
+
   memoryLoadState.value = 'loading';
   memoryErrorMessage.value = '';
 
@@ -815,6 +1146,16 @@ async function refreshMemoryContext() {
     };
     syncMemoryStatus(true);
     return memoryContext.value;
+    const context = await fetchMemoryContext(
+      sessionId.value,
+      selectedPassengerId.value,
+    );
+    memoryContext.value = context;
+    memoryLoadState.value = 'ready';
+    memoryLastSyncedAt.value = new Date().toLocaleTimeString('zh-CN', {
+      hour12: false,
+    });
+    return context;
   } catch (error) {
     memoryLoadState.value = 'error';
     memoryErrorMessage.value = normalizeErrorMessage(
@@ -843,53 +1184,73 @@ async function saveMemoryUpdates(
   }
 }
 
-function deriveDestination() {
-  const match = passengerProfile.route.match(/->\s*([A-Z]{3})/);
-  if (match?.[1]) {
-    return `美国洛杉矶 ${match[1]}`;
+function requireSelectedProfile() {
+  const profile = selectedProfile.value;
+  if (!profile) {
+    throw new Error('请先进行数据检索并选择旅客画像。');
   }
-
-  return passengerProfile.route;
+  return profile;
 }
 
-function buildPassengerPayload(): PassengerProfilePayload {
+function buildPassengerPayload(
+  profile: PassengerProfileRecord,
+): PassengerProfilePayload {
+  const profileData = asRecord(profile.profileData);
+  const basicInfo = asRecord(profileData.basicInfo);
+  const tripInfo = asRecord(profileData.tripInfo);
+  const occupation = asRecord(profileData.occupation);
+
   return {
-    passengerId: mockedPassengerSupplement.passengerId,
-    name: passengerProfile.alias,
-    age: mockedPassengerSupplement.age,
-    gender: mockedPassengerSupplement.gender,
-    nationality: mockedPassengerSupplement.nationality,
-    occupation: mockedPassengerSupplement.occupation,
-    monthlyIncome: mockedPassengerSupplement.monthlyIncome,
-    travelHistory: [...mockedPassengerSupplement.travelHistory],
+    passengerId: profile.documentNum,
+    name: profile.fullName,
+    gender: asString(basicInfo.gender) || null,
+    nationality: asString(basicInfo.nationality) || null,
+    occupation: asString(occupation.occupation) || null,
+    monthlyIncome: asString(occupation.monthlyIncome) || null,
+    travelHistory: buildTravelHistory(profile),
     documents: {
-      ...mockedPassengerSupplement.documents,
-      documentNumber: passengerProfile.documentId,
-      pnr: passengerProfile.pnr,
-      seat: passengerProfile.seat,
+      documentType: asString(basicInfo.documentType) || null,
+      issuingRegion: asString(basicInfo.issuingRegion) || null,
+      documentNumber: profile.documentNum,
+      birthDate: asString(basicInfo.birthDate) || null,
+      pnr: asString(tripInfo.pnr) || null,
+      flightNo: asString(tripInfo.flightNo) || null,
+      seat: asString(tripInfo.seat) || null,
     },
   };
 }
 
-function buildTripPayload(): TripProfilePayload {
+function buildTripPayload(profile: PassengerProfileRecord): TripProfilePayload {
+  const profileData = asRecord(profile.profileData);
+  const tripInfo = asRecord(profileData.tripInfo);
+  const occupation = asRecord(profileData.occupation);
+
   return {
-    destination: deriveDestination(),
-    purposeDeclared: mockedTripSupplement.purposeDeclared,
-    stayDays: mockedTripSupplement.stayDays,
-    ticketType: mockedTripSupplement.ticketType,
-    returnTicketStatus: mockedTripSupplement.returnTicketStatus,
-    companions: [...mockedTripSupplement.companions],
-    accommodation: mockedTripSupplement.accommodation,
-    fundingSource: mockedTripSupplement.fundingSource,
+    destination: asString(tripInfo.destination) || null,
+    purposeDeclared: asString(tripInfo.purposeDeclared) || null,
+    stayDays: asOptionalNumber(tripInfo.stayDays),
+    ticketType: asString(tripInfo.ticketType) || null,
+    returnTicketStatus: asString(tripInfo.returnTicketStatus) || null,
+    companions: asStringArray(tripInfo.companions),
+    accommodation: asString(tripInfo.accommodation) || null,
+    fundingSource: asString(occupation.fundingSource) || null,
   };
 }
 
-function buildKnownFacts() {
+function buildKnownFacts(profile: PassengerProfileRecord) {
+  const profileData = asRecord(profile.profileData);
+  const riskInfo = asRecord(profileData.riskInfo);
   return [
-    passengerProfile.summary,
-    passengerProfile.observation,
-    ...passengerProfile.tags.map((tag) => `风险标签：${tag}`),
-  ];
+    profile.isHighRisk ? '命中高风险名单' : '',
+    asString(profile.riskReason)
+      ? `高风险原因：${asString(profile.riskReason)}`
+      : '',
+    ...buildProfileTags(profile).map((tag) => `风险标签：${tag}`),
+    asString(riskInfo.criminalRecord)
+      ? `违法犯罪记录：${asString(riskInfo.criminalRecord)}`
+      : '',
+    asString(riskInfo.note) ? `备注：${asString(riskInfo.note)}` : '',
+  ].filter(Boolean);
 }
 
 function buildOutputConstraints(questionCount: number) {
@@ -943,6 +1304,17 @@ function buildOpeningRound() {
     strategyNote: '系统默认围绕时间线断点、设备空窗与照明波动启动首轮问询。',
     signal: '对象需先对 10:45 至 10:50 的时间线和设备空窗给出稳定说明。',
     questions: [],
+    focus: strategyFocusAreas.value.length
+      ? strategyFocusAreas.value.join(' / ')
+      : '首轮关注：出境目的与行程一致性',
+    strategyNote:
+      strategyOperatorNote.value ||
+      strategySummary.value ||
+      '系统已基于旅客画像启动首轮事实核验。',
+    signal:
+      strategyRiskAssessment.value?.summary ||
+      '对象需先对出境目的、行程安排和资金来源给出稳定说明。',
+    questions: generatedQuestions.value.map((question) => ({ ...question })),
     transcripts: [],
     completed: false,
     durationSeconds: 0,
@@ -952,13 +1324,14 @@ function buildOpeningRound() {
     humanOmniWindow: null,
     actionObservations: [],
     recordedFileName: '',
+    uploadedFile: null,
     asrText: '',
   } satisfies InterviewRound;
 }
 
 function getRoundCue(round?: InterviewRound | null) {
   if (!round) {
-    return passengerProfile.tags[1];
+    return passengerProfile.value.tags[1] || passengerProfile.value.alias;
   }
 
   const lastSubjectEntry = [...round.transcripts]
@@ -1022,15 +1395,41 @@ function buildFollowUpRoundFromResponse(
     humanOmniWindow: null,
     actionObservations: [],
     recordedFileName: '',
+    uploadedFile: null,
     asrText: '',
   } satisfies InterviewRound;
 }
 
-function enterInterviewStage() {
-  if (!canEnterInterview.value) {
+async function loadInquirySettingsForSession() {
+  if (hasLoadedInquirySettings.value) {
     return;
   }
 
+  try {
+    const settings = await getInquirySettings();
+    if (
+      Number.isFinite(settings.maxRounds) &&
+      settings.maxRounds >= settings.minRounds &&
+      settings.maxRounds <= settings.maxAllowedRounds
+    ) {
+      maxInteractionRounds.value = settings.maxRounds;
+    }
+    inquirySettingsMessage.value = '';
+  } catch (error) {
+    maxInteractionRounds.value = 3;
+    inquirySettingsMessage.value =
+      '未能读取管理员轮次设置，已按默认 3 轮执行。';
+  } finally {
+    hasLoadedInquirySettings.value = true;
+  }
+}
+
+async function enterInterviewStage() {
+  if (!canEnterInterview.value || isStrategyLocked.value) {
+    return;
+  }
+
+  await loadInquirySettingsForSession();
   currentStage.value = 'interview';
   roundServiceError.value = '';
 }
@@ -1167,6 +1566,32 @@ function buildActionObservations(
       },
     } satisfies ActionObservationPayload;
   });
+}
+
+function buildHumanOmniWindows() {
+  return rounds.value.flatMap((round) =>
+    round.humanOmniWindow ? [round.humanOmniWindow] : [],
+  );
+}
+
+function buildActionObservationHistory() {
+  return rounds.value.flatMap((round) => round.actionObservations);
+}
+
+function buildFollowupPayload(roundNumber: number, round: InterviewRound) {
+  const profile = requireSelectedProfile();
+  return {
+    sessionId: sessionId.value,
+    roundNo: roundNumber,
+    passengerProfile: buildPassengerPayload(profile),
+    tripProfile: buildTripPayload(profile),
+    qaHistory: buildQaHistory(),
+    humanOmniWindows: buildHumanOmniWindows(),
+    actionObservations: buildActionObservationHistory(),
+    asr: buildRoundAsrPayload(round),
+    memoryContext: memoryContext.value,
+    constraints: buildOutputConstraints(3),
+  };
 }
 
 function buildSummarizeWindowFormData(round: InterviewRound, file: File) {
@@ -1555,7 +1980,12 @@ async function generateStrategy() {
   if (isGeneratingStrategy.value) {
     return;
   }
+  if (isStrategyLocked.value || !selectedProfile.value) {
+    strategyRequestError.value = profileLockMessage.value;
+    return;
+  }
 
+  const profile = requireSelectedProfile();
   isGeneratingStrategy.value = true;
   strategyRequestError.value = '';
   openStageLoading('strategy');
@@ -1568,6 +1998,7 @@ async function generateStrategy() {
       path: '/home/ask',
       detail: {
         sessionId: sessionId.value,
+        documentNum: profile.documentNum,
       },
     });
     const response = await generateProtectedInquiryStrategy({
@@ -1576,6 +2007,10 @@ async function generateStrategy() {
       passengerProfile: buildPassengerPayload() as unknown as Record<string, unknown>,
       tripProfile: buildTripPayload() as unknown as Record<string, unknown>,
       knownFacts: buildKnownFacts(),
+      passengerProfile: buildPassengerPayload(profile),
+      tripProfile: buildTripPayload(profile),
+      knownFacts: buildKnownFacts(profile),
+      memoryContext: context,
       constraints: buildOutputConstraints(6),
     });
     syncProtectedSessionState(response);
@@ -1621,6 +2056,7 @@ async function startSampling() {
   round.humanOmniWindow = null;
   round.actionObservations = [];
   round.recordedFileName = '';
+  round.uploadedFile = null;
   round.asrText = '';
   round.transcripts = [];
   resetSpeechRecognitionState('等待语音输入。');
@@ -1754,6 +2190,12 @@ async function endSampling() {
       buildSummarizeWindowFormData(round, recordedFile),
     );
     syncProtectedSessionState(response);
+    round.humanOmniWindow = response.humanOmniWindow;
+    round.recordedFileName = response.uploadedFile.filename;
+    round.uploadedFile = response.uploadedFile;
+    round.uploadState = 'uploaded';
+    round.uploadErrorMessage = '';
+    updateCurrentRoundSummary(round);
     void recordAuditEvent({
       action: 'end_sampling',
       resource: '辅助问询',
@@ -1781,6 +2223,14 @@ async function endSampling() {
 async function enterNextRound() {
   const round = currentRound.value;
   if (!canAdvanceRound.value || !round || isRequestingGuidance.value) {
+    return;
+  }
+
+  if (hasReachedInteractionLimit.value) {
+    roundLimitDialogVisible.value = true;
+    ElMessage.warning(
+      `最多只能进行 ${maxInteractionRounds.value} 轮问询，请进入人工辅助判断。`,
+    );
     return;
   }
 
@@ -1849,6 +2299,23 @@ async function enterJudgementStage() {
     return;
   }
 
+  if (hasReachedInteractionLimit.value) {
+    currentStage.value = 'judgement';
+    judgementBriefing.value = null;
+    void recordAuditEvent({
+      action: 'enter_judgement_stage',
+      resource: '辅助问询',
+      result: 'success',
+      path: '/home/ask',
+      detail: {
+        mode: 'round_limit',
+        roundNumber: round.roundNumber,
+        maxInteractionRounds: maxInteractionRounds.value,
+      },
+    });
+    return;
+  }
+
   isRequestingGuidance.value = true;
   roundServiceError.value = '';
   openStageLoading('judgementBriefing');
@@ -1878,25 +2345,162 @@ async function enterJudgementStage() {
   }
 }
 
-function archiveCase() {
+async function archiveCase() {
   if (!canArchive.value) {
     return;
   }
 
-  archivedAt.value = new Date().toLocaleString('zh-CN', {
-    hour12: false,
-  });
-  isArchived.value = true;
-  void recordAuditEvent({
-    action: 'archive_case',
-    resource: '辅助问询',
-    result: 'success',
-    path: '/home/ask',
-    detail: {
-      archivedAt: archivedAt.value,
-      sessionId: sessionId.value,
-      finalJudgement: selectedJudgement.value,
+  isArchiving.value = true;
+  roundServiceError.value = '';
+
+  try {
+    const response = await createInquiryArchive(buildArchivePayload());
+    archiveCode.value = response.archiveCode;
+    archivedAt.value = formatArchiveTimestamp(response.archivedAt);
+    isArchived.value = true;
+    ElMessage.success('问询归档已保存。');
+    void recordAuditEvent({
+      action: 'archive_case',
+      resource: '辅助问询',
+      result: 'success',
+      path: '/home/ask',
+      detail: {
+        archiveCode: response.archiveCode,
+        archivedAt: response.archivedAt,
+        sessionId: sessionId.value,
+        finalJudgement: selectedJudgement.value,
+      },
+    });
+  } catch (error) {
+    roundServiceError.value = normalizeErrorMessage(
+      error,
+      '问询归档保存失败，请检查后端和 MinIO 配置。',
+    );
+    ElMessage.error(roundServiceError.value);
+  } finally {
+    isArchiving.value = false;
+  }
+}
+
+function buildArchivePayload(): CreateInquiryArchivePayload {
+  const profile = requireSelectedProfile();
+  return {
+    sessionId: sessionId.value,
+    passengerProfileId: profile.id || null,
+    passengerDocumentNum: profile.documentNum,
+    passengerName: profile.fullName,
+    passengerSnapshot: {
+      profile,
+      passengerProfile: buildPassengerPayload(profile),
+      tripProfile: buildTripPayload(profile),
+      riskLevel: passengerProfile.value.riskLevel,
+      riskLabel: passengerProfile.value.riskLabel,
     },
+    finalJudgement: selectedJudgement.value || '',
+    judgementReason: judgementReason.value.trim(),
+    judgementBriefing: judgementBriefing.value
+      ? {
+          ...judgementBriefing.value,
+        }
+      : {},
+    multimodalAssessment: judgementBriefing.value?.multimodalAssessment || {},
+    totalDurationSeconds: totalSampleDuration.value,
+    transcriptCount: totalTranscriptCount.value,
+    rounds: completedRounds.value.map(buildArchiveRoundPayload),
+  };
+}
+
+function buildArchiveRoundPayload(
+  round: InterviewRound,
+): CreateInquiryArchiveRoundPayload {
+  const riskHints = [
+    round.signal,
+    ...(round.humanOmniWindow?.rawSummary ? ['HumanOmni 摘要已生成'] : []),
+  ].filter(Boolean);
+
+  return {
+    roundNo: round.roundNumber,
+    roundClientId: round.id,
+    title: round.title,
+    focus: round.focus,
+    strategyNote: round.strategyNote,
+    questions: round.questions,
+    transcripts: round.transcripts,
+    answerText: collectSubjectTranscript(round),
+    roundSummary: round.summary,
+    humanOmniSummary: round.humanOmniWindow?.rawSummary || '',
+    actionObservations: round.actionObservations,
+    riskHints,
+    durationSeconds: round.durationSeconds,
+    videos: buildArchiveVideos(round),
+  };
+}
+
+function buildArchiveVideos(round: InterviewRound): CreateInquiryArchiveVideoPayload[] {
+  const uploadedFile = round.uploadedFile;
+  const objectInfo = resolveMinioObjectInfo(uploadedFile);
+  if (!uploadedFile || !objectInfo) {
+    return [];
+  }
+
+  return [
+    {
+      videoKind: 'round_clip',
+      windowId: round.humanOmniWindow?.windowId || null,
+      questionId: round.humanOmniWindow?.questionId || round.questions[0]?.id || null,
+      videoUrl: uploadedFile.storedPath,
+      minioBucket: objectInfo.bucket,
+      minioObjectKey: objectInfo.objectKey,
+      fileName: uploadedFile.filename,
+      contentType: uploadedFile.contentType || 'video/mp4',
+      sizeBytes: uploadedFile.sizeBytes,
+      modal: round.humanOmniWindow?.modal || 'video_audio',
+      startSeconds: round.humanOmniWindow?.startSeconds ?? 0,
+      endSeconds: round.humanOmniWindow?.endSeconds ?? Math.max(1, round.durationSeconds),
+      humanOmniModel: round.humanOmniWindow?.modelName || null,
+      humanOmniRawSummary: round.humanOmniWindow?.rawSummary || null,
+      uploadPayload: {
+        ...uploadedFile,
+      },
+    },
+  ];
+}
+
+function resolveMinioObjectInfo(uploadedFile: UploadedWindowFilePayload | null) {
+  if (!uploadedFile) {
+    return null;
+  }
+  if (uploadedFile.bucket && uploadedFile.objectKey) {
+    return {
+      bucket: uploadedFile.bucket,
+      objectKey: uploadedFile.objectKey,
+    };
+  }
+
+  const storedPath = uploadedFile.storedPath.trim();
+  if (!storedPath.startsWith('minio://')) {
+    return null;
+  }
+
+  const withoutScheme = storedPath.slice('minio://'.length);
+  const slashIndex = withoutScheme.indexOf('/');
+  if (slashIndex <= 0 || slashIndex === withoutScheme.length - 1) {
+    return null;
+  }
+
+  return {
+    bucket: withoutScheme.slice(0, slashIndex),
+    objectKey: withoutScheme.slice(slashIndex + 1),
+  };
+}
+
+function formatArchiveTimestamp(value: string) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleString('zh-CN', {
+    hour12: false,
   });
 }
 
@@ -2009,11 +2613,10 @@ function resetSpeechRecognitionState(message = '等待开始采样。') {
 }
 
 function upsertSpeechTranscript(round: InterviewRound) {
-  const transcript = [speechFinalTranscript, speechInterimTranscript]
-    .map((value) => value.trim())
-    .filter(Boolean)
-    .join(' ')
-    .trim();
+  const transcript = mergeTranscriptParts([
+    speechFinalTranscript,
+    speechInterimTranscript,
+  ]);
 
   round.asrText = transcript;
   if (!transcript) {
@@ -2034,7 +2637,7 @@ function upsertSpeechTranscript(round: InterviewRound) {
 
   const entry = {
     id: `${round.id}-speech-transcript`,
-    speaker: passengerProfile.alias,
+    speaker: passengerProfile.value.alias,
     role: 'subject',
     time: formatTranscriptTime(samplingState.value.elapsedSeconds),
     text: transcript,
@@ -2050,23 +2653,215 @@ function promoteSpeechInterimTranscript(round: InterviewRound) {
     return;
   }
 
-  speechFinalTranscript =
-    `${speechFinalTranscript} ${interimTranscript}`.trim();
+  speechFinalTranscript = mergeTranscriptParts([
+    speechFinalTranscript,
+    interimTranscript,
+  ]);
   speechInterimTranscript = '';
   upsertSpeechTranscript(round);
 }
 
+const MIN_TRANSCRIPT_OVERLAP = 4;
+const TRANSCRIPT_COMPARISON_IGNORED_CHARS = /[\s\p{P}\p{S}]/u;
+const TRANSCRIPT_TRAILING_SEPARATOR = /[\s\p{P}\p{S}]+$/u;
+const TRANSCRIPT_LEADING_SEPARATOR = /^[\s\p{P}\p{S}]+/u;
+
+interface TranscriptComparison {
+  normalized: string;
+  starts: number[];
+  ends: number[];
+}
+
+function buildTranscriptComparison(value: string): TranscriptComparison {
+  const starts: number[] = [];
+  const ends: number[] = [];
+  let normalized = '';
+  let sourceIndex = 0;
+
+  for (const character of value) {
+    const nextSourceIndex = sourceIndex + character.length;
+    if (!TRANSCRIPT_COMPARISON_IGNORED_CHARS.test(character)) {
+      normalized += character.toLowerCase();
+      starts.push(sourceIndex);
+      ends.push(nextSourceIndex);
+    }
+    sourceIndex = nextSourceIndex;
+  }
+
+  return { normalized, starts, ends };
+}
+
+function sourceIndexAfterNormalizedPrefix(
+  comparison: TranscriptComparison,
+  length: number,
+) {
+  if (length <= 0) {
+    return 0;
+  }
+  return comparison.ends[length - 1] ?? Number.MAX_SAFE_INTEGER;
+}
+
+function sourceIndexAtNormalizedPosition(
+  comparison: TranscriptComparison,
+  position: number,
+) {
+  return comparison.starts[position] ?? 0;
+}
+
+function findNormalizedSuffixPrefixOverlap(left: string, right: string) {
+  const maxOverlap = Math.min(left.length, right.length);
+  for (let length = maxOverlap; length >= MIN_TRANSCRIPT_OVERLAP; length -= 1) {
+    if (left.endsWith(right.slice(0, length))) {
+      return length;
+    }
+  }
+  return 0;
+}
+
+function findNormalizedInternalOverlap(left: string, right: string) {
+  const maxOverlap = Math.min(left.length, right.length);
+  for (let length = maxOverlap; length >= MIN_TRANSCRIPT_OVERLAP; length -= 1) {
+    const leftIndex = left.lastIndexOf(right.slice(0, length));
+    if (leftIndex >= 0) {
+      return leftIndex;
+    }
+  }
+  return -1;
+}
+
+function appendTranscriptRemainder(left: string, remainder: string) {
+  const nextRemainder = remainder.trimEnd();
+  if (!nextRemainder.trim()) {
+    return left.trim();
+  }
+
+  if (
+    TRANSCRIPT_TRAILING_SEPARATOR.test(left) &&
+    TRANSCRIPT_LEADING_SEPARATOR.test(nextRemainder)
+  ) {
+    return `${left.replace(TRANSCRIPT_TRAILING_SEPARATOR, '')}${nextRemainder}`.trim();
+  }
+
+  return `${left}${nextRemainder}`.trim();
+}
+
+function mergeTranscriptPart(merged: string, part: string) {
+  const next = part.trim();
+  if (!next) {
+    return merged;
+  }
+  if (!merged) {
+    return next;
+  }
+  if (next.includes(merged)) {
+    return next;
+  }
+  if (merged.includes(next)) {
+    return merged;
+  }
+
+  const mergedComparison = buildTranscriptComparison(merged);
+  const nextComparison = buildTranscriptComparison(next);
+  const mergedNormalized = mergedComparison.normalized;
+  const nextNormalized = nextComparison.normalized;
+
+  if (mergedNormalized && nextNormalized) {
+    if (
+      mergedNormalized.length >= MIN_TRANSCRIPT_OVERLAP &&
+      nextNormalized.includes(mergedNormalized)
+    ) {
+      return next;
+    }
+    if (
+      nextNormalized.length >= MIN_TRANSCRIPT_OVERLAP &&
+      mergedNormalized.includes(nextNormalized)
+    ) {
+      return merged;
+    }
+
+    const overlapLength = findNormalizedSuffixPrefixOverlap(
+      mergedNormalized,
+      nextNormalized,
+    );
+    if (overlapLength) {
+      const appendFrom = sourceIndexAfterNormalizedPrefix(
+        nextComparison,
+        overlapLength,
+      );
+      return appendTranscriptRemainder(merged, next.slice(appendFrom));
+    }
+
+    const replacementStart = findNormalizedInternalOverlap(
+      mergedNormalized,
+      nextNormalized,
+    );
+    if (replacementStart >= 0) {
+      const keepUntil = sourceIndexAtNormalizedPosition(
+        mergedComparison,
+        replacementStart,
+      );
+      return `${merged.slice(0, keepUntil)}${next}`.trim();
+    }
+  }
+
+  const maxOverlap = Math.min(merged.length, next.length);
+  for (let length = maxOverlap; length > 0; length -= 1) {
+    if (merged.endsWith(next.slice(0, length))) {
+      return `${merged}${next.slice(length)}`.trim();
+    }
+  }
+
+  return `${merged} ${next}`.trim();
+}
+
+function mergeTranscriptParts(parts: string[]) {
+  return parts.reduce(mergeTranscriptPart, '');
+}
+
+function clearOverlappedAsrSegments(event: RealtimeAsrEvent) {
+  const startMs = event.replaceStartMs ?? event.startMs;
+  const endMs = event.replaceEndMs ?? event.endMs;
+  const correctionMode = String(
+    event.correctionMode ?? event.rawType ?? '',
+  ).toLowerCase();
+  const shouldReplace =
+    correctionMode === 'pgs' ||
+    correctionMode === 'rpl' ||
+    correctionMode === 'replace' ||
+    correctionMode === 'correction';
+
+  if (!shouldReplace || startMs == null) {
+    return;
+  }
+
+  const removeIfCovered = (segments: Map<number, string>) => {
+    for (const segmentId of [...segments.keys()]) {
+      if (
+        segmentId === event.segmentId ||
+        segmentId < startMs ||
+        (endMs != null && segmentId > endMs)
+      ) {
+        continue;
+      }
+      segments.delete(segmentId);
+    }
+  };
+
+  removeIfCovered(asrStableSegments);
+  removeIfCovered(asrInterimSegments);
+}
+
 function rebuildStreamingAsrTranscript(round: InterviewRound) {
-  speechFinalTranscript = [...asrStableSegments.entries()]
-    .sort(([left], [right]) => left - right)
-    .map(([, text]) => text)
-    .join(' ')
-    .trim();
-  speechInterimTranscript = [...asrInterimSegments.entries()]
-    .sort(([left], [right]) => left - right)
-    .map(([, text]) => text)
-    .join(' ')
-    .trim();
+  speechFinalTranscript = mergeTranscriptParts(
+    [...asrStableSegments.entries()]
+      .sort(([left], [right]) => left - right)
+      .map(([, text]) => text),
+  );
+  speechInterimTranscript = mergeTranscriptParts(
+    [...asrInterimSegments.entries()]
+      .sort(([left], [right]) => left - right)
+      .map(([, text]) => text),
+  );
   upsertSpeechTranscript(round);
 }
 
@@ -2103,6 +2898,7 @@ function handleStreamingAsrEvent(
   }
 
   const segmentId = event.segmentId ?? Date.now();
+  clearOverlappedAsrSegments(event);
   if (event.isFinal) {
     asrInterimSegments.delete(segmentId);
     asrStableSegments.set(segmentId, text);
@@ -2330,6 +3126,22 @@ onMounted(() => {
 useProtectedPage('/home/ask');
 
 watch(
+  () => route.query.documentNum,
+  (value, previousValue) => {
+    const nextDocumentNum = normalizeRouteQueryValue(value);
+    const previousDocumentNum = normalizeRouteQueryValue(previousValue);
+    if (
+      nextDocumentNum === previousDocumentNum &&
+      profileLoadState.value !== 'idle'
+    ) {
+      return;
+    }
+    void loadSelectedProfile(nextDocumentNum);
+  },
+  { immediate: true },
+);
+
+watch(
   () => [currentStage.value, currentRoundId.value, samplingState.value.phase],
   () => {
     void nextTick(() => {
@@ -2349,27 +3161,6 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="ask-page">
-    <header class="workflow-hero">
-      <div>
-        <h2>辅助问询</h2>
-        <p class="section-copy">
-          使用单一主工作面管理策略生成、多轮采样和人工判定。当前已对接
-          AI-Service 三个接口，摄像头、话筒和实时转写随采样流程同步启动。
-        </p>
-      </div>
-
-      <div class="workflow-hero__meta">
-        <div class="meta-chip">
-          <span>编号</span>
-          <strong>{{ archiveCode }}</strong>
-        </div>
-        <div class="meta-chip">
-          <span>检查员</span>
-          <strong>{{ inspectorName }} · {{ inspectorWorkId }}</strong>
-        </div>
-      </div>
-    </header>
-
     <Transition name="stage-switch" mode="out-in">
       <article :key="stageCardKey" class="stage-card">
         <div class="stage-card__progress">
@@ -2412,68 +3203,87 @@ onBeforeUnmount(() => {
 
             <div class="stage-chip-group">
               <span
+                v-if="hasSelectedProfile"
                 class="risk-chip"
                 :class="riskToneClass(passengerProfile.riskLevel)"
               >
                 {{ passengerProfile.riskLabel }}
               </span>
-              <span class="soft-chip">画像已载入</span>
+              <span class="soft-chip">{{ profileHeaderStatusLabel }}</span>
             </div>
           </header>
 
           <div class="strategy-layout">
             <section class="profile-panel profile-panel--compact">
-              <div class="profile-panel__identity">
-                <div class="profile-avatar">{{ passengerProfile.alias }}</div>
-                <div>
-                  <strong>{{ passengerProfile.name }}</strong>
-                  <span>{{ passengerProfile.documentId }}</span>
+              <template v-if="hasSelectedProfile">
+                <div class="profile-panel__identity">
+                  <div class="profile-avatar">
+                    {{ passengerProfile.alias.slice(0, 2) }}
+                  </div>
+                  <div>
+                    <strong>{{ passengerProfile.name }}</strong>
+                    <span>{{ passengerProfile.documentId }}</span>
+                  </div>
                 </div>
-              </div>
 
-              <div class="profile-grid">
-                <div>
-                  <span class="meta-label">旅客别名</span>
-                  <strong>{{ passengerProfile.alias }}</strong>
+                <div class="profile-grid">
+                  <div>
+                    <span class="meta-label">旅客姓名</span>
+                    <strong>{{ passengerProfile.alias }}</strong>
+                  </div>
+                  <div>
+                    <span class="meta-label">PNR</span>
+                    <strong>{{ passengerProfile.pnr }}</strong>
+                  </div>
+                  <div>
+                    <span class="meta-label">航线</span>
+                    <strong>{{ passengerProfile.route }}</strong>
+                  </div>
+                  <div>
+                    <span class="meta-label">座位 / 舱位</span>
+                    <strong>{{ passengerProfile.seat }}</strong>
+                  </div>
+                  <div>
+                    <span class="meta-label">出发日期</span>
+                    <strong>{{ passengerProfile.eta }}</strong>
+                  </div>
+                  <div>
+                    <span class="meta-label">观察重点</span>
+                    <strong>{{ passengerProfile.observation }}</strong>
+                  </div>
                 </div>
-                <div>
-                  <span class="meta-label">PNR</span>
-                  <strong>{{ passengerProfile.pnr }}</strong>
-                </div>
-                <div>
-                  <span class="meta-label">航线</span>
-                  <strong>{{ passengerProfile.route }}</strong>
-                </div>
-                <div>
-                  <span class="meta-label">座位 / 舱位</span>
-                  <strong>{{ passengerProfile.seat }}</strong>
-                </div>
-                <div>
-                  <span class="meta-label">抵离状态</span>
-                  <strong>{{ passengerProfile.eta }}</strong>
-                </div>
-                <div>
-                  <span class="meta-label">观察重点</span>
-                  <strong>{{ passengerProfile.observation }}</strong>
-                </div>
-              </div>
 
-              <div class="profile-insight">
-                <span class="meta-label">风险摘要</span>
-                <p class="profile-summary">{{ passengerProfile.summary }}</p>
-              </div>
+                <div class="profile-insight">
+                  <span class="meta-label">风险摘要</span>
+                  <p class="profile-summary">{{ passengerProfile.summary }}</p>
+                </div>
 
-              <div class="tag-row">
-                <span
-                  v-for="tag in passengerProfile.tags"
-                  :key="tag"
-                  class="tag-chip tag-chip--passive"
+                <div class="tag-row">
+                  <span
+                    v-for="tag in passengerProfile.tags"
+                    :key="tag"
+                    class="tag-chip tag-chip--passive"
+                  >
+                    {{ tag }}
+                  </span>
+                </div>
+              </template>
+
+              <div v-else class="locked-panel">
+                <strong>{{
+                  isProfileLoading ? '正在读取旅客画像' : '画像未载入'
+                }}</strong>
+                <p>{{ profileLockMessage }}</p>
+                <button
+                  class="secondary-action"
+                  type="button"
+                  @click="returnToDataSearch"
                 >
-                  {{ tag }}
-                </span>
+                  返回数据检索
+                </button>
               </div>
 
-              <section class="memory-panel">
+              <section v-if="hasSelectedProfile" class="memory-panel">
                 <div class="memory-panel__head">
                   <div>
                     <span class="meta-label">智能体记忆</span>
@@ -2518,6 +3328,13 @@ onBeforeUnmount(() => {
                       : strategyGenerated
                         ? '策略已生成'
                         : '等待生成'
+                    isStrategyLocked
+                      ? '等待数据检索'
+                      : isGeneratingStrategy
+                        ? '系统生成中'
+                        : strategyGenerated
+                          ? `${generatedQuestions.length} 个问题已生成`
+                          : '等待生成'
                   }}
                 </span>
               </div>
@@ -2535,13 +3352,98 @@ onBeforeUnmount(() => {
                 :src="protectedStrategyAsset.url"
                 alt="首轮策略敏感图片"
               />
+                  isStrategyLocked
+                    ? profileLockMessage
+                    : strategySummary ||
+                      '系统将根据用户画像与风险标签生成首轮策略与问题包。'
+                }}
+              </p>
 
-              <div v-else class="empty-panel">
-                <strong>尚未生成首轮问题</strong>
-                <span
-                  >点击下方按钮后，系统会请求 AI-Service
-                  生成首轮核验问题与问询策略。</span
+              <div
+                v-if="
+                  !isStrategyLocked &&
+                  (strategyRiskAssessment || strategyOperatorNote)
+                "
+                class="summary-stack summary-stack--dense"
+              >
+                <div v-if="strategyRiskAssessment" class="summary-item">
+                  <span class="meta-label">风险预评估</span>
+                  <div class="summary-item__inline">
+                    <strong>{{ strategyRiskAssessment.summary }}</strong>
+                    <span
+                      class="risk-chip"
+                      :class="
+                        strategyRiskToneClass(strategyRiskAssessment.level)
+                      "
+                    >
+                      {{ strategyRiskLabel(strategyRiskAssessment.level) }}
+                    </span>
+                  </div>
+                  <div
+                    v-if="strategyRiskAssessment.reasons.length"
+                    class="tag-row"
+                  >
+                    <span
+                      v-for="reason in strategyRiskAssessment.reasons"
+                      :key="reason"
+                      class="tag-chip tag-chip--passive"
+                    >
+                      {{ reason }}
+                    </span>
+                  </div>
+                </div>
+
+                <div v-if="strategyFocusAreas.length" class="summary-item">
+                  <span class="meta-label">关注方向</span>
+                  <div class="tag-row">
+                    <span
+                      v-for="area in strategyFocusAreas"
+                      :key="area"
+                      class="tag-chip tag-chip--passive"
+                    >
+                      {{ area }}
+                    </span>
+                  </div>
+                </div>
+
+                <div v-if="strategyOperatorNote" class="summary-item">
+                  <span class="meta-label">工作人员提示</span>
+                  <p>{{ strategyOperatorNote }}</p>
+                </div>
+              </div>
+
+              <div
+                v-if="!isStrategyLocked && strategyGenerated"
+                class="question-list question-list--scroll"
+              >
+                <article
+                  v-for="question in generatedQuestions"
+                  :key="question.id"
+                  class="question-item"
                 >
+                  <div class="question-item__meta">
+                    <strong>{{ question.title }}</strong>
+                    <span>{{ question.objective }}</span>
+                  </div>
+                  <p>{{ question.prompt }}</p>
+                </article>
+              </div>
+
+              <div
+                v-else
+                class="empty-panel"
+                :class="{ 'empty-panel--locked': isStrategyLocked }"
+              >
+                <strong>{{
+                  isStrategyLocked ? '请先进行数据检索' : '尚未生成首轮问题'
+                }}</strong>
+                <span>
+                  {{
+                    isStrategyLocked
+                      ? '从数据检索结果中点击“发起辅助问询”后，系统会载入真实旅客画像并解锁策略生成。'
+                      : '点击下方按钮后，系统会请求 AI-Service 生成首轮核验问题与问询策略。'
+                  }}
+                </span>
               </div>
 
               <div v-if="strategyRequestError" class="inline-alert">
@@ -2553,7 +3455,9 @@ onBeforeUnmount(() => {
                   class="primary-action"
                   type="button"
                   :disabled="
-                    isGeneratingStrategy || Boolean(activeStageLoading)
+                    isStrategyLocked ||
+                    isGeneratingStrategy ||
+                    Boolean(activeStageLoading)
                   "
                   @click="generateStrategy"
                 >
@@ -2562,10 +3466,22 @@ onBeforeUnmount(() => {
                 <button
                   class="secondary-action"
                   type="button"
-                  :disabled="!canEnterInterview || Boolean(activeStageLoading)"
+                  :disabled="
+                    isStrategyLocked ||
+                    !canEnterInterview ||
+                    Boolean(activeStageLoading)
+                  "
                   @click="enterInterviewStage"
                 >
                   进入继续
+                </button>
+                <button
+                  v-if="isStrategyLocked"
+                  class="secondary-action"
+                  type="button"
+                  @click="returnToDataSearch"
+                >
+                  返回数据检索
                 </button>
               </div>
             </section>
@@ -2596,7 +3512,10 @@ onBeforeUnmount(() => {
           </header>
 
           <div v-if="currentRound" class="interview-layout">
-            <section ref="capturePanelElement" class="video-panel video-panel--capture">
+            <section
+              ref="capturePanelElement"
+              class="video-panel video-panel--capture"
+            >
               <div class="video-panel__head">
                 <div>
                   <p class="section-eyebrow">采样视频</p>
@@ -2671,7 +3590,9 @@ onBeforeUnmount(() => {
                   <span class="detector-pill detector-pill--neutral">
                     姿态
                     {{
-                      realtimeDetection.overlayFrame.poseDetected ? '已识别' : '未识别'
+                      realtimeDetection.overlayFrame.poseDetected
+                        ? '已识别'
+                        : '未识别'
                     }}
                   </span>
                 </div>
@@ -2798,10 +3719,14 @@ onBeforeUnmount(() => {
 
                 <div class="console-metrics">
                   <span class="soft-chip">
-                    检测 {{ realtimeDetection.overlayFrame.detectionFps.toFixed(1) }} 帧/秒
+                    检测
+                    {{ realtimeDetection.overlayFrame.detectionFps.toFixed(1) }}
+                    帧/秒
                   </span>
                   <span class="soft-chip">
-                    推理 {{ realtimeDetection.overlayFrame.inferenceMs.toFixed(1) }} 毫秒
+                    推理
+                    {{ realtimeDetection.overlayFrame.inferenceMs.toFixed(1) }}
+                    毫秒
                   </span>
                   <span class="soft-chip">
                     {{
@@ -2903,40 +3828,70 @@ onBeforeUnmount(() => {
                 </p>
 
                 <div class="round-actions round-actions--compact">
-                <div class="round-actions__copy">
-                  <strong>{{
-                    currentRound.completed ? '本轮已完成' : '本轮未完成'
-                  }}</strong>
+                  <div class="round-actions__copy">
+                    <strong>{{
+                      currentRound.completed ? '本轮已完成' : '本轮未完成'
+                    }}</strong>
                     <span>
                       {{
-                        currentRound.completed
-                          ? '本轮采样与摘要已完成，可继续进入下一轮追问或提交人工辅助判断。'
-                          : '完成采样并等待摘要上传后，可解锁下一轮或进入人工判断。'
+                        hasReachedInteractionLimit
+                          ? '已达到管理员设置的总交互轮次上限，建议结束当前辅助问询流程。'
+                          : currentRound.completed
+                            ? '本轮采样与摘要已完成，可继续进入下一轮追问或提交人工辅助判断。'
+                            : '完成采样并等待摘要上传后，可解锁下一轮或进入人工判断。'
                       }}
                     </span>
+                    <small
+                      v-if="inquirySettingsMessage"
+                      class="round-limit-badge round-limit-badge--warning"
+                    >
+                      {{ inquirySettingsMessage }}
+                    </small>
+                    <small v-else class="round-limit-badge">
+                      当前上限 <strong>{{ maxInteractionRounds }}</strong> 轮
+                    </small>
+                  </div>
+
+                  <div class="action-row">
+                    <button
+                      class="secondary-action"
+                      type="button"
+                      :disabled="
+                        !canAdvanceRound || Boolean(activeStageLoading)
+                      "
+                      @click="enterNextRound"
+                    >
+                      进入下一轮
+                    </button>
+                    <button
+                      class="primary-action"
+                      type="button"
+                      :disabled="
+                        !canEnterJudgement || Boolean(activeStageLoading)
+                      "
+                      @click="enterJudgementStage"
+                    >
+                      进入人工辅助判断
+                    </button>
+                  </div>
                 </div>
 
-                <div class="action-row">
-                  <button
-                    class="secondary-action"
-                    type="button"
-                    :disabled="!canAdvanceRound || Boolean(activeStageLoading)"
-                    @click="enterNextRound"
-                  >
-                    进入下一轮
-                  </button>
-                  <button
-                    class="primary-action"
-                    type="button"
-                    :disabled="
-                      !canEnterJudgement || Boolean(activeStageLoading)
-                    "
-                    @click="enterJudgementStage"
-                  >
-                    进入人工辅助判断
-                  </button>
+                <div class="panel-subhead">
+                  <strong>当前问题</strong>
+                  <span>{{ currentRound.questions.length }} 条</span>
                 </div>
-              </div>
+
+                <div class="current-questions current-questions--scroll">
+                  <article
+                    v-for="question in currentRound.questions"
+                    :key="question.id"
+                    class="question-brief"
+                  >
+                    <strong>{{ question.title }}</strong>
+                    <p>{{ question.prompt }}</p>
+                    <span>{{ question.objective }}</span>
+                  </article>
+                </div>
 
               <div class="panel-subhead">
                 <strong>当前问题</strong>
@@ -2948,53 +3903,97 @@ onBeforeUnmount(() => {
                 :src="currentRound.promptAsset.url"
                 alt="当前轮问题包敏感图片"
               />
+                <div class="panel-subhead">
+                  <strong>实时转写</strong>
+                  <span>{{ currentRound.transcripts.length }} 条</span>
+                </div>
 
-              <div class="panel-subhead">
-                <strong>实时转写</strong>
-                <span>{{ currentRound.transcripts.length }} 条</span>
-              </div>
+                <div class="transcript-stream transcript-stream--compact">
+                  <article
+                    v-for="entry in currentRound.transcripts"
+                    :key="entry.id"
+                    class="transcript-entry"
+                    :class="`transcript-entry--${entry.role}`"
+                  >
+                    <div class="transcript-entry__meta">
+                      <strong>{{ entry.speaker }}</strong>
+                      <span>{{ entry.time }}</span>
+                    </div>
+                    <p>{{ entry.text }}</p>
+                  </article>
 
-              <div class="transcript-stream transcript-stream--compact">
-                <article
-                  v-for="entry in currentRound.transcripts"
-                  :key="entry.id"
-                  class="transcript-entry"
-                  :class="`transcript-entry--${entry.role}`"
-                >
-                  <div class="transcript-entry__meta">
-                    <strong>{{ entry.speaker }}</strong>
-                    <span>{{ entry.time }}</span>
+                  <div
+                    v-if="!currentRound.transcripts.length"
+                    class="empty-panel empty-panel--compact"
+                  >
+                    <strong>尚无实时转写记录</strong>
+                    <span>开始采样后，这里会显示问询对象的实时回答文本。</span>
                   </div>
-                  <p>{{ entry.text }}</p>
-                </article>
+                </div>
+
+                <div v-if="samplingState.errorMessage" class="inline-alert">
+                  {{ samplingState.errorMessage }}
+                </div>
 
                 <div
-                  v-if="!currentRound.transcripts.length"
-                  class="empty-panel empty-panel--compact"
+                  class="summary-stack summary-stack--compact round-summary-stack"
                 >
-                  <strong>尚无实时转写记录</strong>
-                  <span>开始采样后，这里会显示问询对象的实时回答文本。</span>
+                  <div class="summary-item">
+                    <span class="meta-label">窗口上传</span>
+                    <div class="summary-item__inline">
+                      <strong>{{
+                        roundUploadStateLabel(currentRound.uploadState)
+                      }}</strong>
+                      <span
+                        class="status-chip"
+                        :class="roundUploadStateClass(currentRound.uploadState)"
+                      >
+                        {{ roundUploadStateLabel(currentRound.uploadState) }}
+                      </span>
+                    </div>
+                    <p>
+                      {{
+                        currentRound.recordedFileName ||
+                        '结束采样后会生成本轮真实 MP4/H.264 音视频片段并上传至 HumanOmni 摘要接口。'
+                      }}
+                    </p>
+                  </div>
+
+                  <div class="summary-item">
+                    <span class="meta-label">窗口摘要</span>
+                    <p>
+                      {{
+                        currentRound.humanOmniWindow?.rawSummary ||
+                        (currentRound.uploadState === 'uploading'
+                          ? '正在等待系统返回窗口摘要。'
+                          : '尚未生成窗口摘要。')
+                      }}
+                    </p>
+                  </div>
                 </div>
-              </div>
 
-              <div v-if="samplingState.errorMessage" class="inline-alert">
-                {{ samplingState.errorMessage }}
-              </div>
+                <div
+                  v-if="currentRound.uploadErrorMessage"
+                  class="inline-alert"
+                >
+                  {{ currentRound.uploadErrorMessage }}
+                </div>
 
-              <div
-                class="summary-stack summary-stack--compact round-summary-stack"
-              >
-                <div class="summary-item">
-                  <span class="meta-label">窗口上传</span>
-                  <div class="summary-item__inline">
-                    <strong>{{
-                      roundUploadStateLabel(currentRound.uploadState)
-                    }}</strong>
+                <div v-if="roundServiceError" class="inline-alert">
+                  {{ roundServiceError }}
+                </div>
+
+                <section class="memory-panel memory-panel--inline">
+                  <div class="memory-panel__head">
+                    <div>
+                      <span class="meta-label">智能体记忆</span>
+                      <strong>{{ memoryStatusLabel }}</strong>
+                    </div>
                     <span
                       class="status-chip"
-                      :class="roundUploadStateClass(currentRound.uploadState)"
+                      :class="`status-chip--${memoryLoadState}`"
                     >
-                      {{ roundUploadStateLabel(currentRound.uploadState) }}
+                      {{ memoryLastSyncedAt || '未同步' }}
                     </span>
                   </div>
                   <p>
@@ -3050,14 +4049,49 @@ onBeforeUnmount(() => {
                   alt="问询记忆敏感图片"
                 />
 
-                <div v-else class="empty-panel empty-panel--compact">
-                  <strong>尚无可用记忆</strong>
-                  <span>完成采样与追问后，系统会更新记忆上下文。</span>
-                </div>
+                  <div
+                    v-if="groupedMemoryReferences.length"
+                    class="memory-reference-row"
+                  >
+                    <span
+                      v-for="reference in groupedMemoryReferences"
+                      :key="reference.key"
+                      class="memory-reference-chip"
+                      :title="`引用：${reference.title}`"
+                    >
+                      <span>引用：{{ reference.title }}</span>
+                      <small
+                        >{{ reference.scopeLabel }} ·
+                        {{ reference.typeLabel }}</small
+                      >
+                      <b>×{{ reference.count }}</b>
+                    </span>
+                  </div>
 
-                <div v-if="memoryErrorMessage" class="inline-alert">
-                  {{ memoryErrorMessage }}
-                </div>
+                  <div v-if="memoryPanelItems.length" class="memory-list">
+                    <article
+                      v-for="item in memoryPanelItems"
+                      :key="item.key"
+                      class="memory-item"
+                    >
+                      <div class="memory-item__meta">
+                        <strong>{{ item.title }}</strong>
+                        <span
+                          >{{ item.scopeLabel }} · {{ item.typeLabel }}</span
+                        >
+                      </div>
+                      <p>{{ item.content }}</p>
+                    </article>
+                  </div>
+
+                  <div v-else class="empty-panel empty-panel--compact">
+                    <strong>尚无可用记忆</strong>
+                    <span>完成采样与追问后，系统会更新记忆上下文。</span>
+                  </div>
+
+                  <div v-if="memoryErrorMessage" class="inline-alert">
+                    {{ memoryErrorMessage }}
+                  </div>
                 </section>
               </div>
             </section>
@@ -3220,7 +4254,7 @@ onBeforeUnmount(() => {
               :disabled="!canArchive"
               @click="archiveCase"
             >
-              归档
+              {{ isArchiving ? '归档中...' : '归档' }}
             </button>
           </div>
         </template>
@@ -3325,6 +4359,41 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </Transition>
+
+    <Transition name="round-limit-dialog">
+      <div
+        v-if="roundLimitDialogVisible"
+        class="round-limit-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="轮次上限提示"
+      >
+        <div class="round-limit-dialog__panel">
+          <p class="section-eyebrow">轮次上限</p>
+          <h4>最多只能进行 {{ maxInteractionRounds }} 轮问询</h4>
+          <p>已达到管理员设置的总交互轮次上限，请进入人工辅助判断。</p>
+          <div class="action-row">
+            <button
+              class="secondary-action"
+              type="button"
+              @click="roundLimitDialogVisible = false"
+            >
+              我知道了
+            </button>
+            <button
+              class="primary-action"
+              type="button"
+              @click="
+                roundLimitDialogVisible = false;
+                enterJudgementStage();
+              "
+            >
+              进入人工辅助判断
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
   </section>
 </template>
 
@@ -3347,7 +4416,6 @@ onBeforeUnmount(() => {
   gap: 22px;
 }
 
-.workflow-hero,
 .stage-card {
   border-radius: 28px;
   background: var(--surface-bg);
@@ -3355,12 +4423,10 @@ onBeforeUnmount(() => {
   box-shadow: var(--shadow);
 }
 
-.workflow-hero,
 .stage-card {
   overflow: hidden;
 }
 
-.workflow-hero,
 .stage-card__progress-head,
 .stage-card__head,
 .workspace-panel__head,
@@ -3379,18 +4445,6 @@ onBeforeUnmount(() => {
   gap: 16px;
 }
 
-.workflow-hero {
-  padding: 28px;
-  background:
-    linear-gradient(
-      135deg,
-      rgba(11, 114, 136, 0.06),
-      rgba(255, 255, 255, 0.96)
-    ),
-    var(--surface-bg);
-}
-
-.workflow-hero h2,
 .stage-card h3,
 .stage-card__progress-head h4,
 .workspace-panel h4,
@@ -3400,10 +4454,6 @@ onBeforeUnmount(() => {
 .analysis-column h4 {
   margin: 6px 0 0;
   color: var(--text-main);
-}
-
-.workflow-hero h2 {
-  margin-top: 0;
 }
 
 .stage-card h3 {
@@ -3449,7 +4499,6 @@ onBeforeUnmount(() => {
   max-width: 680px;
 }
 
-.workflow-hero__meta,
 .stage-chip-group,
 .action-row,
 .tag-row {
@@ -3459,11 +4508,6 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
-.workflow-hero__meta {
-  justify-content: flex-end;
-}
-
-.meta-chip,
 .soft-chip,
 .status-chip,
 .risk-chip,
@@ -3478,22 +4522,10 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 
-.meta-chip,
 .soft-chip,
 .progress-note {
   background: rgba(11, 114, 136, 0.08);
   color: var(--accent-strong);
-}
-
-.meta-chip {
-  display: grid;
-  gap: 2px;
-  padding: 10px 14px;
-}
-
-.meta-chip span {
-  font-size: 0.72rem;
-  color: var(--text-muted);
 }
 
 .stage-card {
@@ -4020,6 +5052,33 @@ onBeforeUnmount(() => {
 
 .empty-panel--compact {
   min-height: 104px;
+}
+
+.empty-panel--locked,
+.locked-panel {
+  border-style: dashed;
+  background: rgba(246, 250, 251, 0.86);
+}
+
+.locked-panel {
+  display: grid;
+  gap: 12px;
+  place-items: center;
+  min-height: 320px;
+  padding: 22px;
+  text-align: center;
+  border-radius: 18px;
+  border: 1px dashed rgba(11, 114, 136, 0.24);
+}
+
+.locked-panel strong {
+  color: var(--text-main);
+}
+
+.locked-panel p {
+  max-width: 320px;
+  margin: 0;
+  color: var(--text-muted);
 }
 
 .primary-action,
@@ -4565,6 +5624,31 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
+.round-limit-badge {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(196, 93, 51, 0.28);
+  background: rgba(255, 239, 219, 0.94);
+  color: #9a3f24;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.round-limit-badge strong {
+  color: #c44f28;
+  font-size: 1.02rem;
+}
+
+.round-limit-badge--warning {
+  border-color: rgba(182, 78, 61, 0.3);
+  background: rgba(182, 78, 61, 0.1);
+  color: var(--alert);
+}
+
 .round-actions--compact .action-row {
   display: grid;
   grid-template-columns: 1fr;
@@ -4917,6 +6001,48 @@ onBeforeUnmount(() => {
     inset 0 1px 0 rgba(255, 255, 255, 0.82);
 }
 
+.round-limit-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 1010;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(14, 32, 39, 0.34);
+  backdrop-filter: blur(10px);
+}
+
+.round-limit-dialog__panel {
+  display: grid;
+  gap: 14px;
+  width: min(420px, 100%);
+  padding: 24px;
+  border-radius: 20px;
+  border: 1px solid rgba(196, 93, 51, 0.2);
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 22px 52px rgba(38, 82, 96, 0.18);
+}
+
+.round-limit-dialog__panel h4,
+.round-limit-dialog__panel p {
+  margin: 0;
+}
+
+.round-limit-dialog__panel h4 {
+  color: #9a3f24;
+  font-size: 1.16rem;
+}
+
+.round-limit-dialog__panel p:last-of-type {
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.round-limit-dialog__panel .action-row {
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
 .stage-loading__visual {
   position: relative;
   display: grid;
@@ -5155,7 +6281,6 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 959px) {
-  .workflow-hero,
   .stage-card__progress-head,
   .stage-card__head,
   .sampling-console__head,
@@ -5208,8 +6333,7 @@ onBeforeUnmount(() => {
     --stage-card-padding: 16px;
   }
 
-  .stage-card,
-  .workflow-hero {
+  .stage-card {
     padding: 16px;
   }
 
@@ -5275,7 +6399,6 @@ onBeforeUnmount(() => {
   }
 
   .action-row,
-  .workflow-hero__meta,
   .stage-chip-group {
     width: 100%;
   }

@@ -24,6 +24,13 @@ export interface AdminUserItem {
   status: string;
 }
 
+export interface InquirySettings {
+  maxRounds: number;
+  minRounds: number;
+  maxAllowedRounds: number;
+  updatedAt: string;
+}
+
 interface AdminUserPayload {
   workId?: string;
   name?: string;
@@ -252,4 +259,20 @@ export async function listAdminAuditLogsProtected(query: {
     `/api/audit-logs/protected?${params.toString()}`,
     '查询审计日志失败。'
   );
+export async function getInquirySettings() {
+  const response = await authorizedFetch('/api/inquiry/settings');
+  return parsePayload<InquirySettings>(response, '读取问询设置失败。');
+}
+
+export async function getAdminInquirySettings() {
+  const response = await authorizedFetch('/api/admin/settings/inquiry');
+  return parsePayload<InquirySettings>(response, '读取系统设置失败。');
+}
+
+export async function updateAdminInquirySettings(maxRounds: number) {
+  const response = await authorizedFetch('/api/admin/settings/inquiry', {
+    method: 'PUT',
+    body: JSON.stringify({ maxRounds }),
+  });
+  return parsePayload<InquirySettings>(response, '保存系统设置失败。');
 }
