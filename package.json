@@ -10,6 +10,7 @@
     "dev:backend": "nx serve backend",
     "dev:cn": "GOPROXY=https://goproxy.cn,direct nx run-many -t serve --projects=frontend,backend --parallel=2 --outputStyle=stream",
     "dev:backend:cn": "GOPROXY=https://goproxy.cn,direct nx serve backend",
+    "db:schema:init": "cd apps/backend && go run ./cmd/dbschema-init",
     "cert:frontend": "bash scripts/generate-dev-https-cert.sh",
     "test:backend": "cd apps/backend && go test ./...",
     "test:frontend": "nx test frontend",

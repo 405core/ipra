@@ -32,7 +32,7 @@ def main() -> int:
     else:
         result = call_in_process(payload)
 
-    required = ["multimodalAssessment", "followupGuidance", "warnings"]
+    required = ["multimodalAssessment", "followupGuidance", "memoryReferences", "memoryUpdates", "warnings"]
     missing = [key for key in required if key not in result]
     expected_count = int(payload.get("constraints", {}).get("questionCount", 3))
     actual_count = len(result.get("followupGuidance", []))
@@ -112,6 +112,33 @@ def build_payload() -> dict[str, Any]:
             "text": "",
             "segments": [],
             "words": [],
+        },
+        "memoryContext": {
+            "sessionId": "inq-smoke-001",
+            "passengerId": "pax-smoke-001",
+            "sessionMemories": [
+                {
+                    "id": 1,
+                    "scopeType": "session",
+                    "scopeId": "inq-smoke-001",
+                    "memoryType": "fact",
+                    "title": "上一轮答复",
+                    "content": "旅客提到朋友安排住宿，但未说明联系人身份。",
+                    "source": "ai-service",
+                }
+            ],
+            "passengerMemories": [],
+            "ruleMemories": [
+                {
+                    "id": 0,
+                    "scopeType": "rule",
+                    "scopeId": "default",
+                    "memoryType": "procedure",
+                    "title": "中性追问",
+                    "content": "追问必须保持中性、专业、非指控。",
+                    "source": "system-rule",
+                }
+            ],
         },
         "constraints": {
             "questionCount": 3,

@@ -149,6 +149,42 @@ DB_SSLMODE=disable
 	}
 }
 
+func TestLoadFallsBackToBackendPlainEnvFile(t *testing.T) {
+	restoreEnv(t)
+	chdirTemp(t)
+
+	if err := os.MkdirAll(filepath.Join("apps", "backend"), 0o755); err != nil {
+		t.Fatalf("MkdirAll apps/backend: %v", err)
+	}
+
+	writeFile(t, filepath.Join("apps", "backend", ".env"), `PORT=9200
+DB_HOST=plain-env-db
+DB_PORT=5432
+DB_USER=plain-env-user
+DB_PASSWORD=plain-env-password
+DB_NAME=plain-env-name
+DB_SSLMODE=disable
+`)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.Port != "9200" {
+		t.Fatalf("Port = %q, want %q", cfg.Port, "9200")
+	}
+	if cfg.Database.Host != "plain-env-db" {
+		t.Fatalf("DB_HOST = %q, want %q", cfg.Database.Host, "plain-env-db")
+	}
+	if cfg.Database.User != "plain-env-user" {
+		t.Fatalf("DB_USER = %q, want %q", cfg.Database.User, "plain-env-user")
+	}
+	if cfg.Database.Name != "plain-env-name" {
+		t.Fatalf("DB_NAME = %q, want %q", cfg.Database.Name, "plain-env-name")
+	}
+}
+
 func TestLoadReturnsErrorWhenDatabaseConfigMissing(t *testing.T) {
 	restoreEnv(t)
 	chdirTemp(t)

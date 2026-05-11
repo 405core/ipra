@@ -27,11 +27,67 @@ export interface OutputConstraintsPayload {
   language: string;
 }
 
+export interface AgentMemoryItemPayload {
+  id?: number | null;
+  scopeType: 'session' | 'passenger' | 'rule' | string;
+  scopeId: string;
+  memoryType:
+    | 'fact'
+    | 'gap'
+    | 'inconsistency'
+    | 'evidence'
+    | 'procedure'
+    | string;
+  title: string;
+  content: string;
+  evidence?: Record<string, unknown> | unknown[] | string | null;
+  confidence?: number | null;
+  source?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  expiresAt?: string | null;
+}
+
+export interface AgentMemoryContextPayload {
+  sessionId?: string | null;
+  passengerId?: string | null;
+  sessionMemories: AgentMemoryItemPayload[];
+  passengerMemories: AgentMemoryItemPayload[];
+  ruleMemories: AgentMemoryItemPayload[];
+}
+
+export interface AgentMemoryReferencePayload {
+  scopeType: string;
+  scopeId: string;
+  memoryType: string;
+  title: string;
+  content: string;
+  source?: string | null;
+}
+
+export interface AgentMemoryUpdatePayload {
+  scopeType: 'session' | 'passenger' | string;
+  scopeId: string;
+  memoryType:
+    | 'fact'
+    | 'gap'
+    | 'inconsistency'
+    | 'evidence'
+    | 'procedure'
+    | string;
+  title: string;
+  content: string;
+  evidence?: Record<string, unknown> | unknown[] | string | null;
+  confidence?: number | null;
+  source?: string | null;
+}
+
 export interface FirstRoundStrategyRequest {
   sessionId: string;
   passengerProfile: PassengerProfilePayload;
   tripProfile: TripProfilePayload;
   knownFacts: string[];
+  memoryContext?: AgentMemoryContextPayload | null;
   constraints: OutputConstraintsPayload;
 }
 
@@ -65,6 +121,8 @@ export interface FirstRoundStrategyResponse {
   riskAssessment: RiskAssessmentPayload;
   strategy: InquiryStrategyPayload;
   questions: GeneratedQuestionPayload[];
+  memoryReferences: AgentMemoryReferencePayload[];
+  memoryUpdates: AgentMemoryUpdatePayload[];
   operatorNote: string;
 }
 
@@ -166,6 +224,7 @@ export interface FollowupGuidanceRequest {
   humanOmniWindows: HumanOmniWindowSummaryPayload[];
   actionObservations: ActionObservationPayload[];
   asr?: AsrPayload | null;
+  memoryContext?: AgentMemoryContextPayload | null;
   constraints: OutputConstraintsPayload;
 }
 
@@ -190,15 +249,15 @@ export interface FollowupGuidanceResponse {
   llm: LlmRuntimeInfoPayload;
   multimodalAssessment: MultimodalAssessmentPayload;
   followupGuidance: FollowupQuestionPayload[];
+  memoryReferences: AgentMemoryReferencePayload[];
+  memoryUpdates: AgentMemoryUpdatePayload[];
   operatorNote: string;
   warnings: string[];
 }
 
 function resolveAiServiceBaseUrl() {
-  const rawBaseUrl = import.meta.env.VITE_AI_SERVICE_BASE_URL;
-  if (!rawBaseUrl) {
-    throw new Error('未配置 VITE_AI_SERVICE_BASE_URL。');
-  }
+  const rawBaseUrl =
+    import.meta.env.VITE_AI_SERVICE_BASE_URL || 'http://127.0.0.1:9000';
 
   return rawBaseUrl.replace(/\/+$/, '');
 }

@@ -65,3 +65,26 @@ type HighRiskWatchlist struct {
 func (HighRiskWatchlist) TableName() string {
 	return "high_risk_watchlist"
 }
+
+type AgentMemoryItem struct {
+	ID          uint64          `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键"`
+	ScopeType   string          `gorm:"column:scope_type;type:varchar(32);index:idx_agent_memory_scope;not null;comment:记忆作用域类型（session、passenger、rule）"`
+	ScopeID     string          `gorm:"column:scope_id;type:varchar(128);index:idx_agent_memory_scope;not null;comment:记忆作用域标识"`
+	MemoryType  string          `gorm:"column:memory_type;type:varchar(32);not null;comment:记忆类型（fact、gap、inconsistency、evidence、procedure）"`
+	Title       string          `gorm:"column:title;type:varchar(128);not null;default:'';comment:记忆标题"`
+	Content     string          `gorm:"column:content;type:text;not null;comment:记忆正文"`
+	Evidence    json.RawMessage `gorm:"column:evidence;type:jsonb;comment:记忆来源证据"`
+	Confidence  *float64        `gorm:"column:confidence;type:numeric(4,3);comment:置信度，范围 0-1"`
+	Source      string          `gorm:"column:source;type:varchar(64);not null;default:'';comment:记忆来源"`
+	Status      string          `gorm:"column:status;type:varchar(32);index:idx_agent_memory_status;not null;default:'active';comment:状态（active、inactive）"`
+	ContentHash string          `gorm:"column:content_hash;type:char(64);uniqueIndex:idx_uniq_agent_memory_content;not null;comment:记忆内容哈希"`
+	CreatedByID *uint64         `gorm:"column:created_by_id;type:bigint;comment:创建操作人 system_user.id"`
+	UpdatedByID *uint64         `gorm:"column:updated_by_id;type:bigint;comment:最后更新操作人 system_user.id"`
+	ExpiresAt   *time.Time      `gorm:"column:expires_at;type:timestamptz;index:idx_agent_memory_expires_at;comment:过期时间，空值表示不过期"`
+	CreatedAt   time.Time       `gorm:"column:created_at;type:timestamptz;not null;default:CURRENT_TIMESTAMP;autoCreateTime;comment:记录创建时间"`
+	UpdatedAt   time.Time       `gorm:"column:updated_at;type:timestamptz;not null;default:CURRENT_TIMESTAMP;autoUpdateTime;comment:记录更新时间"`
+}
+
+func (AgentMemoryItem) TableName() string {
+	return "agent_memory_item"
+}

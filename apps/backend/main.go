@@ -11,6 +11,7 @@ import (
 	"ipra/backend/internal/auth"
 	"ipra/backend/internal/config"
 	"ipra/backend/internal/inquiry"
+	"ipra/backend/internal/memory"
 	"ipra/backend/internal/profile"
 )
 
@@ -29,8 +30,9 @@ func main() {
 	authHandler := auth.NewHandler(db, tokenManager)
 	profileHandler := profile.NewHandler(db, cfg.OCR)
 	inquiryHandler := inquiry.NewHandler()
+	memoryHandler := memory.NewHandler(memory.NewGormStore(db))
 
-	r := newRouter(authHandler, profileHandler, inquiryHandler)
+	r := newRouter(authHandler, profileHandler, inquiryHandler, memoryHandler)
 
 	addr := ":" + cfg.Port
 	log.Printf("backend listening on %s (%s)", addr, cfg.AppEnv)
@@ -43,6 +45,7 @@ func newRouter(
 	authHandler *auth.Handler,
 	profileHandler *profile.Handler,
 	inquiryHandler *inquiry.Handler,
+	memoryHandler *memory.Handler,
 ) *gin.Engine {
 	r := gin.Default()
 
@@ -60,6 +63,10 @@ func newRouter(
 	if authHandler != nil {
 		authHandler.Register(r)
 		authHandler.RegisterAdminRoutes(r)
+		if memoryHandler != nil {
+			memoryHandler.Register(r, authHandler.AuthMiddleware())
+			memoryHandler.RegisterAdminRoutes(r, authHandler.AuthMiddleware())
+		}
 		if profileHandler != nil {
 			profileHandler.Register(r, authHandler.AuthMiddleware())
 		}

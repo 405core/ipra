@@ -15,6 +15,11 @@ from schemas.inquiry import (
     FollowupGuidanceResponse,
     FollowupQuestion,
 )
+from services.memory_utils import (
+    build_first_round_memory_updates,
+    build_followup_memory_updates,
+    collect_memory_references,
+)
 
 
 PROMPT_DIR = Path(__file__).resolve().parents[1] / "prompts"
@@ -107,6 +112,19 @@ class BusinessLlmClient:
         data = _parse_json_object(content)
         data["sessionId"] = request.session_id
         data["llm"] = self.runtime
+        data["memoryReferences"] = [
+            reference.model_dump(by_alias=True)
+            for reference in collect_memory_references(request.memory_context)
+        ]
+        data["memoryUpdates"] = [
+            update.model_dump(by_alias=True)
+            for update in build_first_round_memory_updates(
+                session_id=request.session_id,
+                passenger_id=request.passenger_profile.passenger_id,
+                summary=str(data.get("riskAssessment", {}).get("summary", "")),
+                focus_areas=list(data.get("strategy", {}).get("focusAreas", [])),
+            )
+        ]
         try:
             return FirstRoundStrategyResponse.model_validate(data)
         except Exception as exc:
@@ -132,6 +150,22 @@ class BusinessLlmClient:
             data.get("followupGuidance"),
             request.constraints.question_count,
         )
+        risk_hints = data.get("multimodalAssessment", {}).get("riskHints", [])
+        latest_answer = request.qa_history[-1].answer_text if request.qa_history else ""
+        data["memoryReferences"] = [
+            reference.model_dump(by_alias=True)
+            for reference in collect_memory_references(request.memory_context)
+        ]
+        data["memoryUpdates"] = [
+            update.model_dump(by_alias=True)
+            for update in build_followup_memory_updates(
+                session_id=request.session_id,
+                passenger_id=request.passenger_profile.passenger_id,
+                round_no=request.round_no,
+                latest_answer=latest_answer,
+                risk_hints=list(risk_hints) if isinstance(risk_hints, list) else [],
+            )
+        ]
         try:
             return FollowupGuidanceResponse.model_validate(data)
         except Exception as exc:
@@ -272,10 +306,11 @@ def _first_round_user_prompt(prompt: str, request: FirstRoundStrategyRequest) ->
     return (
         f"{prompt}\n\n"
         "请根据输入生成首轮问询策略。只返回 JSON 对象。\n"
+        "memoryContext 中的记忆只能作为追问上下文和事实核验线索，不得单独构成风险结论。\n"
+        "不要输出 llm、memoryReferences 或 memoryUpdates，这些字段由服务端补齐。\n"
         "JSON 结构必须为：\n"
         "{\n"
         '  "sessionId": "...",\n'
-        '  "llm": {"provider": "...", "model": "..."},\n'
         '  "riskAssessment": {"level": "low|medium|high|unknown", "summary": "...", "reasons": ["..."]},\n'
         '  "strategy": {"goal": "...", "focusAreas": ["..."]},\n'
         '  "questions": [{"questionId": "q1", "priority": 1, "question": "...", "purpose": "...", "expectedEvidence": ["..."]}],\n'
@@ -291,11 +326,12 @@ def _followup_user_prompt(prompt: str, request: FollowupGuidanceRequest) -> str:
         f"{prompt}\n\n"
         "请根据输入生成后续追问指引。只返回 JSON 对象。\n"
         f"followupGuidance 必须恰好包含 {question_count} 条追问建议，priority 从 1 到 {question_count}，不要少于或多于该数量。\n"
+        "memoryContext 中的记忆只能作为追问上下文和事实核验线索，不得单独构成风险结论。\n"
+        "不要输出 llm、memoryReferences 或 memoryUpdates，这些字段由服务端补齐。\n"
         "JSON 结构必须为：\n"
         "{\n"
         '  "sessionId": "...",\n'
         '  "roundNo": 2,\n'
-        '  "llm": {"provider": "...", "model": "..."},\n'
         '  "multimodalAssessment": {"summary": "...", "riskHints": ["..."], "evidence": ["..."], "limitations": ["..."]},\n'
         '  "followupGuidance": [{"priority": 1, "question": "...", "reason": "...", "operatorTip": "...", "focusArea": "..."}],\n'
         '  "operatorNote": "...",\n'
