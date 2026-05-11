@@ -13,12 +13,14 @@ from typing import Any
 from urllib.parse import quote
 from urllib.parse import urlencode
 from uuid import uuid4
+import logging
 
 if TYPE_CHECKING:
     from fastapi import WebSocket
 
 
 DEFAULT_RTASR_URL = "wss://office-api-ast-dx.iflyaisol.com/ast/communicate/v1"
+LOGGER = logging.getLogger("ipra.iflytek_realtime_asr")
 
 
 class IflytekRealtimeAsrError(RuntimeError):
@@ -203,6 +205,12 @@ async def bridge_iflytek_realtime_asr(websocket: "WebSocket") -> None:
 
     try:
         async with websockets.connect(vendor_url, max_size=8 * 1024 * 1024) as vendor:
+            LOGGER.info(
+                "iflytek realtime ASR connected app_id=%s lang=%s sample_rate=%s",
+                settings.app_id,
+                settings.language,
+                settings.samplerate,
+            )
             await send_client_json(
                 websocket,
                 {
@@ -239,6 +247,7 @@ async def bridge_iflytek_realtime_asr(websocket: "WebSocket") -> None:
                         continue
 
                     if payload.get("code") not in (None, 0, "0"):
+                        LOGGER.warning("iflytek realtime ASR error payload: %s", payload)
                         await send_client_json(
                             websocket,
                             {
@@ -251,12 +260,20 @@ async def bridge_iflytek_realtime_asr(websocket: "WebSocket") -> None:
 
                     transcript_event = extract_iflytek_transcript_event(payload)
                     if transcript_event:
+                        LOGGER.info(
+                            "iflytek realtime ASR transcript final=%s chars=%s",
+                            transcript_event.get("isFinal"),
+                            len(str(transcript_event.get("text") or "")),
+                        )
                         await send_client_json(websocket, transcript_event)
+                    elif payload.get("msg_type") == "result" or payload.get("res_type") == "asr":
+                        LOGGER.debug("iflytek realtime ASR result without text: %s", payload)
 
             await asyncio.gather(forward_audio(), forward_results())
     except WebSocketDisconnect:
         return
     except (OSError, WebSocketException) as exc:
+        LOGGER.warning("iflytek realtime ASR websocket failed: %s", exc)
         await send_client_json(
             websocket,
             {
