@@ -16,6 +16,27 @@ const aiServiceMocks = vi.hoisted(() => ({
 
 vi.mock('../app/ai-service', () => aiServiceMocks);
 
+const adminServiceMocks = vi.hoisted(() => ({
+  getInquirySettings: vi.fn(),
+}));
+
+vi.mock('../app/admin-service', () => adminServiceMocks);
+
+vi.mock('../app/audit-service', () => ({
+  recordAuditEvent: vi.fn().mockResolvedValue({ message: 'ok' }),
+}));
+
+const elMessageMocks = vi.hoisted(() => ({
+  success: vi.fn(),
+  warning: vi.fn(),
+  error: vi.fn(),
+  info: vi.fn(),
+}));
+
+vi.mock('../app/el-message', () => ({
+  ElMessage: elMessageMocks,
+}));
+
 vi.mock('../app/realtime-mediapipe', () => {
   const createIdleRealtimeDetectionState = (overrides = {}) => ({
     phase: 'idle',
@@ -238,6 +259,12 @@ describe('UserAskView realtime speech sampling', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    adminServiceMocks.getInquirySettings.mockResolvedValue({
+      maxRounds: 3,
+      minRounds: 1,
+      maxAllowedRounds: 10,
+      updatedAt: '2026-05-11T08:00:00Z',
+    });
     mediaDevicesDescriptor = Object.getOwnPropertyDescriptor(
       navigator,
       'mediaDevices',
@@ -429,6 +456,155 @@ describe('UserAskView realtime speech sampling', () => {
     expect(wrapper.text()).not.toContain('随便走进随便走进');
   });
 
+  it('deduplicates cumulative Iflytek ASR updates with different segment ids', async () => {
+    const wrapper = mount(UserAskView);
+    mountedWrappers.push(wrapper);
+    await enterInterviewStage(wrapper);
+
+    await findButton(wrapper, '开始采样').trigger('click');
+    await flushPromises();
+    await nextTick();
+
+    FakeWebSocket.latest?.open();
+    FakeWebSocket.latest?.receive({
+      type: 'transcript',
+      segmentId: 100,
+      text: '在这两张图当中',
+      isFinal: false,
+    });
+    FakeWebSocket.latest?.receive({
+      type: 'transcript',
+      segmentId: 180,
+      text: '在这两张图当中我能想到的原因',
+      isFinal: false,
+    });
+    FakeWebSocket.latest?.receive({
+      type: 'transcript',
+      segmentId: 260,
+      text: '在这两张图当中我能想到的原因只有两种',
+      isFinal: false,
+    });
+    await nextTick();
+
+    expect(wrapper.text()).toContain('在这两张图当中我能想到的原因只有两种');
+    expect(wrapper.text()).not.toContain('在这两张图当中 在这两张图当中');
+  });
+
+  it('replaces corrected Iflytek ASR text instead of appending it', async () => {
+    const wrapper = mount(UserAskView);
+    mountedWrappers.push(wrapper);
+    await enterInterviewStage(wrapper);
+
+    await findButton(wrapper, '开始采样').trigger('click');
+    await flushPromises();
+    await nextTick();
+
+    FakeWebSocket.latest?.open();
+    FakeWebSocket.latest?.receive({
+      type: 'transcript',
+      segmentId: 100,
+      startMs: 100,
+      endMs: 1200,
+      text: '不认真造假更要认真',
+      rawType: 'rlt',
+      isFinal: false,
+    });
+    FakeWebSocket.latest?.receive({
+      type: 'transcript',
+      segmentId: 220,
+      startMs: 100,
+      endMs: 2200,
+      text: '不认真，造假更要认真，无论是以上哪种情况',
+      rawType: 'pgs',
+      isFinal: false,
+    });
+    await nextTick();
+
+    expect(wrapper.text()).toContain(
+      '不认真，造假更要认真，无论是以上哪种情况',
+    );
+    expect(wrapper.text()).not.toContain(
+      '不认真造假更要认真 不认真，造假更要认真',
+    );
+  });
+
+  it('deduplicates overlapped final and interim Iflytek ASR windows', async () => {
+    const wrapper = mount(UserAskView);
+    mountedWrappers.push(wrapper);
+    await enterInterviewStage(wrapper);
+
+    await findButton(wrapper, '\u5f00\u59cb\u91c7\u6837').trigger('click');
+    await flushPromises();
+    await nextTick();
+
+    FakeWebSocket.latest?.open();
+    FakeWebSocket.latest?.receive({
+      type: 'transcript',
+      segmentId: 100,
+      startMs: 100,
+      endMs: 1800,
+      text: 'alpha beta gamma duplicate tail',
+      isFinal: true,
+    });
+    FakeWebSocket.latest?.receive({
+      type: 'transcript',
+      segmentId: 190,
+      startMs: 1500,
+      endMs: 2600,
+      text: 'duplicate tail delta epsilon',
+      isFinal: false,
+    });
+    await nextTick();
+
+    const expectedText = 'alpha beta gamma duplicate tail delta epsilon';
+    expect(wrapper.text()).toContain(expectedText);
+    expect(wrapper.text()).not.toContain('duplicate tail duplicate tail');
+
+    await finishSampling(wrapper);
+    await findButton(wrapper, '\u8fdb\u5165\u4e0b\u4e00\u8f6e').trigger('click');
+    await flushPromises();
+
+    expect(
+      aiServiceMocks.requestFollowupGuidance.mock.calls[0][0].asr.text,
+    ).toBe(expectedText);
+  });
+
+  it('deduplicates overlapped ASR windows when punctuation changes', async () => {
+    const wrapper = mount(UserAskView);
+    mountedWrappers.push(wrapper);
+    await enterInterviewStage(wrapper);
+
+    await findButton(wrapper, '\u5f00\u59cb\u91c7\u6837').trigger('click');
+    await flushPromises();
+    await nextTick();
+
+    FakeWebSocket.latest?.open();
+    FakeWebSocket.latest?.receive({
+      type: 'transcript',
+      segmentId: 100,
+      startMs: 100,
+      endMs: 1800,
+      text: 'alpha beta, duplicate-tail.',
+      isFinal: true,
+    });
+    FakeWebSocket.latest?.receive({
+      type: 'transcript',
+      segmentId: 190,
+      startMs: 1500,
+      endMs: 2600,
+      text: 'duplicate tail, delta epsilon',
+      isFinal: false,
+    });
+    await nextTick();
+
+    expect(wrapper.text()).toContain(
+      'alpha beta, duplicate-tail, delta epsilon',
+    );
+    expect(wrapper.text()).not.toContain(
+      'duplicate-tail. duplicate tail',
+    );
+  });
+
   it('sends 16k pcm frames to the AI-Service ASR websocket', async () => {
     const wrapper = mount(UserAskView);
     mountedWrappers.push(wrapper);
@@ -507,5 +683,57 @@ describe('UserAskView realtime speech sampling', () => {
       text: '',
       segments: [],
     });
+  });
+
+  it('stops advancing when the configured interaction round limit is reached', async () => {
+    adminServiceMocks.getInquirySettings.mockResolvedValue({
+      maxRounds: 2,
+      minRounds: 1,
+      maxAllowedRounds: 10,
+      updatedAt: '2026-05-11T08:00:00Z',
+    });
+
+    const wrapper = mount(UserAskView);
+    mountedWrappers.push(wrapper);
+    await enterInterviewStage(wrapper);
+
+    await findButton(wrapper, '开始采样').trigger('click');
+    await flushPromises();
+    await nextTick();
+    await finishSampling(wrapper);
+    await findButton(wrapper, '进入下一轮').trigger('click');
+    await flushPromises();
+    await nextTick();
+
+    expect(aiServiceMocks.requestFollowupGuidance).toHaveBeenCalledTimes(1);
+
+    await findButton(wrapper, '开始采样').trigger('click');
+    await flushPromises();
+    await nextTick();
+    await finishSampling(wrapper);
+    await nextTick();
+
+    const nextRoundButton = findButton(wrapper, '进入下一轮');
+    expect(nextRoundButton.attributes('disabled')).toBeUndefined();
+    expect(wrapper.text()).toContain('已达到管理员设置的总交互轮次上限');
+    expect(wrapper.text()).toContain('当前上限');
+    expect(wrapper.text()).toContain('2 轮');
+
+    await nextRoundButton.trigger('click');
+    await flushPromises();
+
+    expect(aiServiceMocks.requestFollowupGuidance).toHaveBeenCalledTimes(1);
+    expect(wrapper.text()).toContain('最多只能进行 2 轮问询');
+    expect(elMessageMocks.warning).toHaveBeenCalledWith(
+      '最多只能进行 2 轮问询，请进入人工辅助判断。',
+    );
+    const judgementButton = findButton(wrapper, '进入人工辅助判断');
+    expect(judgementButton.attributes('disabled')).toBeUndefined();
+
+    await judgementButton.trigger('click');
+    await flushPromises();
+
+    expect(aiServiceMocks.requestFollowupGuidance).toHaveBeenCalledTimes(1);
+    expect(wrapper.text()).toContain('人工辅助判断');
   });
 });

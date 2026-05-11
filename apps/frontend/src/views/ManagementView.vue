@@ -16,21 +16,24 @@ import {
   createAdminWatchlist,
   deleteAdminProfile,
   deleteAdminWatchlist,
+  getAdminInquirySettings,
   listAdminAuditLogs,
   listAdminProfiles,
   listAdminUsers,
   listAdminWatchlist,
+  updateAdminInquirySettings,
   updateAdminProfile,
   updateAdminUser,
   updateAdminUserStatus,
   updateAdminWatchlist,
   type AdminUserItem,
   type AdminWatchlistItem,
+  type InquirySettings,
 } from '../app/admin-service';
 import type { AuditLogItem } from '../app/audit-service';
 import type { PassengerProfileRecord } from '../app/profile-service';
 
-type TabKey = 'profiles' | 'watchlist' | 'users' | 'audit';
+type TabKey = 'profiles' | 'watchlist' | 'users' | 'audit' | 'settings';
 type FilterPickerKey =
   | 'profiles-document-type'
   | 'profiles-nationality'
@@ -77,6 +80,7 @@ const tabs: Array<{ key: TabKey; label: string }> = [
   { key: 'watchlist', label: '高风险名单' },
   { key: 'users', label: '管理用户' },
   { key: 'audit', label: '审计日志' },
+  { key: 'settings', label: '系统设置' },
 ];
 
 const activeTab = ref<TabKey>('profiles');
@@ -86,6 +90,7 @@ const statusMessages = ref<Record<TabKey, string>>({
   watchlist: '正在加载高风险名单...',
   users: '正在加载用户...',
   audit: '正在加载审计日志...',
+  settings: '正在加载系统设置...',
 });
 
 const profileQuery = ref('');
@@ -99,6 +104,9 @@ const profiles = ref<PassengerProfileRecord[]>([]);
 const watchlist = ref<AdminWatchlistItem[]>([]);
 const users = ref<AdminUserItem[]>([]);
 const auditLogs = ref<AuditLogItem[]>([]);
+const inquirySettings = ref<InquirySettings | null>(null);
+const inquiryMaxRoundsInput = ref(3);
+const isSavingInquirySettings = ref(false);
 const isProfileFormVisible = ref(false);
 const isWatchlistFormVisible = ref(false);
 const isUserFormVisible = ref(false);
@@ -277,7 +285,7 @@ watch(isAnyFormVisible, (visible) => {
 });
 
 async function refreshAll() {
-  await Promise.all([loadProfiles(), loadWatchlist(), loadUsers(), loadAuditLogs()]);
+  await Promise.all([loadProfiles(), loadWatchlist(), loadUsers(), loadAuditLogs(), loadInquirySettings()]);
 }
 
 async function loadProfiles() {
@@ -302,6 +310,13 @@ async function loadAuditLogs() {
   const result = await listAdminAuditLogs({ limit: 500 });
   auditLogs.value = result.items;
   statusMessages.value.audit = `已加载审计日志 ${result.total} 条。`;
+}
+
+async function loadInquirySettings() {
+  const result = await getAdminInquirySettings();
+  inquirySettings.value = result;
+  inquiryMaxRoundsInput.value = result.maxRounds;
+  statusMessages.value.settings = `当前总交互轮次上限为 ${result.maxRounds} 轮。`;
 }
 
 async function syncCurrentSession() {
@@ -485,6 +500,30 @@ async function toggleUserStatus(item: AdminUserItem) {
     statusMessages.value.users =
       error instanceof Error ? error.message : '更新用户状态失败。';
     ElMessage.error(statusMessages.value.users);
+  }
+}
+
+async function saveInquirySettings() {
+  const nextValue = Number(inquiryMaxRoundsInput.value);
+  if (!Number.isInteger(nextValue) || nextValue < 1 || nextValue > 10) {
+    statusMessages.value.settings = '总交互轮次上限需在 1-10 之间。';
+    ElMessage.warning(statusMessages.value.settings);
+    return;
+  }
+
+  isSavingInquirySettings.value = true;
+  try {
+    const result = await updateAdminInquirySettings(nextValue);
+    inquirySettings.value = result;
+    inquiryMaxRoundsInput.value = result.maxRounds;
+    statusMessages.value.settings = '系统设置已保存。';
+    ElMessage.success(statusMessages.value.settings);
+  } catch (error) {
+    statusMessages.value.settings =
+      error instanceof Error ? error.message : '系统设置保存失败。';
+    ElMessage.error(statusMessages.value.settings);
+  } finally {
+    isSavingInquirySettings.value = false;
   }
 }
 
@@ -1272,6 +1311,41 @@ function formatAuditTime(value: string) {
           </div>
         </template>
 
+        <template v-else-if="activeTab === 'settings'">
+          <div class="settings-panel">
+            <div class="settings-panel__body">
+              <div>
+                <p class="settings-panel__eyebrow">辅助问询</p>
+                <h2>总交互轮次上限</h2>
+                <p>{{ statusMessages.settings }}</p>
+              </div>
+              <label class="settings-field">
+                <span>轮次上限</span>
+                <input
+                  v-model.number="inquiryMaxRoundsInput"
+                  type="number"
+                  min="1"
+                  max="10"
+                  step="1"
+                  inputmode="numeric"
+                />
+              </label>
+            </div>
+            <div class="admin-form-actions">
+              <button type="button" class="ghost" @click="loadInquirySettings">
+                刷新
+              </button>
+              <button
+                type="button"
+                :disabled="isSavingInquirySettings"
+                @click="saveInquirySettings"
+              >
+                {{ isSavingInquirySettings ? '保存中...' : '保存设置' }}
+              </button>
+            </div>
+          </div>
+        </template>
+
         <template v-else>
         <div class="admin-toolbar">
           <div class="admin-toolbar__search-block">
@@ -1969,10 +2043,48 @@ function formatAuditTime(value: string) {
   margin-top: 10px;
 }
 
+.settings-panel {
+  display: grid;
+  gap: 18px;
+}
+
+.settings-panel__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 240px);
+  gap: 20px;
+  align-items: end;
+}
+
+.settings-panel__eyebrow {
+  margin: 0 0 8px;
+  color: #8f6a5d;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.settings-panel h2,
+.settings-panel p {
+  margin: 0;
+}
+
+.settings-panel p {
+  margin-top: 8px;
+  color: #7a5c50;
+}
+
+.settings-field {
+  display: grid;
+  gap: 8px;
+  color: #6f493c;
+  font-weight: 700;
+}
+
 .admin-toolbar input,
 .admin-form-grid input,
 .admin-form-grid select,
-.admin-form-grid textarea {
+.admin-form-grid textarea,
+.settings-field input {
   width: 100%;
   min-height: 44px;
   padding: 12px 14px;
@@ -2390,6 +2502,10 @@ function formatAuditTime(value: string) {
 
   .admin-user-table .is-actions {
     width: 190px;
+  }
+
+  .settings-panel__body {
+    grid-template-columns: 1fr;
   }
 
   .admin-dialog {

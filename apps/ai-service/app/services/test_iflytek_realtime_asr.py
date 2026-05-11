@@ -76,6 +76,37 @@ class IflytekRealtimeAsrTest(unittest.TestCase):
         self.assertEqual(event["text"], "随便走进一个三线城市")
         self.assertEqual(event["segmentId"], 160)
         self.assertFalse(event["isFinal"])
+        self.assertEqual(event["replaceStartMs"], 160)
+        self.assertEqual(event["replaceEndMs"], 560)
+
+    def test_extract_transcript_exposes_iflytek_correction_fields(self) -> None:
+        event = extract_iflytek_transcript_event(
+            {
+                "data": {
+                    "cn": {
+                        "st": {
+                            "bg": "600",
+                            "ed": "1200",
+                            "type": "1",
+                            "pgs": "rpl",
+                            "rg": [1, 2],
+                            "rt": [
+                                {
+                                    "ws": [
+                                        {"cw": [{"w": "duplicate"}]},
+                                        {"cw": [{"w": "tail"}]},
+                                    ]
+                                }
+                            ],
+                        }
+                    },
+                },
+            }
+        )
+
+        self.assertEqual(event["text"], "duplicatetail")
+        self.assertEqual(event["correctionMode"], "rpl")
+        self.assertEqual(event["replaceRange"], [1, 2])
 
 
 if __name__ == "__main__":

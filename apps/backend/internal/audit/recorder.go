@@ -184,6 +184,12 @@ func classifyRequest(method string, routePath string) (string, string) {
 		return "update_admin_user", "用户管理"
 	case method == "PATCH" && routePath == "/api/admin/users/:id/status":
 		return "update_admin_user_status", "用户管理"
+	case method == "GET" && routePath == "/api/inquiry/settings":
+		return "view_inquiry_settings", "系统设置"
+	case method == "GET" && routePath == "/api/admin/settings/inquiry":
+		return "view_admin_inquiry_settings", "系统设置"
+	case method == "PUT" && routePath == "/api/admin/settings/inquiry":
+		return "update_admin_inquiry_settings", "系统设置"
 	case method == "GET" && routePath == "/api/admin/memory":
 		return "list_admin_memory", "Agent记忆"
 	case method == "GET" && routePath == "/api/audit-logs":

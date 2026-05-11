@@ -89,6 +89,20 @@ func (AgentMemoryItem) TableName() string {
 	return "agent_memory_item"
 }
 
+type SystemSetting struct {
+	SettingKey   string      `gorm:"column:setting_key;type:varchar(128);primaryKey;comment:配置键"`
+	SettingValue string      `gorm:"column:setting_value;type:text;not null;comment:配置值"`
+	Description  string      `gorm:"column:description;type:text;not null;default:'';comment:配置说明"`
+	UpdatedByID  *uint64     `gorm:"column:updated_by_id;type:bigint;comment:最后更新操作人 system_user.id"`
+	UpdatedBy    *SystemUser `gorm:"foreignKey:UpdatedByID;references:ID;constraint:OnUpdate:RESTRICT,OnDelete:SET NULL;"`
+	CreatedAt    time.Time   `gorm:"column:created_at;type:timestamptz;not null;default:CURRENT_TIMESTAMP;autoCreateTime;comment:记录创建时间"`
+	UpdatedAt    time.Time   `gorm:"column:updated_at;type:timestamptz;not null;default:CURRENT_TIMESTAMP;autoUpdateTime;comment:记录更新时间"`
+}
+
+func (SystemSetting) TableName() string {
+	return "system_setting"
+}
+
 type AuditLog struct {
 	ID          uint64          `json:"id" gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键"`
 	ActorUserID *uint64         `json:"actorUserId,omitempty" gorm:"column:actor_user_id;type:bigint;index:idx_audit_log_actor_user_id;comment:操作人 system_user.id"`
