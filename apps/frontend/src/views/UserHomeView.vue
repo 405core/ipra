@@ -42,7 +42,11 @@ const cameraPanelStatus = computed(() => {
   const cameraMessage = cameraStatus.value.trim();
   const ocrMessage = ocrStatus.value.trim();
 
-  if (!isCameraActive.value && cameraMessage && cameraMessage !== defaultCameraStatus) {
+  if (
+    !isCameraActive.value &&
+    cameraMessage &&
+    cameraMessage !== defaultCameraStatus
+  ) {
     return cameraMessage;
   }
 
@@ -83,17 +87,17 @@ type LegacyNavigator = Navigator & {
   webkitGetUserMedia?: (
     constraints: MediaStreamConstraints,
     successCallback: (stream: MediaStream) => void,
-    errorCallback: (error: DOMException) => void
+    errorCallback: (error: DOMException) => void,
   ) => void;
   mozGetUserMedia?: (
     constraints: MediaStreamConstraints,
     successCallback: (stream: MediaStream) => void,
-    errorCallback: (error: DOMException) => void
+    errorCallback: (error: DOMException) => void,
   ) => void;
   msGetUserMedia?: (
     constraints: MediaStreamConstraints,
     successCallback: (stream: MediaStream) => void,
-    errorCallback: (error: DOMException) => void
+    errorCallback: (error: DOMException) => void,
   ) => void;
 };
 
@@ -142,7 +146,10 @@ async function loadProfiles(rawValue = query.value) {
       : `未找到证件号为 "${trimmed}" 的旅客记录。`;
   } catch (error) {
     results.value = [];
-    searchStatus.value = normalizeErrorMessage(error, '查询旅客画像失败，请稍后重试。');
+    searchStatus.value = normalizeErrorMessage(
+      error,
+      '查询旅客画像失败，请稍后重试。',
+    );
   } finally {
     isSearching.value = false;
   }
@@ -175,8 +182,13 @@ async function applyRecentSearch(item: string) {
   await loadProfiles(item);
 }
 
-async function openAskWorkspace() {
-  await router.push({ name: 'home-ask' });
+async function openAskWorkspace(profile: PassengerProfileRecord) {
+  await router.push({
+    name: 'home-ask',
+    query: {
+      documentNum: profile.documentNum,
+    },
+  });
 }
 
 async function toggleCamera() {
@@ -199,7 +211,8 @@ async function startCamera() {
   }
 
   if (typeof window !== 'undefined' && !window.isSecureContext) {
-    cameraStatus.value = '当前页面不是安全环境，请使用 HTTPS 或 localhost 打开系统。';
+    cameraStatus.value =
+      '当前页面不是安全环境，请使用 HTTPS 或 localhost 打开系统。';
     return;
   }
 
@@ -243,7 +256,9 @@ function stopCameraStream(updateStatus = true) {
 
   isCameraActive.value = false;
   if (updateStatus) {
-    cameraStatus.value = capturedFrame.value ? '已截取当前画面。' : '摄像头已关闭。';
+    cameraStatus.value = capturedFrame.value
+      ? '已截取当前画面。'
+      : '摄像头已关闭。';
   }
 }
 
@@ -308,7 +323,10 @@ function pauseLiveOCR(message: string) {
   ocrStatus.value = message;
 }
 
-async function runOCRScan(options?: { forceSearch?: boolean; manual?: boolean }) {
+async function runOCRScan(options?: {
+  forceSearch?: boolean;
+  manual?: boolean;
+}) {
   if (!isCameraActive.value || isOCRRequestPending || !capturedFrame.value) {
     return;
   }
@@ -337,7 +355,7 @@ async function runOCRScan(options?: { forceSearch?: boolean; manual?: boolean })
 
 function handleOCRResult(
   result: IDCardOCRResponse,
-  options?: { forceSearch?: boolean; manual?: boolean }
+  options?: { forceSearch?: boolean; manual?: boolean },
 ) {
   if (result.code !== 200) {
     ocrStatus.value = result.msg || '身份证 OCR 识别失败。';
@@ -349,7 +367,9 @@ function handleOCRResult(
 
   const payload = result.data;
   if (!payload || payload.result !== 0) {
-    ocrStatus.value = isCameraActive.value ? '扫描中' : '未识别到有效身份证画面。';
+    ocrStatus.value = isCameraActive.value
+      ? '扫描中'
+      : '未识别到有效身份证画面。';
     if (options?.manual) {
       cameraStatus.value = '当前证件画面未识别成功，请保持身份证完整入框。';
     }
@@ -366,7 +386,11 @@ function handleOCRResult(
   ocrAuthority.value = info.authority ?? '';
   ocrTimeLimit.value = info.timelimit ?? '';
 
-  if (payload.side === 'front' && ocrNumber.value && validity.number !== false) {
+  if (
+    payload.side === 'front' &&
+    ocrNumber.value &&
+    validity.number !== false
+  ) {
     ocrStatus.value = '扫描成功';
     syncOCRNumberToSearch(ocrNumber.value, options?.forceSearch === true);
     return;
@@ -456,7 +480,7 @@ function captureCurrentVideoFrame() {
     0,
     0,
     targetWidth,
-    targetHeight
+    targetHeight,
   );
 
   capturedFrame.value = canvas.toDataURL('image/jpeg', 0.9);
@@ -542,7 +566,7 @@ function buildRouteLabel(tripInfo: Record<string, unknown>) {
 function buildWatchTags(
   profile: PassengerProfileRecord,
   riskRecords: Array<Record<string, unknown>>,
-  riskTags: string[]
+  riskTags: string[],
 ) {
   const tags = [...riskTags];
 
@@ -561,12 +585,17 @@ function buildWatchTags(
   return unique.slice(0, 4);
 }
 
-function buildResultDetailEntries(profile: PassengerProfileRecord): ProfileDetailEntry[] {
+function buildResultDetailEntries(
+  profile: PassengerProfileRecord,
+): ProfileDetailEntry[] {
   const profileData = asRecord(profile.profileData);
   const basicInfo = asRecord(profileData.basicInfo);
   const tripInfo = asRecord(profileData.tripInfo);
   const occupation = asRecord(profileData.occupation);
-  const occupationSummary = [asString(occupation.occupation), asString(occupation.company)]
+  const occupationSummary = [
+    asString(occupation.occupation),
+    asString(occupation.company),
+  ]
     .filter(Boolean)
     .join(' · ');
 
@@ -590,7 +619,9 @@ function buildResultTags(profile: PassengerProfileRecord) {
   return buildWatchTags(profile, riskRecords, riskTags);
 }
 
-function buildResultNotes(profile: PassengerProfileRecord): ProfileDetailEntry[] {
+function buildResultNotes(
+  profile: PassengerProfileRecord,
+): ProfileDetailEntry[] {
   const profileData = asRecord(profile.profileData);
   const riskInfo = asRecord(profileData.riskInfo);
   const notes: ProfileDetailEntry[] = [];
@@ -622,7 +653,7 @@ function buildResultNotes(profile: PassengerProfileRecord): ProfileDetailEntry[]
 function readProfileField(
   profile: PassengerProfileRecord,
   section: 'basicInfo' | 'tripInfo' | 'occupation' | 'riskInfo',
-  field: string
+  field: string,
 ) {
   const profileData = asRecord(profile.profileData);
   const sectionData = asRecord(profileData[section]);
@@ -673,7 +704,9 @@ function asRecordArray(value: unknown) {
     return [];
   }
 
-  return value.map((item) => asRecord(item)).filter((item) => Object.keys(item).length > 0);
+  return value
+    .map((item) => asRecord(item))
+    .filter((item) => Object.keys(item).length > 0);
 }
 
 function asStringArray(value: unknown) {
@@ -714,7 +747,10 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
     <section class="user-shell">
       <section class="panel-grid">
         <section class="search-column">
-          <form class="surface-card surface-card--search" @submit.prevent="submitSearch">
+          <form
+            class="surface-card surface-card--search"
+            @submit.prevent="submitSearch"
+          >
             <div class="panel-heading">
               <div>
                 <h3>手动检索</h3>
@@ -766,14 +802,28 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
                 <div class="result-strip__content">
                   <div class="result-strip__headline">
                     <strong>{{ record.fullName }}</strong>
-                    <span v-if="record.isHighRisk" class="result-strip__pill is-high-risk">高风险预警</span>
+                    <span
+                      v-if="record.isHighRisk"
+                      class="result-strip__pill is-high-risk"
+                      >高风险预警</span
+                    >
                     <span class="result-strip__pill">
-                      {{ formatDocumentTypeLabel(readProfileField(record, 'basicInfo', 'documentType')) || '未填证件类型' }}
+                      {{
+                        formatDocumentTypeLabel(
+                          readProfileField(record, 'basicInfo', 'documentType'),
+                        ) || '未填证件类型'
+                      }}
                     </span>
                     <span class="result-strip__pill">
-                      {{ formatGenderLabel(readProfileField(record, 'basicInfo', 'gender')) || '未填性别' }}
+                      {{
+                        formatGenderLabel(
+                          readProfileField(record, 'basicInfo', 'gender'),
+                        ) || '未填性别'
+                      }}
                     </span>
-                    <span class="result-strip__identity">{{ record.documentNum }}</span>
+                    <span class="result-strip__identity">{{
+                      record.documentNum
+                    }}</span>
                   </div>
 
                   <div class="result-strip__fact-list">
@@ -782,13 +832,20 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
                       :key="`${record.id}-${detail.label}`"
                       class="result-strip__fact"
                     >
-                      <span class="result-strip__fact-label">{{ detail.label }}</span>
-                      <strong class="result-strip__fact-value">{{ detail.value }}</strong>
+                      <span class="result-strip__fact-label">{{
+                        detail.label
+                      }}</span>
+                      <strong class="result-strip__fact-value">{{
+                        detail.value
+                      }}</strong>
                     </span>
                   </div>
 
                   <div
-                    v-if="buildResultTags(record).length || buildResultNotes(record).length"
+                    v-if="
+                      buildResultTags(record).length ||
+                      buildResultNotes(record).length
+                    "
                     class="result-strip__tags"
                   >
                     <span
@@ -809,7 +866,11 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
                 </div>
 
                 <div class="result-strip__actions">
-                  <button class="primary-action" type="button" @click="openAskWorkspace">
+                  <button
+                    class="primary-action"
+                    type="button"
+                    @click="openAskWorkspace(record)"
+                  >
                     发起辅助问询
                   </button>
                 </div>
@@ -830,7 +891,10 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
             </div>
           </div>
 
-          <div class="camera-preview" :class="{ 'is-live': isCameraActive, 'has-capture': capturedFrame }">
+          <div
+            class="camera-preview"
+            :class="{ 'is-live': isCameraActive, 'has-capture': capturedFrame }"
+          >
             <video
               v-show="isCameraActive"
               ref="cameraVideo"
@@ -845,7 +909,10 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
               class="camera-preview__image"
               alt="已确认的证件画面"
             />
-            <div v-if="!isCameraActive && !capturedFrame" class="camera-preview__placeholder">
+            <div
+              v-if="!isCameraActive && !capturedFrame"
+              class="camera-preview__placeholder"
+            >
               <strong>等待开启摄像头</strong>
               <span>开启后将自动持续扫描当前证件画面。</span>
             </div>
@@ -854,7 +921,9 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 
           <canvas ref="captureCanvas" class="sr-only"></canvas>
 
-          <p class="status-copy camera-status camera-status--secondary">{{ cameraPanelStatus }}</p>
+          <p class="status-copy camera-status camera-status--secondary">
+            {{ cameraPanelStatus }}
+          </p>
 
           <div class="camera-actions">
             <button
@@ -863,7 +932,13 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
               :disabled="isCameraStarting"
               @click="toggleCamera"
             >
-              {{ isCameraActive ? '关闭' : isCameraStarting ? '开启中...' : '开启' }}
+              {{
+                isCameraActive
+                  ? '关闭'
+                  : isCameraStarting
+                    ? '开启中...'
+                    : '开启'
+              }}
             </button>
             <button
               class="camera-action"
@@ -1137,7 +1212,11 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
   min-height: 0;
   height: 100%;
   border-radius: 22px;
-  background: linear-gradient(160deg, rgba(11, 114, 136, 0.08), rgba(255, 255, 255, 0.96));
+  background: linear-gradient(
+    160deg,
+    rgba(11, 114, 136, 0.08),
+    rgba(255, 255, 255, 0.96)
+  );
   border: 1px solid rgba(157, 189, 202, 0.36);
 }
 
@@ -1430,7 +1509,11 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
   width: 60px;
   height: 60px;
   border-radius: 18px;
-  background: linear-gradient(135deg, rgba(11, 114, 136, 0.16), rgba(32, 168, 197, 0.24));
+  background: linear-gradient(
+    135deg,
+    rgba(11, 114, 136, 0.16),
+    rgba(32, 168, 197, 0.24)
+  );
   color: #09596c;
   font-weight: 700;
 }
