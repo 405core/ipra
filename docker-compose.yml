@@ -52,6 +52,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      minio:
+        condition: service_started
     expose:
       - "8080"
     healthcheck:
@@ -96,15 +98,6 @@ services:
       IFLYTEK_RTASR_API_SECRET: ${IFLYTEK_RTASR_API_SECRET:-}
       IFLYTEK_RTASR_URL: ${IFLYTEK_RTASR_URL:-wss://office-api-ast-dx.iflyaisol.com/ast/communicate/v1}
       IFLYTEK_RTASR_LANGUAGE: ${IFLYTEK_RTASR_LANGUAGE:-autodialect}
-      MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-admin}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-8z8Pr3n4Q9f5GeKM}
-      MINIO_BUCKET: ${MINIO_BUCKET:-ipra-videos}
-      MINIO_SECURE: "0"
-      MINIO_PUBLIC_BASE_URL: ${MINIO_PUBLIC_BASE_URL:-}
-    depends_on:
-      minio:
-        condition: service_started
     volumes:
       - ${MODEL_DIR:-./models}:/app/models:ro
     expose:

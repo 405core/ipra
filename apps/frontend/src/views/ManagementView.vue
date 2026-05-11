@@ -7,6 +7,11 @@ import {
   resolveRoleHome,
   validateAuthSession,
 } from '../auth';
+import {
+  buildScopedWatermarkText,
+  VIDEO_ARCHIVE_WATERMARK_TILE_LAYOUTS,
+  WATERMARK_REFRESH_INTERVAL_MS,
+} from '../app/watermark';
 import SensitiveAssetImage from '../app/SensitiveAssetImage.vue';
 import { ElMessage } from '../app/el-message';
 import { recordAuditEvent } from '../app/audit-service';
@@ -48,7 +53,13 @@ import {
 import type { AuditLogItem } from '../app/audit-service';
 import type { PassengerProfileRecord } from '../app/profile-service';
 
-type TabKey = 'profiles' | 'watchlist' | 'users' | 'archives' | 'audit' | 'settings';
+type TabKey =
+  | 'profiles'
+  | 'watchlist'
+  | 'users'
+  | 'archives'
+  | 'audit'
+  | 'settings';
 type FilterPickerKey =
   | 'profiles-document-type'
   | 'profiles-nationality'
@@ -90,6 +101,8 @@ interface ProfileFormState {
 
 const router = useRouter();
 const session = ref(loadAuthSession());
+const videoWatermarkTimestamp = ref(Date.now());
+let videoWatermarkTimerId: number | null = null;
 
 const tabs: Array<{ key: TabKey; label: string }> = [
   { key: 'profiles', label: '基础画像' },
@@ -185,27 +198,33 @@ const isAnyFormVisible = computed(
     isProfileFormVisible.value ||
     isWatchlistFormVisible.value ||
     isUserFormVisible.value ||
-    isArchiveDetailVisible.value
+    isArchiveDetailVisible.value,
 );
 const isEditingCurrentUser = computed(
-  () => userForm.value.id != null && userForm.value.id === currentUserId.value
+  () => userForm.value.id != null && userForm.value.id === currentUserId.value,
 );
 const adminName = computed(() => session.value?.user.name || '系统管理员');
 const adminWorkId = computed(() => session.value?.user.workId || 'admin');
 const profileDocumentTypeOptions = computed(() =>
   buildDistinctOptions(
-    profiles.value.map((item) => readProfileField(item, 'basicInfo', 'documentType')),
-    formatDocumentTypeLabel
-  )
+    profiles.value.map((item) =>
+      readProfileField(item, 'basicInfo', 'documentType'),
+    ),
+    formatDocumentTypeLabel,
+  ),
 );
 const profileGenderOptions = computed(() =>
   buildDistinctOptions(
     profiles.value.map((item) => readProfileField(item, 'basicInfo', 'gender')),
-    formatGenderLabel
-  )
+    formatGenderLabel,
+  ),
 );
 const profileNationalityOptions = computed(() =>
-  buildDistinctOptions(profiles.value.map((item) => readProfileField(item, 'basicInfo', 'nationality')))
+  buildDistinctOptions(
+    profiles.value.map((item) =>
+      readProfileField(item, 'basicInfo', 'nationality'),
+    ),
+  ),
 );
 const userRoleOptions: FilterOption[] = [
   { value: '', label: '全部角色' },
@@ -235,22 +254,31 @@ const filteredProfiles = computed(() =>
     const nationality = readProfileField(item, 'basicInfo', 'nationality');
     const gender = readProfileField(item, 'basicInfo', 'gender');
 
-    if (profileFilters.value.documentType && documentType !== profileFilters.value.documentType) {
+    if (
+      profileFilters.value.documentType &&
+      documentType !== profileFilters.value.documentType
+    ) {
       return false;
     }
-    if (profileFilters.value.nationality && nationality !== profileFilters.value.nationality) {
+    if (
+      profileFilters.value.nationality &&
+      nationality !== profileFilters.value.nationality
+    ) {
       return false;
     }
     if (profileFilters.value.gender && gender !== profileFilters.value.gender) {
       return false;
     }
     return matchesSearch(buildProfileSearchText(item), profileQuery.value);
-  })
+  }),
 );
 const filteredWatchlist = computed(() =>
   watchlist.value.filter((item) =>
-    matchesSearch([item.documentNum, item.riskReason || '高风险名单命中'], watchlistQuery.value)
-  )
+    matchesSearch(
+      [item.documentNum, item.riskReason || '高风险名单命中'],
+      watchlistQuery.value,
+    ),
+  ),
 );
 const filteredUsers = computed(() =>
   users.value.filter((item) => {
@@ -261,7 +289,7 @@ const filteredUsers = computed(() =>
       return false;
     }
     return matchesSearch(buildUserSearchText(item), userQuery.value);
-  })
+  }),
 );
 const filteredAuditLogs = computed(() => protectedAuditLogs.value);
 const filteredArchives = computed(() =>
@@ -276,16 +304,22 @@ const filteredArchives = computed(() =>
         item.operatorWorkId,
         formatArchiveJudgementLabel(item.finalJudgement),
       ],
-      archiveQuery.value
-    )
-  )
+      archiveQuery.value,
+    ),
+  ),
 );
 const filteredAuditLogs = computed(() =>
   auditLogs.value.filter((item) => {
-    if (auditFilters.value.result && item.result !== auditFilters.value.result) {
+    if (
+      auditFilters.value.result &&
+      item.result !== auditFilters.value.result
+    ) {
       return false;
     }
-    if (auditActorWorkId.value.trim() && item.actorWorkId !== auditActorWorkId.value.trim()) {
+    if (
+      auditActorWorkId.value.trim() &&
+      item.actorWorkId !== auditActorWorkId.value.trim()
+    ) {
       return false;
     }
     return matchesSearch(
@@ -298,34 +332,79 @@ const filteredAuditLogs = computed(() =>
         item.path,
         item.method,
       ],
-      auditQuery.value
+      auditQuery.value,
     );
-  })
+  }),
 );
 const selectedProfileDocumentTypeLabel = computed(() =>
-  describeFilterLabel('证件类型', profileDocumentTypeOptions.value, profileFilters.value.documentType)
+  describeFilterLabel(
+    '证件类型',
+    profileDocumentTypeOptions.value,
+    profileFilters.value.documentType,
+  ),
 );
 const selectedProfileNationalityLabel = computed(() =>
-  describeFilterLabel('国籍', profileNationalityOptions.value, profileFilters.value.nationality)
+  describeFilterLabel(
+    '国籍',
+    profileNationalityOptions.value,
+    profileFilters.value.nationality,
+  ),
 );
 const selectedProfileGenderLabel = computed(() =>
-  describeFilterLabel('性别', profileGenderOptions.value, profileFilters.value.gender)
+  describeFilterLabel(
+    '性别',
+    profileGenderOptions.value,
+    profileFilters.value.gender,
+  ),
 );
 const selectedUserRoleLabel = computed(() =>
-  describeFilterLabel('角色', userRoleOptions, userFilters.value.role)
+  describeFilterLabel('角色', userRoleOptions, userFilters.value.role),
 );
 const selectedUserStatusLabel = computed(() =>
-  describeFilterLabel('状态', userStatusOptions, userFilters.value.status)
+  describeFilterLabel('状态', userStatusOptions, userFilters.value.status),
 );
 const selectedArchiveJudgementLabel = computed(() =>
-  describeFilterLabel('判定', archiveJudgementOptions, archiveFilters.value.judgement)
+  describeFilterLabel(
+    '判定',
+    archiveJudgementOptions,
+    archiveFilters.value.judgement,
+  ),
 );
 const selectedAuditResultLabel = computed(() =>
-  describeFilterLabel('结果', auditResultOptions, auditFilters.value.result)
+  describeFilterLabel('结果', auditResultOptions, auditFilters.value.result),
 );
+const archiveVideoWatermarkText = computed(() =>
+  session.value
+    ? buildScopedWatermarkText(
+        session.value,
+        '归档回放',
+        videoWatermarkTimestamp.value,
+      )
+    : '',
+);
+
+function startVideoWatermarkTimer() {
+  if (videoWatermarkTimerId !== null || typeof window === 'undefined') {
+    return;
+  }
+
+  videoWatermarkTimerId = window.setInterval(() => {
+    videoWatermarkTimestamp.value = Date.now();
+  }, WATERMARK_REFRESH_INTERVAL_MS);
+}
+
+function stopVideoWatermarkTimer() {
+  if (videoWatermarkTimerId === null || typeof window === 'undefined') {
+    return;
+  }
+
+  window.clearInterval(videoWatermarkTimerId);
+  videoWatermarkTimerId = null;
+}
 
 onMounted(() => {
   void refreshAll();
+  startVideoWatermarkTimer();
   if (typeof document !== 'undefined') {
     document.addEventListener('click', handleDocumentClick);
     document.addEventListener('keydown', handleDocumentKeydown);
@@ -336,6 +415,7 @@ useProtectedPage('/admin/home');
 
 onBeforeUnmount(() => {
   revokeArchiveVideoUrls();
+  stopVideoWatermarkTimer();
   if (typeof document !== 'undefined') {
     document.removeEventListener('click', handleDocumentClick);
     document.removeEventListener('keydown', handleDocumentKeydown);
@@ -818,14 +898,14 @@ async function openArchiveDetail(item: InquiryArchiveListItem) {
 async function loadArchiveVideos(videos: InquiryArchiveVideoPayload[]) {
   const entries = (
     await Promise.all(
-    videos.map(async (video) => {
-      try {
-        const blob = await fetchArchiveVideoBlob(video.id);
-        return [video.id, URL.createObjectURL(blob)] as const;
-      } catch {
-        return null;
-      }
-    })
+      videos.map(async (video) => {
+        try {
+          const blob = await fetchArchiveVideoBlob(video.id);
+          return [video.id, URL.createObjectURL(blob)] as const;
+        } catch {
+          return null;
+        }
+      }),
     )
   ).filter((entry): entry is readonly [number, string] => Boolean(entry));
 
@@ -833,7 +913,9 @@ async function loadArchiveVideos(videos: InquiryArchiveVideoPayload[]) {
 }
 
 function revokeArchiveVideoUrls() {
-  Object.values(archiveVideoUrls.value).forEach((url) => URL.revokeObjectURL(url));
+  Object.values(archiveVideoUrls.value).forEach((url) =>
+    URL.revokeObjectURL(url),
+  );
   archiveVideoUrls.value = {};
 }
 
@@ -843,7 +925,14 @@ async function openFormFieldInput(options: {
   placeholder: string;
   value: string;
   multiline?: boolean;
-  inputMode?: 'text' | 'search' | 'tel' | 'url' | 'email' | 'numeric' | 'decimal';
+  inputMode?:
+    | 'text'
+    | 'search'
+    | 'tel'
+    | 'url'
+    | 'email'
+    | 'numeric'
+    | 'decimal';
   masked?: boolean;
   confirmText?: string;
   assign: (value: string) => void;
@@ -908,13 +997,17 @@ function mapProfileToForm(item: PassengerProfileRecord): ProfileFormState {
     purpose: String(tripInfo.purposeDeclared ?? ''),
     occupation: String(occupation.occupation ?? ''),
     company: String(occupation.company ?? ''),
-    riskTags: Array.isArray(riskInfo.riskTags) ? riskInfo.riskTags.join(', ') : '',
+    riskTags: Array.isArray(riskInfo.riskTags)
+      ? riskInfo.riskTags.join(', ')
+      : '',
     criminalRecord: String(riskInfo.criminalRecord ?? ''),
     remark: String(riskInfo.note ?? ''),
   };
 }
 
-function buildProfilePayload(form: ProfileFormState): Partial<PassengerProfileRecord> {
+function buildProfilePayload(
+  form: ProfileFormState,
+): Partial<PassengerProfileRecord> {
   return {
     documentNum: form.documentNum.trim(),
     fullName: form.fullName.trim(),
@@ -982,10 +1075,15 @@ function buildProfileSummary(item: PassengerProfileRecord) {
   const purpose = String(tripInfo.purposeDeclared ?? '').trim();
   const occupationName = String(occupation.occupation ?? '').trim();
 
-  return [destination, purpose, occupationName].filter(Boolean).join(' · ') || '未填写更多画像信息';
+  return (
+    [destination, purpose, occupationName].filter(Boolean).join(' · ') ||
+    '未填写更多画像信息'
+  );
 }
 
-function buildProfileDetailEntries(item: PassengerProfileRecord): ProfileDetailEntry[] {
+function buildProfileDetailEntries(
+  item: PassengerProfileRecord,
+): ProfileDetailEntry[] {
   const profileData = (item.profileData ?? {}) as Record<string, any>;
   const basicInfo = (profileData.basicInfo ?? {}) as Record<string, any>;
   const tripInfo = (profileData.tripInfo ?? {}) as Record<string, any>;
@@ -1071,11 +1169,16 @@ function buildProfileSearchText(item: PassengerProfileRecord) {
     item.documentNum,
     item.riskReason,
     readProfileField(item, 'basicInfo', 'documentType'),
-    formatDocumentTypeLabel(readProfileField(item, 'basicInfo', 'documentType')),
+    formatDocumentTypeLabel(
+      readProfileField(item, 'basicInfo', 'documentType'),
+    ),
     readProfileField(item, 'basicInfo', 'nationality'),
     readProfileField(item, 'basicInfo', 'gender'),
     formatGenderLabel(readProfileField(item, 'basicInfo', 'gender')),
-    ...buildProfileDetailEntries(item).flatMap((detail) => [detail.label, detail.value]),
+    ...buildProfileDetailEntries(item).flatMap((detail) => [
+      detail.label,
+      detail.value,
+    ]),
     ...buildProfileRiskTags(item),
     ...buildProfileNotes(item).flatMap((note) => [note.label, note.value]),
   ];
@@ -1093,28 +1196,31 @@ function buildUserSearchText(item: AdminUserItem) {
 }
 
 function matchesSearch(values: Array<string | undefined>, rawQuery: string) {
-  const terms = rawQuery
-    .trim()
-    .toLowerCase()
-    .split(/\s+/)
-    .filter(Boolean);
+  const terms = rawQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
 
   if (terms.length === 0) {
     return true;
   }
 
   const haystack = values
-    .map((value) => String(value ?? '').trim().toLowerCase())
+    .map((value) =>
+      String(value ?? '')
+        .trim()
+        .toLowerCase(),
+    )
     .filter(Boolean)
     .join(' ');
 
   return terms.every((term) => haystack.includes(term));
 }
 
-function buildDistinctOptions(values: string[], formatter?: (value: string) => string) {
-  const distinctValues = [...new Set(values.map((item) => item.trim()).filter(Boolean))].sort((left, right) =>
-    left.localeCompare(right, 'zh-Hans-CN')
-  );
+function buildDistinctOptions(
+  values: string[],
+  formatter?: (value: string) => string,
+) {
+  const distinctValues = [
+    ...new Set(values.map((item) => item.trim()).filter(Boolean)),
+  ].sort((left, right) => left.localeCompare(right, 'zh-Hans-CN'));
 
   return [
     { value: '', label: '全部' },
@@ -1125,7 +1231,11 @@ function buildDistinctOptions(values: string[], formatter?: (value: string) => s
   ];
 }
 
-function describeFilterLabel(prefix: string, options: FilterOption[], value: string) {
+function describeFilterLabel(
+  prefix: string,
+  options: FilterOption[],
+  value: string,
+) {
   const label = options.find((item) => item.value === value)?.label ?? '全部';
   return `${prefix}：${label}`;
 }
@@ -1133,7 +1243,7 @@ function describeFilterLabel(prefix: string, options: FilterOption[], value: str
 function readProfileField(
   item: PassengerProfileRecord,
   section: 'basicInfo' | 'tripInfo' | 'occupation' | 'riskInfo',
-  field: string
+  field: string,
 ) {
   const profileData = (item.profileData ?? {}) as Record<string, any>;
   const sectionData = (profileData[section] ?? {}) as Record<string, any>;
@@ -1173,15 +1283,29 @@ function formatGenderLabel(value: string) {
 }
 
 function formatUserRoleLabel(value: string) {
-  return value === 'admin' ? '管理员' : value === 'user' ? '员工' : value || '未填写';
+  return value === 'admin'
+    ? '管理员'
+    : value === 'user'
+      ? '员工'
+      : value || '未填写';
 }
 
 function formatUserStatusLabel(value: string) {
-  return value === 'active' ? '启用' : value === 'disabled' ? '停用' : value || '未填写';
+  return value === 'active'
+    ? '启用'
+    : value === 'disabled'
+      ? '停用'
+      : value || '未填写';
 }
 
 function formatAuditResultLabel(value: string) {
-  return value === 'success' ? '成功' : value === 'denied' ? '拒绝' : value === 'failure' ? '失败' : value || '未知';
+  return value === 'success'
+    ? '成功'
+    : value === 'denied'
+      ? '拒绝'
+      : value === 'failure'
+        ? '失败'
+        : value || '未知';
 }
 
 function formatArchiveJudgementLabel(value: string) {
@@ -1275,7 +1399,9 @@ function stringifyDetail(value: unknown) {
         </button>
       </nav>
 
-      <button class="admin-logout" type="button" @click="logout">退出登录</button>
+      <button class="admin-logout" type="button" @click="logout">
+        退出登录
+      </button>
     </aside>
 
     <section class="admin-content">
@@ -1363,8 +1489,14 @@ function stringifyDetail(value: unknown) {
                 </button>
               </div>
             </div>
-            <button type="button" class="ghost" @click="clearProfileFilters">清空筛选</button>
-            <button type="button" class="ghost ghost--strong" @click="openCreateProfileForm">
+            <button type="button" class="ghost" @click="clearProfileFilters">
+              清空筛选
+            </button>
+            <button
+              type="button"
+              class="ghost ghost--strong"
+              @click="openCreateProfileForm"
+            >
               {{ editingProfileId ? '继续编辑' : '新增基础画像' }}
             </button>
           </div>
@@ -1407,8 +1539,14 @@ function stringifyDetail(value: unknown) {
             />
           </div>
           <div class="admin-toolbar__actions">
-            <button type="button" class="ghost" @click="clearWatchlistFilters">清空检索</button>
-            <button type="button" class="ghost ghost--strong" @click="openCreateWatchlistForm">
+            <button type="button" class="ghost" @click="clearWatchlistFilters">
+              清空检索
+            </button>
+            <button
+              type="button"
+              class="ghost ghost--strong"
+              @click="openCreateWatchlistForm"
+            >
               {{ editingWatchlistId ? '继续编辑' : '新增高风险名单' }}
             </button>
           </div>
@@ -1488,13 +1626,23 @@ function stringifyDetail(value: unknown) {
                 </button>
               </div>
             </div>
-            <button type="button" class="ghost" @click="clearArchiveFilters">清空筛选</button>
-            <button type="button" class="ghost ghost--strong" @click="loadArchives">刷新归档</button>
+            <button type="button" class="ghost" @click="clearArchiveFilters">
+              清空筛选
+            </button>
+            <button
+              type="button"
+              class="ghost ghost--strong"
+              @click="loadArchives"
+            >
+              刷新归档
+            </button>
           </div>
         </div>
 
         <p class="admin-filter-summary">
-          当前筛选后 {{ filteredArchives.length }} 条问询归档。{{ statusMessages.archives }}
+          当前筛选后 {{ filteredArchives.length }} 条问询归档。{{
+            statusMessages.archives
+          }}
         </p>
 
         <div class="admin-table">
@@ -1531,13 +1679,15 @@ function stringifyDetail(value: unknown) {
                 <span class="admin-row__fact">
                   <span class="admin-row__fact-label">采样</span>
                   <strong class="admin-row__fact-value">
-                    {{ item.roundCount }} 轮 · {{ formatDuration(item.totalDurationSeconds) }}
+                    {{ item.roundCount }} 轮 ·
+                    {{ formatDuration(item.totalDurationSeconds) }}
                   </strong>
                 </span>
                 <span class="admin-row__fact">
                   <span class="admin-row__fact-label">操作人</span>
                   <strong class="admin-row__fact-value">
-                    {{ item.operatorName || '-' }} / {{ item.operatorWorkId || '-' }}
+                    {{ item.operatorName || '-' }} /
+                    {{ item.operatorWorkId || '-' }}
                   </strong>
                 </span>
                 <span class="admin-row__fact">
@@ -1549,7 +1699,9 @@ function stringifyDetail(value: unknown) {
               </div>
             </div>
             <div class="admin-row__actions">
-              <button type="button" @click="openArchiveDetail(item)">查看详情</button>
+              <button type="button" @click="openArchiveDetail(item)">
+                查看详情
+              </button>
             </div>
           </article>
         </div>
@@ -1599,8 +1751,16 @@ function stringifyDetail(value: unknown) {
                   </button>
                 </div>
               </div>
-              <button type="button" class="ghost" @click="clearAuditFilters">清空筛选</button>
-              <button type="button" class="ghost ghost--strong" @click="loadAuditLogs">刷新日志</button>
+              <button type="button" class="ghost" @click="clearAuditFilters">
+                清空筛选
+              </button>
+              <button
+                type="button"
+                class="ghost ghost--strong"
+                @click="loadAuditLogs"
+              >
+                刷新日志
+              </button>
             </div>
           </div>
 
@@ -1649,71 +1809,77 @@ function stringifyDetail(value: unknown) {
         </template>
 
         <template v-else>
-        <div class="admin-toolbar">
-          <div class="admin-toolbar__search-block">
-            <input
-              v-model="userQuery"
-              class="admin-toolbar__search-input"
-              type="text"
-              inputmode="search"
-              placeholder="输入要筛选的内容"
-            />
-          </div>
-          <div class="admin-toolbar__actions">
-            <div class="filter-picker">
-              <button
-                class="filter-chip"
-                :class="{ 'is-active': userFilters.role }"
-                type="button"
-                @click.stop="toggleFilterPicker('users-role')"
-              >
-                {{ selectedUserRoleLabel }}
-              </button>
-              <div
-                v-if="openFilterPicker === 'users-role'"
-                class="filter-picker__menu"
-                @click.stop
-              >
-                <button
-                  v-for="option in userRoleOptions"
-                  :key="option.value || 'all-user-role'"
-                  type="button"
-                  @click="applyUserRoleFilter(option.value)"
-                >
-                  {{ option.label }}
-                </button>
-              </div>
+          <div class="admin-toolbar">
+            <div class="admin-toolbar__search-block">
+              <input
+                v-model="userQuery"
+                class="admin-toolbar__search-input"
+                type="text"
+                inputmode="search"
+                placeholder="输入要筛选的内容"
+              />
             </div>
-            <div class="filter-picker">
-              <button
-                class="filter-chip"
-                :class="{ 'is-active': userFilters.status }"
-                type="button"
-                @click.stop="toggleFilterPicker('users-status')"
-              >
-                {{ selectedUserStatusLabel }}
-              </button>
-              <div
-                v-if="openFilterPicker === 'users-status'"
-                class="filter-picker__menu"
-                @click.stop
-              >
+            <div class="admin-toolbar__actions">
+              <div class="filter-picker">
                 <button
-                  v-for="option in userStatusOptions"
-                  :key="option.value || 'all-user-status'"
+                  class="filter-chip"
+                  :class="{ 'is-active': userFilters.role }"
                   type="button"
-                  @click="applyUserStatusFilter(option.value)"
+                  @click.stop="toggleFilterPicker('users-role')"
                 >
-                  {{ option.label }}
+                  {{ selectedUserRoleLabel }}
                 </button>
+                <div
+                  v-if="openFilterPicker === 'users-role'"
+                  class="filter-picker__menu"
+                  @click.stop
+                >
+                  <button
+                    v-for="option in userRoleOptions"
+                    :key="option.value || 'all-user-role'"
+                    type="button"
+                    @click="applyUserRoleFilter(option.value)"
+                  >
+                    {{ option.label }}
+                  </button>
+                </div>
               </div>
+              <div class="filter-picker">
+                <button
+                  class="filter-chip"
+                  :class="{ 'is-active': userFilters.status }"
+                  type="button"
+                  @click.stop="toggleFilterPicker('users-status')"
+                >
+                  {{ selectedUserStatusLabel }}
+                </button>
+                <div
+                  v-if="openFilterPicker === 'users-status'"
+                  class="filter-picker__menu"
+                  @click.stop
+                >
+                  <button
+                    v-for="option in userStatusOptions"
+                    :key="option.value || 'all-user-status'"
+                    type="button"
+                    @click="applyUserStatusFilter(option.value)"
+                  >
+                    {{ option.label }}
+                  </button>
+                </div>
+              </div>
+              <button type="button" class="ghost" @click="clearUserFilters">
+                清空筛选
+              </button>
+              <button
+                type="button"
+                class="ghost ghost--strong"
+                @click="openCreateUserForm"
+              >
+                {{ userForm.id ? '继续编辑' : '新增用户' }}
+              </button>
             </div>
-            <button type="button" class="ghost" @click="clearUserFilters">清空筛选</button>
-            <button type="button" class="ghost ghost--strong" @click="openCreateUserForm">
-              {{ userForm.id ? '继续编辑' : '新增用户' }}
-            </button>
           </div>
-        </div>
 
         <p class="admin-filter-summary">当前展示 {{ protectedUsers.length }} 个用户。</p>
 
@@ -1740,14 +1906,22 @@ function stringifyDetail(value: unknown) {
   </main>
 
   <Teleport to="body">
-    <section v-if="isProfileFormVisible" class="admin-dialog" @click.self="closeProfileForm">
-      <div class="admin-form-card admin-form-card--dialog admin-form-card--profile">
+    <section
+      v-if="isProfileFormVisible"
+      class="admin-dialog"
+      @click.self="closeProfileForm"
+    >
+      <div
+        class="admin-form-card admin-form-card--dialog admin-form-card--profile"
+      >
         <div class="admin-form-card__header">
           <div>
             <h3>{{ editingProfileId ? '编辑基础画像' : '新增基础画像' }}</h3>
             <p>在弹窗内填写并提交基础画像信息。</p>
           </div>
-          <button type="button" class="ghost" @click="closeProfileForm">关闭窗口</button>
+          <button type="button" class="ghost" @click="closeProfileForm">
+            关闭窗口
+          </button>
         </div>
 
         <div class="admin-form-grid">
@@ -1984,21 +2158,33 @@ function stringifyDetail(value: unknown) {
           <button type="button" @click="submitProfile">
             {{ editingProfileId ? '更新基础画像' : '新增基础画像' }}
           </button>
-          <button type="button" class="ghost" @click="closeProfileForm">取消</button>
+          <button type="button" class="ghost" @click="closeProfileForm">
+            取消
+          </button>
         </div>
       </div>
     </section>
   </Teleport>
 
   <Teleport to="body">
-    <section v-if="isWatchlistFormVisible" class="admin-dialog" @click.self="closeWatchlistForm">
-      <div class="admin-form-card admin-form-card--dialog admin-form-card--watchlist">
+    <section
+      v-if="isWatchlistFormVisible"
+      class="admin-dialog"
+      @click.self="closeWatchlistForm"
+    >
+      <div
+        class="admin-form-card admin-form-card--dialog admin-form-card--watchlist"
+      >
         <div class="admin-form-card__header">
           <div>
-            <h3>{{ editingWatchlistId ? '编辑高风险名单' : '新增高风险名单' }}</h3>
+            <h3>
+              {{ editingWatchlistId ? '编辑高风险名单' : '新增高风险名单' }}
+            </h3>
             <p>在弹窗内填写证件号码和高风险原因。</p>
           </div>
-          <button type="button" class="ghost" @click="closeWatchlistForm">关闭窗口</button>
+          <button type="button" class="ghost" @click="closeWatchlistForm">
+            关闭窗口
+          </button>
         </div>
 
         <div class="admin-form-grid">
@@ -2036,21 +2222,31 @@ function stringifyDetail(value: unknown) {
           <button type="button" @click="submitWatchlist">
             {{ editingWatchlistId ? '更新高风险名单' : '新增高风险名单' }}
           </button>
-          <button type="button" class="ghost" @click="closeWatchlistForm">取消</button>
+          <button type="button" class="ghost" @click="closeWatchlistForm">
+            取消
+          </button>
         </div>
       </div>
     </section>
   </Teleport>
 
   <Teleport to="body">
-    <section v-if="isUserFormVisible" class="admin-dialog" @click.self="closeUserForm">
-      <div class="admin-form-card admin-form-card--dialog admin-form-card--user">
+    <section
+      v-if="isUserFormVisible"
+      class="admin-dialog"
+      @click.self="closeUserForm"
+    >
+      <div
+        class="admin-form-card admin-form-card--dialog admin-form-card--user"
+      >
         <div class="admin-form-card__header">
           <div>
             <h3>{{ userForm.id ? '编辑用户' : '新增用户' }}</h3>
             <p>在弹窗内维护工号、角色、状态和密码。</p>
           </div>
-          <button type="button" class="ghost" @click="closeUserForm">关闭窗口</button>
+          <button type="button" class="ghost" @click="closeUserForm">
+            关闭窗口
+          </button>
         </div>
 
         <div class="admin-form-grid">
@@ -2088,7 +2284,9 @@ function stringifyDetail(value: unknown) {
           </select>
           <select v-model="userForm.status">
             <option value="active">启用</option>
-            <option value="disabled" :disabled="isEditingCurrentUser">停用</option>
+            <option value="disabled" :disabled="isEditingCurrentUser">
+              停用
+            </option>
           </select>
           <input
             v-model="userForm.password"
@@ -2111,7 +2309,9 @@ function stringifyDetail(value: unknown) {
           <button type="button" @click="submitUser">
             {{ userForm.id ? '更新用户' : '新增用户' }}
           </button>
-          <button type="button" class="ghost" @click="closeUserForm">取消</button>
+          <button type="button" class="ghost" @click="closeUserForm">
+            取消
+          </button>
         </div>
       </div>
     </section>
@@ -2123,7 +2323,9 @@ function stringifyDetail(value: unknown) {
       class="admin-dialog"
       @click.self="closeArchiveDetail"
     >
-      <div class="admin-form-card admin-form-card--dialog admin-form-card--archive">
+      <div
+        class="admin-form-card admin-form-card--dialog admin-form-card--archive"
+      >
         <div class="admin-form-card__header">
           <div>
             <h3>
@@ -2142,18 +2344,24 @@ function stringifyDetail(value: unknown) {
               }}
             </p>
           </div>
-          <button type="button" class="ghost" @click="closeArchiveDetail">关闭窗口</button>
+          <button type="button" class="ghost" @click="closeArchiveDetail">
+            关闭窗口
+          </button>
         </div>
 
         <div v-if="selectedArchive" class="archive-detail">
           <section class="archive-detail__summary">
             <div>
               <span class="meta-label">最终判定</span>
-              <strong>{{ formatArchiveJudgementLabel(selectedArchive.finalJudgement) }}</strong>
+              <strong>{{
+                formatArchiveJudgementLabel(selectedArchive.finalJudgement)
+              }}</strong>
             </div>
             <div>
               <span class="meta-label">归档时间</span>
-              <strong>{{ formatArchiveTime(selectedArchive.archivedAt) }}</strong>
+              <strong>{{
+                formatArchiveTime(selectedArchive.archivedAt)
+              }}</strong>
             </div>
             <div>
               <span class="meta-label">采样</span>
@@ -2179,11 +2387,15 @@ function stringifyDetail(value: unknown) {
           <section class="archive-detail__grid">
             <div class="archive-detail__block">
               <span class="meta-label">系统摘要</span>
-              <pre>{{ stringifyDetail(selectedArchive.judgementBriefing) }}</pre>
+              <pre>{{
+                stringifyDetail(selectedArchive.judgementBriefing)
+              }}</pre>
             </div>
             <div class="archive-detail__block">
               <span class="meta-label">旅客快照</span>
-              <pre>{{ stringifyDetail(selectedArchive.passengerSnapshot) }}</pre>
+              <pre>{{
+                stringifyDetail(selectedArchive.passengerSnapshot)
+              }}</pre>
             </div>
           </section>
 
@@ -2198,12 +2410,18 @@ function stringifyDetail(value: unknown) {
                   <span class="meta-label">第 {{ round.roundNo }} 轮</span>
                   <h4>{{ round.title || round.focus || '问询轮次' }}</h4>
                 </div>
-                <span class="admin-row__pill">{{ formatDuration(round.durationSeconds) }}</span>
+                <span class="admin-row__pill">{{
+                  formatDuration(round.durationSeconds)
+                }}</span>
               </header>
 
               <div class="archive-detail__block">
                 <span class="meta-label">本轮摘要</span>
-                <p>{{ round.roundSummary || round.humanOmniSummary || '未记录摘要' }}</p>
+                <p>
+                  {{
+                    round.roundSummary || round.humanOmniSummary || '未记录摘要'
+                  }}
+                </p>
               </div>
 
               <div class="archive-detail__grid">
@@ -2217,7 +2435,10 @@ function stringifyDetail(value: unknown) {
                 </div>
               </div>
 
-              <div v-if="asArray(round.riskHints).length" class="admin-row__tags">
+              <div
+                v-if="asArray(round.riskHints).length"
+                class="admin-row__tags"
+              >
                 <span
                   v-for="hint in asArray(round.riskHints)"
                   :key="String(hint)"
@@ -2234,15 +2455,43 @@ function stringifyDetail(value: unknown) {
                   class="archive-video"
                 >
                   <div class="archive-video__meta">
-                    <strong>{{ video.fileName || video.windowId || '归档视频' }}</strong>
-                    <span>{{ video.contentType || video.modal }} · {{ video.sizeBytes }} bytes</span>
+                    <strong>{{
+                      video.fileName || video.windowId || '归档视频'
+                    }}</strong>
+                    <span
+                      >{{ video.contentType || video.modal }} ·
+                      {{ video.sizeBytes }} bytes</span
+                    >
                   </div>
-                  <video
+                  <div
                     v-if="archiveVideoUrls[video.id]"
-                    :src="archiveVideoUrls[video.id]"
-                    controls
-                    preload="metadata"
-                  ></video>
+                    class="archive-video__player"
+                  >
+                    <video
+                      :src="archiveVideoUrls[video.id]"
+                      controls
+                      preload="metadata"
+                    ></video>
+                    <div
+                      v-if="archiveVideoWatermarkText"
+                      class="archive-video__watermark"
+                      aria-hidden="true"
+                    >
+                      <span
+                        v-for="tile in VIDEO_ARCHIVE_WATERMARK_TILE_LAYOUTS"
+                        :key="tile.id"
+                        class="archive-video__watermark-tile"
+                        :style="{
+                          top: tile.top,
+                          left: tile.left,
+                          opacity: tile.opacity,
+                          transform: `translate(-50%, -50%) rotate(${tile.rotation}deg)`,
+                        }"
+                      >
+                        {{ archiveVideoWatermarkText }}
+                      </span>
+                    </div>
+                  </div>
                   <p v-else>视频正在加载或暂不可用。</p>
                 </article>
               </div>
@@ -2363,7 +2612,11 @@ function stringifyDetail(value: unknown) {
   justify-content: space-between;
   padding: 14px 16px;
   border-radius: 20px;
-  background: linear-gradient(180deg, rgba(255, 250, 246, 0.94), rgba(247, 238, 231, 0.82));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 250, 246, 0.94),
+    rgba(247, 238, 231, 0.82)
+  );
   border: 1px solid rgba(218, 197, 184, 0.66);
 }
 
@@ -2911,11 +3164,39 @@ function stringifyDetail(value: unknown) {
   color: #6b5349;
 }
 
-.archive-video video {
-  width: 100%;
-  max-height: 420px;
+.archive-video__player {
+  position: relative;
+  overflow: hidden;
   border-radius: 14px;
   background: #1f1a17;
+}
+
+.archive-video video {
+  display: block;
+  width: 100%;
+  max-height: 420px;
+  background: #1f1a17;
+}
+
+.archive-video__watermark {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+}
+
+.archive-video__watermark-tile {
+  position: absolute;
+  max-width: min(62%, 420px);
+  color: rgba(255, 255, 255, 0.58);
+  font-size: clamp(0.72rem, 0.64rem + 0.2vw, 0.88rem);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1.45;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.36);
+  white-space: normal;
 }
 
 .admin-user-table-wrap {

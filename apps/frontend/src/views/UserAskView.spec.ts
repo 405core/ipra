@@ -24,6 +24,7 @@ const inquiryProtectedMocks = vi.hoisted(() => ({
 vi.mock('../app/inquiry-protected-service', () => inquiryProtectedMocks);
 const archiveServiceMocks = vi.hoisted(() => ({
   createInquiryArchive: vi.fn(),
+  uploadInquiryArchiveVideo: vi.fn(),
 }));
 
 vi.mock('../app/archive-service', () => archiveServiceMocks);
@@ -415,11 +416,11 @@ describe('UserAskView realtime speech sampling', () => {
       modal: 'video_audio',
       uploadedFile: {
         filename: 'round-1.mp4',
-        storedPath: 'minio://ipra-videos/humanomni-windows/round-1.mp4',
+        storedPath: '/tmp/humanomni-windows/round-1.mp4',
         contentType: 'video/mp4',
         sizeBytes: 4,
-        bucket: 'ipra-videos',
-        objectKey: 'humanomni-windows/round-1.mp4',
+        bucket: null,
+        objectKey: null,
       },
       humanOmni: {
         modelName: 'test',
@@ -440,7 +441,17 @@ describe('UserAskView realtime speech sampling', () => {
       totalSampleDuration: 1,
     });
 
-    inquiryProtectedMocks.requestProtectedInquiryFollowup.mockResolvedValue({
+    archiveServiceMocks.uploadInquiryArchiveVideo.mockResolvedValue({
+      uploadedFile: {
+        filename: 'round-1.mp4',
+        storedPath: 'minio://ipra-videos/humanomni-windows/round-1.mp4',
+        contentType: 'video/mp4',
+        sizeBytes: 4,
+        bucket: 'ipra-videos',
+        objectKey: 'humanomni-windows/round-1.mp4',
+      },
+    });
+
     archiveServiceMocks.createInquiryArchive.mockResolvedValue({
       id: 1,
       archiveCode: 'IPRA-ASK-20260511-0001',
@@ -999,11 +1010,16 @@ describe('UserAskView realtime speech sampling', () => {
 
     await findButton(wrapper, '无异常').trigger('click');
     const reasonInput = wrapper.find('textarea[placeholder*="请详细说明"]');
-    await reasonInput.setValue('该旅客回答与采样摘要基本一致，未发现明显异常风险。');
+    await reasonInput.setValue(
+      '该旅客回答与采样摘要基本一致，未发现明显异常风险。',
+    );
     await findButton(wrapper, '归档').trigger('click');
     await flushPromises();
     await nextTick();
 
+    expect(archiveServiceMocks.uploadInquiryArchiveVideo).toHaveBeenCalledTimes(
+      1,
+    );
     expect(archiveServiceMocks.createInquiryArchive).toHaveBeenCalledTimes(1);
     const payload = archiveServiceMocks.createInquiryArchive.mock.calls[0][0];
     expect(payload).toMatchObject({

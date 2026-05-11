@@ -143,6 +143,19 @@ export interface CreateInquiryArchivePayload {
   rounds: CreateInquiryArchiveRoundPayload[];
 }
 
+export interface UploadedArchiveVideoFilePayload {
+  filename: string;
+  storedPath: string;
+  contentType?: string | null;
+  sizeBytes: number;
+  bucket: string;
+  objectKey: string;
+}
+
+export interface InquiryArchiveVideoUploadResult {
+  uploadedFile: UploadedArchiveVideoFilePayload;
+}
+
 export interface InquiryArchiveQuery {
   query?: string;
   judgement?: string;
@@ -159,13 +172,17 @@ async function authorizedFetch(input: RequestInfo | URL, init?: RequestInit) {
     throw new Error('登录状态已失效，请重新登录。');
   }
 
+  const headers = new Headers(init?.headers);
+  const isFormData =
+    typeof FormData !== 'undefined' && init?.body instanceof FormData;
+  if (!isFormData && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  headers.set('Authorization', `Bearer ${session.token}`);
+
   return fetch(input, {
     ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init?.headers ?? {}),
-      Authorization: `Bearer ${session.token}`,
-    },
+    headers,
   });
 }
 
@@ -189,12 +206,28 @@ async function parsePayload<T>(response: Response, fallbackMessage: string) {
   return payload as T;
 }
 
-export async function createInquiryArchive(payload: CreateInquiryArchivePayload) {
+export async function createInquiryArchive(
+  payload: CreateInquiryArchivePayload,
+) {
   const response = await authorizedFetch('/api/inquiry/archives', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
-  return parsePayload<InquiryArchiveDetailPayload>(response, '保存问询归档失败。');
+  return parsePayload<InquiryArchiveDetailPayload>(
+    response,
+    '保存问询归档失败。',
+  );
+}
+
+export async function uploadInquiryArchiveVideo(formData: FormData) {
+  const response = await authorizedFetch('/api/inquiry/archive-videos', {
+    method: 'POST',
+    body: formData,
+  });
+  return parsePayload<InquiryArchiveVideoUploadResult>(
+    response,
+    '上传问询视频到 MinIO 失败。',
+  );
 }
 
 export async function listInquiryArchives(query: InquiryArchiveQuery = {}) {
@@ -217,21 +250,32 @@ export async function listInquiryArchives(query: InquiryArchiveQuery = {}) {
   if (query.to?.trim()) {
     params.set('to', query.to.trim());
   }
-  params.set('limit', String(query.limit && query.limit > 0 ? query.limit : 500));
+  params.set(
+    'limit',
+    String(query.limit && query.limit > 0 ? query.limit : 500),
+  );
 
-  const response = await authorizedFetch(`/api/admin/inquiry-archives?${params.toString()}`);
+  const response = await authorizedFetch(
+    `/api/admin/inquiry-archives?${params.toString()}`,
+  );
   return parsePayload<InquiryArchiveListResult>(response, '查询问询归档失败。');
 }
 
 export async function getInquiryArchive(id: number) {
   const response = await authorizedFetch(`/api/admin/inquiry-archives/${id}`);
-  return parsePayload<InquiryArchiveDetailPayload>(response, '查询问询归档详情失败。');
+  return parsePayload<InquiryArchiveDetailPayload>(
+    response,
+    '查询问询归档详情失败。',
+  );
 }
 
 export async function fetchArchiveVideoBlob(videoId: number) {
-  const response = await authorizedFetch(`/api/admin/inquiry-archives/videos/${videoId}/stream`, {
-    headers: {},
-  });
+  const response = await authorizedFetch(
+    `/api/admin/inquiry-archives/videos/${videoId}/stream`,
+    {
+      headers: {},
+    },
+  );
   if (!response.ok) {
     throw new Error('加载归档视频失败。');
   }

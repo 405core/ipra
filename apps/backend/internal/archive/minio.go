@@ -23,9 +23,12 @@ var (
 	errObjectNotFound     = errors.New("minio object not found")
 )
 
+const unsignedPayloadHash = "UNSIGNED-PAYLOAD"
+
 type objectStorage interface {
 	StatObject(ctx context.Context, bucket string, objectKey string) error
 	GetObject(ctx context.Context, bucket string, objectKey string, rangeHeader string) (*http.Response, error)
+	PutObject(ctx context.Context, bucket string, objectKey string, body io.Reader, size int64, contentType string) error
 }
 
 type minioClient struct {
@@ -90,6 +93,62 @@ func (c *minioClient) GetObject(ctx context.Context, bucket string, objectKey st
 	return response, nil
 }
 
+func (c *minioClient) PutObject(
+	ctx context.Context,
+	bucket string,
+	objectKey string,
+	body io.Reader,
+	size int64,
+	contentType string,
+) error {
+	if c == nil {
+		return errMinIONotConfigured
+	}
+	if body == nil {
+		return errors.New("object body is required")
+	}
+	if size <= 0 {
+		return errors.New("object size must be greater than 0")
+	}
+
+	requestURL, canonicalURI, err := c.objectURL(bucket, objectKey)
+	if err != nil {
+		return err
+	}
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut, requestURL, body)
+	if err != nil {
+		return err
+	}
+	request.ContentLength = size
+	if strings.TrimSpace(contentType) != "" {
+		request.Header.Set("Content-Type", strings.TrimSpace(contentType))
+	}
+	payloadHash := unsignedPayloadHash
+	if readSeeker, ok := body.(io.ReadSeeker); ok {
+		payloadHash, err = sha256ReaderHex(readSeeker)
+		if err != nil {
+			return err
+		}
+		if _, err := readSeeker.Seek(0, io.SeekStart); err != nil {
+			return fmt.Errorf("rewind object body: %w", err)
+		}
+	}
+	c.signWithPayloadHash(request, http.MethodPut, canonicalURI, payloadHash)
+
+	response, err := c.client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 512))
+		return fmt.Errorf("minio put object returned %s: %s", response.Status, strings.TrimSpace(string(body)))
+	}
+	return nil
+}
+
 func (c *minioClient) do(ctx context.Context, method string, bucket string, objectKey string, rangeHeader string) (*http.Response, error) {
 	if c == nil {
 		return nil, errMinIONotConfigured
@@ -137,18 +196,23 @@ func (c *minioClient) objectURL(bucket string, objectKey string) (string, string
 }
 
 func (c *minioClient) sign(request *http.Request, method string, canonicalURI string) {
+	c.signWithPayloadHash(request, method, canonicalURI, unsignedPayloadHash)
+}
+
+func (c *minioClient) signWithPayloadHash(request *http.Request, method string, canonicalURI string, payloadHash string) {
 	now := c.now().UTC()
 	amzDate := now.Format("20060102T150405Z")
 	dateStamp := now.Format("20060102")
 	region := "us-east-1"
 	service := "s3"
+	payloadHash = firstNonEmpty(payloadHash, unsignedPayloadHash)
 
 	request.Header.Set("X-Amz-Date", amzDate)
-	request.Header.Set("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD")
+	request.Header.Set("X-Amz-Content-Sha256", payloadHash)
 
 	headers := map[string]string{
 		"host":                 request.URL.Host,
-		"x-amz-content-sha256": "UNSIGNED-PAYLOAD",
+		"x-amz-content-sha256": payloadHash,
 		"x-amz-date":           amzDate,
 	}
 	if value := strings.TrimSpace(request.Header.Get("Range")); value != "" {
@@ -176,7 +240,7 @@ func (c *minioClient) sign(request *http.Request, method string, canonicalURI st
 		"",
 		canonicalHeaders.String(),
 		signedHeaders,
-		"UNSIGNED-PAYLOAD",
+		payloadHash,
 	}, "\n")
 
 	credentialScope := strings.Join([]string{dateStamp, region, service, "aws4_request"}, "/")
@@ -214,6 +278,14 @@ func encodePathSegment(value string) string {
 func sha256Hex(value []byte) string {
 	sum := sha256.Sum256(value)
 	return hex.EncodeToString(sum[:])
+}
+
+func sha256ReaderHex(reader io.Reader) (string, error) {
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, reader); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
 func hmacSHA256(key []byte, value string) []byte {

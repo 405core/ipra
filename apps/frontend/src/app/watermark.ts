@@ -20,6 +20,75 @@ export const WATERMARK_TILE_LAYOUTS: WatermarkTileLayout[] = [
   { id: 'tile-7', top: '89%', left: '86%', rotation: -15, opacity: 0.34 },
 ];
 
+export const VIDEO_CAPTURE_WATERMARK_TILE_LAYOUTS: WatermarkTileLayout[] = [
+  {
+    id: 'capture-video-1',
+    top: '18%',
+    left: '22%',
+    rotation: -18,
+    opacity: 0.28,
+  },
+  {
+    id: 'capture-video-2',
+    top: '47%',
+    left: '68%',
+    rotation: -18,
+    opacity: 0.24,
+  },
+  {
+    id: 'capture-video-3',
+    top: '78%',
+    left: '36%',
+    rotation: -18,
+    opacity: 0.26,
+  },
+];
+
+export const VIDEO_ARCHIVE_WATERMARK_TILE_LAYOUTS: WatermarkTileLayout[] = [
+  {
+    id: 'archive-video-1',
+    top: '13%',
+    left: '18%',
+    rotation: -18,
+    opacity: 0.34,
+  },
+  {
+    id: 'archive-video-2',
+    top: '22%',
+    left: '72%',
+    rotation: -18,
+    opacity: 0.3,
+  },
+  {
+    id: 'archive-video-3',
+    top: '39%',
+    left: '42%',
+    rotation: -18,
+    opacity: 0.32,
+  },
+  {
+    id: 'archive-video-4',
+    top: '58%',
+    left: '82%',
+    rotation: -18,
+    opacity: 0.3,
+  },
+  {
+    id: 'archive-video-5',
+    top: '72%',
+    left: '24%',
+    rotation: -18,
+    opacity: 0.34,
+  },
+  {
+    id: 'archive-video-6',
+    top: '78%',
+    left: '61%',
+    rotation: -18,
+    opacity: 0.28,
+  },
+];
+
 const WATERMARK_TIMESTAMP_FORMAT: Intl.DateTimeFormatOptions = {
   year: 'numeric',
   month: '2-digit',
@@ -31,12 +100,14 @@ const WATERMARK_TIMESTAMP_FORMAT: Intl.DateTimeFormatOptions = {
 };
 
 export function formatWatermarkTimestamp(timestamp: number) {
-  return new Intl.DateTimeFormat('zh-CN', WATERMARK_TIMESTAMP_FORMAT).format(timestamp);
+  return new Intl.DateTimeFormat('zh-CN', WATERMARK_TIMESTAMP_FORMAT).format(
+    timestamp,
+  );
 }
 
 export function shouldDisplayWatermark(
   session: AuthSession | null,
-  explicitWatermarkFlag: boolean | undefined
+  explicitWatermarkFlag: boolean | undefined,
 ) {
   if (!session?.user) {
     return false;
@@ -48,13 +119,27 @@ export function shouldDisplayWatermark(
 export function buildWatermarkText(
   session: AuthSession,
   routeTitle: string | undefined,
-  timestamp: number
+  timestamp: number,
 ) {
   const normalizedTitle = routeTitle?.trim() || '安全工作区';
 
   return [
     `IPRA`,
     `页面 ${normalizedTitle}`,
+    `姓名 ${session.user.name}`,
+    `工号 ${session.user.workId}`,
+    `时间 ${formatWatermarkTimestamp(timestamp)}`,
+  ].join(' · ');
+}
+
+export function buildScopedWatermarkText(
+  session: AuthSession,
+  scope: string,
+  timestamp: number,
+) {
+  return [
+    'IPRA',
+    scope,
     `姓名 ${session.user.name}`,
     `工号 ${session.user.workId}`,
     `时间 ${formatWatermarkTimestamp(timestamp)}`,
