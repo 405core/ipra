@@ -16,6 +16,28 @@ const aiServiceMocks = vi.hoisted(() => ({
 
 vi.mock('../app/ai-service', () => aiServiceMocks);
 
+const profileServiceMocks = vi.hoisted(() => ({
+  searchPassengerProfiles: vi.fn(),
+}));
+
+vi.mock('../app/profile-service', () => profileServiceMocks);
+
+const routerMocks = vi.hoisted(() => ({
+  push: vi.fn(),
+  route: {
+    query: {
+      documentNum: '440582199402155270',
+    } as Record<string, unknown>,
+  },
+}));
+
+vi.mock('vue-router', () => ({
+  useRoute: () => routerMocks.route,
+  useRouter: () => ({
+    push: routerMocks.push,
+  }),
+}));
+
 const adminServiceMocks = vi.hoisted(() => ({
   getInquirySettings: vi.fn(),
 }));
@@ -229,6 +251,55 @@ function createMockStream() {
   } as unknown as MediaStream;
 }
 
+function createPassengerProfile(overrides = {}) {
+  return {
+    id: 10,
+    fullName: '黎泽宝',
+    documentNum: '440582199402155270',
+    isHighRisk: true,
+    riskReason: '名单命中：异常出境目的待核验',
+    updatedAt: '2026-05-11T08:00:00Z',
+    profileData: {
+      basicInfo: {
+        documentType: 'PASSPORT',
+        issuingRegion: 'CN',
+        nationality: '中国',
+        gender: 'male',
+        birthDate: '1990-04-12',
+      },
+      tripInfo: {
+        pnr: 'CZ3101',
+        flightNo: 'CZ3101',
+        origin: 'CAN',
+        destination: 'BKK',
+        route: 'CZ3101 (CAN -> BKK)',
+        departureDate: '2026-05-12',
+        stayDays: 6,
+        purposeDeclared: '商务拜访',
+        returnTicketStatus: '已订返程票',
+        accommodation: '曼谷商务酒店',
+        companions: ['同行同事 A'],
+        seat: '18C',
+      },
+      travelHistory: {
+        recentDestinations: ['泰国', '新加坡'],
+        travelHistorySummary: '近三个月有两次短期出境记录',
+      },
+      occupation: {
+        occupation: '外贸业务员',
+        monthlyIncome: '15000 CNY',
+        fundingSource: '公司报销',
+      },
+      riskInfo: {
+        riskTags: ['异常行程', '资金核验'],
+        criminalRecord: '无',
+        note: '需核验商务邀请材料',
+      },
+    },
+    ...overrides,
+  };
+}
+
 function findButton(wrapper: VueWrapper, label: string) {
   const button = wrapper
     .findAll('button')
@@ -239,6 +310,9 @@ function findButton(wrapper: VueWrapper, label: string) {
 }
 
 async function enterInterviewStage(wrapper: VueWrapper) {
+  await flushPromises();
+  await nextTick();
+
   await findButton(wrapper, '生成策略').trigger('click');
   await flushPromises();
   await nextTick();
@@ -259,6 +333,12 @@ describe('UserAskView realtime speech sampling', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    routerMocks.route.query = {
+      documentNum: '440582199402155270',
+    };
+    profileServiceMocks.searchPassengerProfiles.mockResolvedValue([
+      createPassengerProfile(),
+    ]);
     adminServiceMocks.getInquirySettings.mockResolvedValue({
       maxRounds: 3,
       minRounds: 1,
@@ -382,6 +462,92 @@ describe('UserAskView realtime speech sampling', () => {
     } else {
       Reflect.deleteProperty(navigator, 'mediaDevices');
     }
+  });
+
+  it('locks the strategy stage when opened without a searched profile', async () => {
+    routerMocks.route.query = {};
+    const wrapper = mount(UserAskView);
+    mountedWrappers.push(wrapper);
+    await flushPromises();
+    await nextTick();
+
+    expect(wrapper.text()).toContain('请先进行数据检索');
+    expect(wrapper.text()).not.toContain('E92834102');
+    expect(wrapper.text()).not.toContain('张伟');
+
+    const strategyButton = findButton(wrapper, '生成策略');
+    expect(strategyButton.attributes('disabled')).toBeDefined();
+    await strategyButton.trigger('click');
+
+    expect(aiServiceMocks.requestFirstRoundStrategy).not.toHaveBeenCalled();
+  });
+
+  it('loads the searched passenger profile into the strategy stage', async () => {
+    const wrapper = mount(UserAskView);
+    mountedWrappers.push(wrapper);
+    await flushPromises();
+    await nextTick();
+
+    expect(profileServiceMocks.searchPassengerProfiles).toHaveBeenCalledWith(
+      '440582199402155270',
+    );
+    expect(wrapper.text()).toContain('黎泽宝');
+    expect(wrapper.text()).toContain('440582199402155270');
+    expect(wrapper.text()).toContain('CZ3101 (CAN -> BKK)');
+    expect(
+      findButton(wrapper, '生成策略').attributes('disabled'),
+    ).toBeUndefined();
+  });
+
+  it('sends the real passenger profile when generating strategy', async () => {
+    const wrapper = mount(UserAskView);
+    mountedWrappers.push(wrapper);
+    await flushPromises();
+    await nextTick();
+
+    await findButton(wrapper, '生成策略').trigger('click');
+    await flushPromises();
+
+    expect(aiServiceMocks.requestFirstRoundStrategy).toHaveBeenCalledTimes(1);
+    const payload = aiServiceMocks.requestFirstRoundStrategy.mock.calls[0][0];
+    expect(payload.passengerProfile).toMatchObject({
+      passengerId: '440582199402155270',
+      name: '黎泽宝',
+      nationality: '中国',
+      occupation: '外贸业务员',
+      documents: {
+        documentNumber: '440582199402155270',
+        pnr: 'CZ3101',
+        flightNo: 'CZ3101',
+      },
+    });
+    expect(payload.tripProfile).toMatchObject({
+      destination: 'BKK',
+      purposeDeclared: '商务拜访',
+      stayDays: 6,
+      fundingSource: '公司报销',
+    });
+    expect(payload.knownFacts).toContain(
+      '高风险原因：名单命中：异常出境目的待核验',
+    );
+    expect(JSON.stringify(payload)).not.toContain('E92834102');
+    expect(JSON.stringify(payload)).not.toContain('张伟');
+    expect(JSON.stringify(payload)).not.toContain('CX880-LAX');
+  });
+
+  it('keeps the strategy stage locked when the queried profile is missing', async () => {
+    profileServiceMocks.searchPassengerProfiles.mockResolvedValue([]);
+
+    const wrapper = mount(UserAskView);
+    mountedWrappers.push(wrapper);
+    await flushPromises();
+    await nextTick();
+
+    expect(wrapper.text()).toContain('未查询到该证件号的基础画像');
+    const strategyButton = findButton(wrapper, '生成策略');
+    expect(strategyButton.attributes('disabled')).toBeDefined();
+    await strategyButton.trigger('click');
+    expect(aiServiceMocks.requestFirstRoundStrategy).not.toHaveBeenCalled();
   });
 
   it('passes realtime Iflytek ASR text into followup guidance', async () => {
@@ -561,7 +727,9 @@ describe('UserAskView realtime speech sampling', () => {
     expect(wrapper.text()).not.toContain('duplicate tail duplicate tail');
 
     await finishSampling(wrapper);
-    await findButton(wrapper, '\u8fdb\u5165\u4e0b\u4e00\u8f6e').trigger('click');
+    await findButton(wrapper, '\u8fdb\u5165\u4e0b\u4e00\u8f6e').trigger(
+      'click',
+    );
     await flushPromises();
 
     expect(
@@ -600,9 +768,7 @@ describe('UserAskView realtime speech sampling', () => {
     expect(wrapper.text()).toContain(
       'alpha beta, duplicate-tail, delta epsilon',
     );
-    expect(wrapper.text()).not.toContain(
-      'duplicate-tail. duplicate tail',
-    );
+    expect(wrapper.text()).not.toContain('duplicate-tail. duplicate tail');
   });
 
   it('sends 16k pcm frames to the AI-Service ASR websocket', async () => {

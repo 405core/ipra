@@ -1,5 +1,13 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+} from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import {
   requestFirstRoundStrategy,
   requestFollowupGuidance,
@@ -24,6 +32,10 @@ import {
   fetchMemoryContext,
   persistMemoryUpdates,
 } from '../app/memory-service';
+import {
+  searchPassengerProfiles,
+  type PassengerProfileRecord,
+} from '../app/profile-service';
 import {
   createIdleRealtimeDetectionState,
   createRealtimeDetectionController,
@@ -55,8 +67,9 @@ type SpeechRecognitionPhase =
   | 'unsupported'
   | 'error';
 type MemoryLoadState = 'idle' | 'loading' | 'ready' | 'error';
+type ProfileLoadState = 'idle' | 'loading' | 'ready' | 'locked' | 'error';
 
-interface MockPassengerProfile {
+interface PassengerProfileViewModel {
   name: string;
   alias: string;
   documentId: string;
@@ -132,27 +145,6 @@ interface WindowWithWebkitAudioContext extends Window {
   webkitAudioContext?: typeof AudioContext;
 }
 
-interface MockPassengerSupplement {
-  passengerId: string;
-  age: number;
-  gender: string;
-  nationality: string;
-  occupation: string;
-  monthlyIncome: string;
-  travelHistory: string[];
-  documents: Record<string, unknown>;
-}
-
-interface MockTripSupplement {
-  purposeDeclared: string;
-  stayDays: number;
-  ticketType: string;
-  returnTicketStatus: string;
-  companions: string[];
-  accommodation: string;
-  fundingSource: string;
-}
-
 interface JudgementBriefing {
   multimodalAssessment: MultimodalAssessmentPayload;
   operatorNote: string;
@@ -182,47 +174,8 @@ interface MemoryReferenceViewItem {
 const session = loadAuthSession();
 const inspectorName = session?.user.name || '普通员工';
 const inspectorWorkId = session?.user.workId || 'EMP-0000';
-
-const passengerProfile: MockPassengerProfile = {
-  name: 'ZHANG WEI',
-  alias: '张伟',
-  documentId: 'E92834102',
-  pnr: 'CX880-LAX',
-  route: 'CX880 (HKG -> LAX)',
-  seat: '12A / Business',
-  eta: '预计 14:20 抵达',
-  riskLevel: 'high',
-  riskLabel: '高风险预警',
-  summary:
-    '最近 3 个月内存在异常行程组合，且与重点名单出现高重合度，需要通过多轮问询核验时间线与设备空窗。',
-  observation: '10:45 至 10:50 出现终端记录空窗，且现场监控存在约 5 分钟断点。',
-  tags: ['异常行程', '设备空窗', '名单重合', '需人工复核'],
-};
-
-const mockedPassengerSupplement: MockPassengerSupplement = {
-  passengerId: 'pax-e92834102',
-  age: 34,
-  gender: 'male',
-  nationality: '中国',
-  occupation: '仓储调度员',
-  monthlyIncome: '12000-18000 CNY',
-  travelHistory: ['2026-01 深圳-香港当日往返', '2026-03 香港-洛杉矶公务行'],
-  documents: {
-    documentType: 'passport',
-    visaStatus: 'B1/B2 valid',
-    issuingCountry: 'CN',
-  },
-};
-
-const mockedTripSupplement: MockTripSupplement = {
-  purposeDeclared: '商务随行与设备交接',
-  stayDays: 7,
-  ticketType: '单程',
-  returnTicketStatus: '未见返程票',
-  companions: ['同行联系人待核验'],
-  accommodation: 'LAX Transit Hotel (mock)',
-  fundingSource: '本人承担',
-};
+const route = useRoute();
+const router = useRouter();
 
 const workflowStages: StageItem[] = [
   {
@@ -386,6 +339,9 @@ const stageLoadingMode = ref<StageLoadingMode | null>(null);
 const stageLoadingPhraseIndex = ref(0);
 const speechRecognitionPhase = ref<SpeechRecognitionPhase>('idle');
 const speechRecognitionMessage = ref('等待开始采样。');
+const selectedProfile = ref<PassengerProfileRecord | null>(null);
+const profileLoadState = ref<ProfileLoadState>('idle');
+const profileLoadError = ref('');
 
 const videoElement = ref<HTMLVideoElement | null>(null);
 const overlayCanvas = ref<HTMLCanvasElement | null>(null);
@@ -471,7 +427,10 @@ const totalSampleDuration = computed(() =>
 
 const strategyGenerated = computed(() => generatedQuestions.value.length > 0);
 const canEnterInterview = computed(
-  () => strategyGenerated.value && !isGeneratingStrategy.value,
+  () =>
+    strategyGenerated.value &&
+    !isGeneratingStrategy.value &&
+    !isStrategyLocked.value,
 );
 const canStartSampling = computed(
   () =>
@@ -709,6 +668,296 @@ function riskToneClass(level: RiskLevel) {
   return level === 'high' ? 'risk-chip--high' : 'risk-chip--medium';
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || Array.isArray(value) || typeof value !== 'object') {
+    return {};
+  }
+  return value as Record<string, unknown>;
+}
+
+function asString(value: unknown) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function asStringArray(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => (typeof item === 'string' ? item.trim() : ''))
+    .filter(Boolean);
+}
+
+function asOptionalNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value.trim(), 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function firstNonEmpty(...values: Array<string | undefined | null>) {
+  return values.map((value) => value?.trim() ?? '').find(Boolean) ?? '';
+}
+
+function normalizeRouteQueryValue(value: unknown) {
+  if (Array.isArray(value)) {
+    return asString(value[0]);
+  }
+  return asString(value);
+}
+
+function formatDocumentTypeLabel(value: string) {
+  const normalized = value.trim().toUpperCase();
+  switch (normalized) {
+    case 'PASSPORT':
+      return '护照';
+    case 'ID_CARD':
+      return '身份证';
+    case 'HKMTP':
+      return '港澳通行证';
+    default:
+      return value || '未填写';
+  }
+}
+
+function formatGenderLabel(value: string) {
+  switch (value.trim().toLowerCase()) {
+    case 'male':
+    case 'm':
+    case '1':
+      return '男';
+    case 'female':
+    case 'f':
+    case '2':
+      return '女';
+    case 'unknown':
+    case '0':
+      return '未知';
+    default:
+      return value || '未填写';
+  }
+}
+
+function buildRouteLabel(tripInfo: Record<string, unknown>) {
+  const route = asString(tripInfo.route);
+  if (route) {
+    return route;
+  }
+
+  const flightNo = asString(tripInfo.flightNo);
+  const origin = asString(tripInfo.origin);
+  const destination = asString(tripInfo.destination);
+  if (flightNo && origin && destination) {
+    return `${flightNo} (${origin} -> ${destination})`;
+  }
+  if (origin && destination) {
+    return `${origin} -> ${destination}`;
+  }
+  if (destination) {
+    return `目的地 ${destination}`;
+  }
+  return '未填写';
+}
+
+function buildProfileTags(profile: PassengerProfileRecord) {
+  const profileData = asRecord(profile.profileData);
+  const riskInfo = asRecord(profileData.riskInfo);
+  const tags = asStringArray(riskInfo.riskTags);
+
+  if (profile.isHighRisk) {
+    tags.unshift('高风险名单');
+  }
+  if (asString(riskInfo.type)) {
+    tags.push(asString(riskInfo.type));
+  }
+  if (asString(riskInfo.controlLevel)) {
+    tags.push(asString(riskInfo.controlLevel));
+  }
+
+  return [...new Set(tags.filter(Boolean))].slice(0, 4);
+}
+
+function buildTravelHistory(profile: PassengerProfileRecord) {
+  const profileData = asRecord(profile.profileData);
+  const travelHistory = asRecord(profileData.travelHistory);
+  const values: string[] = [];
+
+  const recentDestinations = asStringArray(travelHistory.recentDestinations);
+  if (recentDestinations.length) {
+    values.push(`主要去往：${recentDestinations.join('、')}`);
+  }
+  if (asString(travelHistory.travelHistorySummary)) {
+    values.push(asString(travelHistory.travelHistorySummary));
+  }
+  if (asString(travelHistory.lastDepartureDate)) {
+    values.push(`最近出境：${asString(travelHistory.lastDepartureDate)}`);
+  }
+  if (asString(travelHistory.abnormalOverstayRecord)) {
+    values.push(`异常滞留：${asString(travelHistory.abnormalOverstayRecord)}`);
+  }
+  if (asString(travelHistory.visaRefusalRecord)) {
+    values.push(`拒签/遣返：${asString(travelHistory.visaRefusalRecord)}`);
+  }
+
+  return values;
+}
+
+function buildPassengerProfileView(
+  profile: PassengerProfileRecord | null,
+): PassengerProfileViewModel {
+  if (!profile) {
+    return {
+      name: '',
+      alias: '',
+      documentId: '',
+      pnr: '',
+      route: '',
+      seat: '',
+      eta: '',
+      riskLevel: 'medium',
+      riskLabel: '画像未载入',
+      summary: '',
+      observation: '',
+      tags: [],
+    };
+  }
+
+  const profileData = asRecord(profile.profileData);
+  const basicInfo = asRecord(profileData.basicInfo);
+  const tripInfo = asRecord(profileData.tripInfo);
+  const occupation = asRecord(profileData.occupation);
+  const riskInfo = asRecord(profileData.riskInfo);
+  const tags = buildProfileTags(profile);
+  const summary = firstNonEmpty(
+    asString(profile.riskReason),
+    asString(riskInfo.note),
+    asString(riskInfo.criminalRecord),
+    profile.isHighRisk
+      ? '命中高风险名单，需要优先核验证件、行程与同行关系。'
+      : '',
+    '基础画像已载入，等待生成首轮策略。',
+  );
+  const observation = [
+    asString(tripInfo.purposeDeclared)
+      ? `目的：${asString(tripInfo.purposeDeclared)}`
+      : '',
+    asString(tripInfo.returnTicketStatus)
+      ? `返程：${asString(tripInfo.returnTicketStatus)}`
+      : '',
+    asString(occupation.fundingSource)
+      ? `资金：${asString(occupation.fundingSource)}`
+      : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  return {
+    name: profile.fullName || '未填写',
+    alias: profile.fullName || '未填写',
+    documentId: profile.documentNum,
+    pnr: asString(tripInfo.pnr) || '未填写',
+    route: buildRouteLabel(tripInfo),
+    seat: asString(tripInfo.seat) || '未填写',
+    eta: asString(tripInfo.departureDate) || '未填写',
+    riskLevel: profile.isHighRisk ? 'high' : 'medium',
+    riskLabel: profile.isHighRisk ? '高风险预警' : '画像已载入',
+    summary,
+    observation: observation || '暂无重点观察项',
+    tags: tags.length ? tags : ['待策略生成'],
+  };
+}
+
+const passengerProfile = computed(() =>
+  buildPassengerProfileView(selectedProfile.value),
+);
+const hasSelectedProfile = computed(
+  () => profileLoadState.value === 'ready' && Boolean(selectedProfile.value),
+);
+const isProfileLoading = computed(() => profileLoadState.value === 'loading');
+const isStrategyLocked = computed(() => !hasSelectedProfile.value);
+const profileLockMessage = computed(() => {
+  if (isProfileLoading.value) {
+    return '正在读取旅客画像，请稍候。';
+  }
+  return profileLoadError.value || '请先在数据检索中选择旅客后发起辅助问询。';
+});
+const profileHeaderStatusLabel = computed(() =>
+  hasSelectedProfile.value ? '画像已载入' : '画像未载入',
+);
+const selectedPassengerId = computed(
+  () => selectedProfile.value?.documentNum.trim() || '',
+);
+
+function resetProfileDependentState() {
+  currentStage.value = 'strategy';
+  strategySummary.value = '';
+  generatedQuestions.value = [];
+  strategyFocusAreas.value = [];
+  strategyOperatorNote.value = '';
+  strategyRiskAssessment.value = null;
+  strategyGenerationCount.value = 0;
+  strategyRequestError.value = '';
+  roundServiceError.value = '';
+  memoryContext.value = null;
+  memoryLoadState.value = 'idle';
+  memoryErrorMessage.value = '';
+  memoryLastSyncedAt.value = '';
+  latestMemoryReferences.value = [];
+  rounds.value = [];
+  currentRoundId.value = null;
+  judgementReason.value = '';
+  judgementBriefing.value = null;
+  selectedJudgement.value = null;
+}
+
+async function loadSelectedProfile(documentNum: string) {
+  resetProfileDependentState();
+  const trimmedDocumentNum = documentNum.trim();
+  if (!trimmedDocumentNum) {
+    selectedProfile.value = null;
+    profileLoadState.value = 'locked';
+    profileLoadError.value = '请先在数据检索中选择旅客后发起辅助问询。';
+    return;
+  }
+
+  profileLoadState.value = 'loading';
+  profileLoadError.value = '';
+  selectedProfile.value = null;
+
+  try {
+    const profiles = await searchPassengerProfiles(trimmedDocumentNum);
+    const matchedProfile =
+      profiles.find((item) => item.documentNum === trimmedDocumentNum) ??
+      profiles[0] ??
+      null;
+
+    if (!matchedProfile || matchedProfile.id === 0) {
+      profileLoadState.value = 'locked';
+      profileLoadError.value =
+        '未查询到该证件号的基础画像，请先完成数据检索或导入。';
+      return;
+    }
+
+    selectedProfile.value = matchedProfile;
+    profileLoadState.value = 'ready';
+    profileLoadError.value = '';
+  } catch (error) {
+    profileLoadState.value = 'error';
+    profileLoadError.value = normalizeErrorMessage(
+      error,
+      '旅客画像读取失败，请返回数据检索后重试。',
+    );
+  }
+}
+
+function returnToDataSearch() {
+  void router.push({ name: 'home-data' });
+}
+
 function stageStatus(stage: WorkflowStage) {
   if (isArchived.value && stage === 'judgement') {
     return 'completed';
@@ -886,13 +1135,19 @@ function formatMemoryTime(value?: string | null) {
 }
 
 async function refreshMemoryContext() {
+  if (!selectedPassengerId.value) {
+    memoryContext.value = null;
+    memoryLoadState.value = 'idle';
+    return null;
+  }
+
   memoryLoadState.value = 'loading';
   memoryErrorMessage.value = '';
 
   try {
     const context = await fetchMemoryContext(
       sessionId.value,
-      mockedPassengerSupplement.passengerId,
+      selectedPassengerId.value,
     );
     memoryContext.value = context;
     memoryLoadState.value = 'ready';
@@ -931,53 +1186,73 @@ async function saveMemoryUpdates(
   }
 }
 
-function deriveDestination() {
-  const match = passengerProfile.route.match(/->\s*([A-Z]{3})/);
-  if (match?.[1]) {
-    return `美国洛杉矶 ${match[1]}`;
+function requireSelectedProfile() {
+  const profile = selectedProfile.value;
+  if (!profile) {
+    throw new Error('请先进行数据检索并选择旅客画像。');
   }
-
-  return passengerProfile.route;
+  return profile;
 }
 
-function buildPassengerPayload(): PassengerProfilePayload {
+function buildPassengerPayload(
+  profile: PassengerProfileRecord,
+): PassengerProfilePayload {
+  const profileData = asRecord(profile.profileData);
+  const basicInfo = asRecord(profileData.basicInfo);
+  const tripInfo = asRecord(profileData.tripInfo);
+  const occupation = asRecord(profileData.occupation);
+
   return {
-    passengerId: mockedPassengerSupplement.passengerId,
-    name: passengerProfile.alias,
-    age: mockedPassengerSupplement.age,
-    gender: mockedPassengerSupplement.gender,
-    nationality: mockedPassengerSupplement.nationality,
-    occupation: mockedPassengerSupplement.occupation,
-    monthlyIncome: mockedPassengerSupplement.monthlyIncome,
-    travelHistory: [...mockedPassengerSupplement.travelHistory],
+    passengerId: profile.documentNum,
+    name: profile.fullName,
+    gender: asString(basicInfo.gender) || null,
+    nationality: asString(basicInfo.nationality) || null,
+    occupation: asString(occupation.occupation) || null,
+    monthlyIncome: asString(occupation.monthlyIncome) || null,
+    travelHistory: buildTravelHistory(profile),
     documents: {
-      ...mockedPassengerSupplement.documents,
-      documentNumber: passengerProfile.documentId,
-      pnr: passengerProfile.pnr,
-      seat: passengerProfile.seat,
+      documentType: asString(basicInfo.documentType) || null,
+      issuingRegion: asString(basicInfo.issuingRegion) || null,
+      documentNumber: profile.documentNum,
+      birthDate: asString(basicInfo.birthDate) || null,
+      pnr: asString(tripInfo.pnr) || null,
+      flightNo: asString(tripInfo.flightNo) || null,
+      seat: asString(tripInfo.seat) || null,
     },
   };
 }
 
-function buildTripPayload(): TripProfilePayload {
+function buildTripPayload(profile: PassengerProfileRecord): TripProfilePayload {
+  const profileData = asRecord(profile.profileData);
+  const tripInfo = asRecord(profileData.tripInfo);
+  const occupation = asRecord(profileData.occupation);
+
   return {
-    destination: deriveDestination(),
-    purposeDeclared: mockedTripSupplement.purposeDeclared,
-    stayDays: mockedTripSupplement.stayDays,
-    ticketType: mockedTripSupplement.ticketType,
-    returnTicketStatus: mockedTripSupplement.returnTicketStatus,
-    companions: [...mockedTripSupplement.companions],
-    accommodation: mockedTripSupplement.accommodation,
-    fundingSource: mockedTripSupplement.fundingSource,
+    destination: asString(tripInfo.destination) || null,
+    purposeDeclared: asString(tripInfo.purposeDeclared) || null,
+    stayDays: asOptionalNumber(tripInfo.stayDays),
+    ticketType: asString(tripInfo.ticketType) || null,
+    returnTicketStatus: asString(tripInfo.returnTicketStatus) || null,
+    companions: asStringArray(tripInfo.companions),
+    accommodation: asString(tripInfo.accommodation) || null,
+    fundingSource: asString(occupation.fundingSource) || null,
   };
 }
 
-function buildKnownFacts() {
+function buildKnownFacts(profile: PassengerProfileRecord) {
+  const profileData = asRecord(profile.profileData);
+  const riskInfo = asRecord(profileData.riskInfo);
   return [
-    passengerProfile.summary,
-    passengerProfile.observation,
-    ...passengerProfile.tags.map((tag) => `风险标签：${tag}`),
-  ];
+    profile.isHighRisk ? '命中高风险名单' : '',
+    asString(profile.riskReason)
+      ? `高风险原因：${asString(profile.riskReason)}`
+      : '',
+    ...buildProfileTags(profile).map((tag) => `风险标签：${tag}`),
+    asString(riskInfo.criminalRecord)
+      ? `违法犯罪记录：${asString(riskInfo.criminalRecord)}`
+      : '',
+    asString(riskInfo.note) ? `备注：${asString(riskInfo.note)}` : '',
+  ].filter(Boolean);
 }
 
 function buildOutputConstraints(questionCount: number) {
@@ -1026,14 +1301,14 @@ function buildOpeningRound() {
     title: '第 1 轮 · 首轮策略执行',
     focus: strategyFocusAreas.value.length
       ? strategyFocusAreas.value.join(' / ')
-      : '首轮关注：时间线与终端空窗',
+      : '首轮关注：出境目的与行程一致性',
     strategyNote:
       strategyOperatorNote.value ||
       strategySummary.value ||
-      '系统默认围绕时间线断点、设备空窗与照明波动启动首轮问询。',
+      '系统已基于旅客画像启动首轮事实核验。',
     signal:
       strategyRiskAssessment.value?.summary ||
-      '对象需先对 10:45 至 10:50 的时间线和设备空窗给出稳定说明。',
+      '对象需先对出境目的、行程安排和资金来源给出稳定说明。',
     questions: generatedQuestions.value.map((question) => ({ ...question })),
     transcripts: [],
     completed: false,
@@ -1050,7 +1325,7 @@ function buildOpeningRound() {
 
 function getRoundCue(round?: InterviewRound | null) {
   if (!round) {
-    return passengerProfile.tags[1];
+    return passengerProfile.value.tags[1] || passengerProfile.value.alias;
   }
 
   const lastSubjectEntry = [...round.transcripts]
@@ -1132,14 +1407,15 @@ async function loadInquirySettingsForSession() {
     inquirySettingsMessage.value = '';
   } catch (error) {
     maxInteractionRounds.value = 3;
-    inquirySettingsMessage.value = '未能读取管理员轮次设置，已按默认 3 轮执行。';
+    inquirySettingsMessage.value =
+      '未能读取管理员轮次设置，已按默认 3 轮执行。';
   } finally {
     hasLoadedInquirySettings.value = true;
   }
 }
 
 async function enterInterviewStage() {
-  if (!canEnterInterview.value) {
+  if (!canEnterInterview.value || isStrategyLocked.value) {
     return;
   }
 
@@ -1300,11 +1576,12 @@ function buildActionObservationHistory() {
 }
 
 function buildFollowupPayload(roundNumber: number, round: InterviewRound) {
+  const profile = requireSelectedProfile();
   return {
     sessionId: sessionId.value,
     roundNo: roundNumber,
-    passengerProfile: buildPassengerPayload(),
-    tripProfile: buildTripPayload(),
+    passengerProfile: buildPassengerPayload(profile),
+    tripProfile: buildTripPayload(profile),
     qaHistory: buildQaHistory(),
     humanOmniWindows: buildHumanOmniWindows(),
     actionObservations: buildActionObservationHistory(),
@@ -1692,7 +1969,12 @@ async function generateStrategy() {
   if (isGeneratingStrategy.value) {
     return;
   }
+  if (isStrategyLocked.value || !selectedProfile.value) {
+    strategyRequestError.value = profileLockMessage.value;
+    return;
+  }
 
+  const profile = requireSelectedProfile();
   isGeneratingStrategy.value = true;
   strategyRequestError.value = '';
   openStageLoading('strategy');
@@ -1705,14 +1987,15 @@ async function generateStrategy() {
       path: '/home/ask',
       detail: {
         sessionId: sessionId.value,
+        documentNum: profile.documentNum,
       },
     });
     const context = await refreshMemoryContext();
     const response = await requestFirstRoundStrategy({
       sessionId: sessionId.value,
-      passengerProfile: buildPassengerPayload(),
-      tripProfile: buildTripPayload(),
-      knownFacts: buildKnownFacts(),
+      passengerProfile: buildPassengerPayload(profile),
+      tripProfile: buildTripPayload(profile),
+      knownFacts: buildKnownFacts(profile),
       memoryContext: context,
       constraints: buildOutputConstraints(6),
     });
@@ -2222,7 +2505,7 @@ function upsertSpeechTranscript(round: InterviewRound) {
 
   const entry = {
     id: `${round.id}-speech-transcript`,
-    speaker: passengerProfile.alias,
+    speaker: passengerProfile.value.alias,
     role: 'subject',
     time: formatTranscriptTime(samplingState.value.elapsedSeconds),
     text: transcript,
@@ -2295,11 +2578,7 @@ function sourceIndexAtNormalizedPosition(
 
 function findNormalizedSuffixPrefixOverlap(left: string, right: string) {
   const maxOverlap = Math.min(left.length, right.length);
-  for (
-    let length = maxOverlap;
-    length >= MIN_TRANSCRIPT_OVERLAP;
-    length -= 1
-  ) {
+  for (let length = maxOverlap; length >= MIN_TRANSCRIPT_OVERLAP; length -= 1) {
     if (left.endsWith(right.slice(0, length))) {
       return length;
     }
@@ -2309,11 +2588,7 @@ function findNormalizedSuffixPrefixOverlap(left: string, right: string) {
 
 function findNormalizedInternalOverlap(left: string, right: string) {
   const maxOverlap = Math.min(left.length, right.length);
-  for (
-    let length = maxOverlap;
-    length >= MIN_TRANSCRIPT_OVERLAP;
-    length -= 1
-  ) {
+  for (let length = maxOverlap; length >= MIN_TRANSCRIPT_OVERLAP; length -= 1) {
     const leftIndex = left.lastIndexOf(right.slice(0, length));
     if (leftIndex >= 0) {
       return leftIndex;
@@ -2717,6 +2992,22 @@ onMounted(() => {
 });
 
 watch(
+  () => route.query.documentNum,
+  (value, previousValue) => {
+    const nextDocumentNum = normalizeRouteQueryValue(value);
+    const previousDocumentNum = normalizeRouteQueryValue(previousValue);
+    if (
+      nextDocumentNum === previousDocumentNum &&
+      profileLoadState.value !== 'idle'
+    ) {
+      return;
+    }
+    void loadSelectedProfile(nextDocumentNum);
+  },
+  { immediate: true },
+);
+
+watch(
   () => [currentStage.value, currentRoundId.value, samplingState.value.phase],
   () => {
     void nextTick(() => {
@@ -2799,68 +3090,87 @@ onBeforeUnmount(() => {
 
             <div class="stage-chip-group">
               <span
+                v-if="hasSelectedProfile"
                 class="risk-chip"
                 :class="riskToneClass(passengerProfile.riskLevel)"
               >
                 {{ passengerProfile.riskLabel }}
               </span>
-              <span class="soft-chip">画像已载入</span>
+              <span class="soft-chip">{{ profileHeaderStatusLabel }}</span>
             </div>
           </header>
 
           <div class="strategy-layout">
             <section class="profile-panel profile-panel--compact">
-              <div class="profile-panel__identity">
-                <div class="profile-avatar">{{ passengerProfile.alias }}</div>
-                <div>
-                  <strong>{{ passengerProfile.name }}</strong>
-                  <span>{{ passengerProfile.documentId }}</span>
+              <template v-if="hasSelectedProfile">
+                <div class="profile-panel__identity">
+                  <div class="profile-avatar">
+                    {{ passengerProfile.alias.slice(0, 2) }}
+                  </div>
+                  <div>
+                    <strong>{{ passengerProfile.name }}</strong>
+                    <span>{{ passengerProfile.documentId }}</span>
+                  </div>
                 </div>
-              </div>
 
-              <div class="profile-grid">
-                <div>
-                  <span class="meta-label">旅客别名</span>
-                  <strong>{{ passengerProfile.alias }}</strong>
+                <div class="profile-grid">
+                  <div>
+                    <span class="meta-label">旅客姓名</span>
+                    <strong>{{ passengerProfile.alias }}</strong>
+                  </div>
+                  <div>
+                    <span class="meta-label">PNR</span>
+                    <strong>{{ passengerProfile.pnr }}</strong>
+                  </div>
+                  <div>
+                    <span class="meta-label">航线</span>
+                    <strong>{{ passengerProfile.route }}</strong>
+                  </div>
+                  <div>
+                    <span class="meta-label">座位 / 舱位</span>
+                    <strong>{{ passengerProfile.seat }}</strong>
+                  </div>
+                  <div>
+                    <span class="meta-label">出发日期</span>
+                    <strong>{{ passengerProfile.eta }}</strong>
+                  </div>
+                  <div>
+                    <span class="meta-label">观察重点</span>
+                    <strong>{{ passengerProfile.observation }}</strong>
+                  </div>
                 </div>
-                <div>
-                  <span class="meta-label">PNR</span>
-                  <strong>{{ passengerProfile.pnr }}</strong>
-                </div>
-                <div>
-                  <span class="meta-label">航线</span>
-                  <strong>{{ passengerProfile.route }}</strong>
-                </div>
-                <div>
-                  <span class="meta-label">座位 / 舱位</span>
-                  <strong>{{ passengerProfile.seat }}</strong>
-                </div>
-                <div>
-                  <span class="meta-label">抵离状态</span>
-                  <strong>{{ passengerProfile.eta }}</strong>
-                </div>
-                <div>
-                  <span class="meta-label">观察重点</span>
-                  <strong>{{ passengerProfile.observation }}</strong>
-                </div>
-              </div>
 
-              <div class="profile-insight">
-                <span class="meta-label">风险摘要</span>
-                <p class="profile-summary">{{ passengerProfile.summary }}</p>
-              </div>
+                <div class="profile-insight">
+                  <span class="meta-label">风险摘要</span>
+                  <p class="profile-summary">{{ passengerProfile.summary }}</p>
+                </div>
 
-              <div class="tag-row">
-                <span
-                  v-for="tag in passengerProfile.tags"
-                  :key="tag"
-                  class="tag-chip tag-chip--passive"
+                <div class="tag-row">
+                  <span
+                    v-for="tag in passengerProfile.tags"
+                    :key="tag"
+                    class="tag-chip tag-chip--passive"
+                  >
+                    {{ tag }}
+                  </span>
+                </div>
+              </template>
+
+              <div v-else class="locked-panel">
+                <strong>{{
+                  isProfileLoading ? '正在读取旅客画像' : '画像未载入'
+                }}</strong>
+                <p>{{ profileLockMessage }}</p>
+                <button
+                  class="secondary-action"
+                  type="button"
+                  @click="returnToDataSearch"
                 >
-                  {{ tag }}
-                </span>
+                  返回数据检索
+                </button>
               </div>
 
-              <section class="memory-panel">
+              <section v-if="hasSelectedProfile" class="memory-panel">
                 <div class="memory-panel__head">
                   <div>
                     <span class="meta-label">智能体记忆</span>
@@ -2922,24 +3232,31 @@ onBeforeUnmount(() => {
 
                 <span class="soft-chip">
                   {{
-                    isGeneratingStrategy
-                      ? '系统生成中'
-                      : strategyGenerated
-                        ? `${generatedQuestions.length} 个问题已生成`
-                        : '等待生成'
+                    isStrategyLocked
+                      ? '等待数据检索'
+                      : isGeneratingStrategy
+                        ? '系统生成中'
+                        : strategyGenerated
+                          ? `${generatedQuestions.length} 个问题已生成`
+                          : '等待生成'
                   }}
                 </span>
               </div>
 
               <p class="workspace-summary">
                 {{
-                  strategySummary ||
-                  '系统将根据用户画像与风险标签生成首轮策略与问题包。'
+                  isStrategyLocked
+                    ? profileLockMessage
+                    : strategySummary ||
+                      '系统将根据用户画像与风险标签生成首轮策略与问题包。'
                 }}
               </p>
 
               <div
-                v-if="strategyRiskAssessment || strategyOperatorNote"
+                v-if="
+                  !isStrategyLocked &&
+                  (strategyRiskAssessment || strategyOperatorNote)
+                "
                 class="summary-stack summary-stack--dense"
               >
                 <div v-if="strategyRiskAssessment" class="summary-item">
@@ -2989,7 +3306,7 @@ onBeforeUnmount(() => {
               </div>
 
               <div
-                v-if="strategyGenerated"
+                v-if="!isStrategyLocked && strategyGenerated"
                 class="question-list question-list--scroll"
               >
                 <article
@@ -3005,12 +3322,21 @@ onBeforeUnmount(() => {
                 </article>
               </div>
 
-              <div v-else class="empty-panel">
-                <strong>尚未生成首轮问题</strong>
-                <span
-                  >点击下方按钮后，系统会请求 AI-Service
-                  生成首轮核验问题与问询策略。</span
-                >
+              <div
+                v-else
+                class="empty-panel"
+                :class="{ 'empty-panel--locked': isStrategyLocked }"
+              >
+                <strong>{{
+                  isStrategyLocked ? '请先进行数据检索' : '尚未生成首轮问题'
+                }}</strong>
+                <span>
+                  {{
+                    isStrategyLocked
+                      ? '从数据检索结果中点击“发起辅助问询”后，系统会载入真实旅客画像并解锁策略生成。'
+                      : '点击下方按钮后，系统会请求 AI-Service 生成首轮核验问题与问询策略。'
+                  }}
+                </span>
               </div>
 
               <div v-if="strategyRequestError" class="inline-alert">
@@ -3022,7 +3348,9 @@ onBeforeUnmount(() => {
                   class="primary-action"
                   type="button"
                   :disabled="
-                    isGeneratingStrategy || Boolean(activeStageLoading)
+                    isStrategyLocked ||
+                    isGeneratingStrategy ||
+                    Boolean(activeStageLoading)
                   "
                   @click="generateStrategy"
                 >
@@ -3031,10 +3359,22 @@ onBeforeUnmount(() => {
                 <button
                   class="secondary-action"
                   type="button"
-                  :disabled="!canEnterInterview || Boolean(activeStageLoading)"
+                  :disabled="
+                    isStrategyLocked ||
+                    !canEnterInterview ||
+                    Boolean(activeStageLoading)
+                  "
                   @click="enterInterviewStage"
                 >
                   进入继续
+                </button>
+                <button
+                  v-if="isStrategyLocked"
+                  class="secondary-action"
+                  type="button"
+                  @click="returnToDataSearch"
+                >
+                  返回数据检索
                 </button>
               </div>
             </section>
@@ -3065,7 +3405,10 @@ onBeforeUnmount(() => {
           </header>
 
           <div v-if="currentRound" class="interview-layout">
-            <section ref="capturePanelElement" class="video-panel video-panel--capture">
+            <section
+              ref="capturePanelElement"
+              class="video-panel video-panel--capture"
+            >
               <div class="video-panel__head">
                 <div>
                   <p class="section-eyebrow">采样视频</p>
@@ -3140,7 +3483,9 @@ onBeforeUnmount(() => {
                   <span class="detector-pill detector-pill--neutral">
                     姿态
                     {{
-                      realtimeDetection.overlayFrame.poseDetected ? '已识别' : '未识别'
+                      realtimeDetection.overlayFrame.poseDetected
+                        ? '已识别'
+                        : '未识别'
                     }}
                   </span>
                 </div>
@@ -3267,10 +3612,18 @@ onBeforeUnmount(() => {
 
                 <div class="console-metrics">
                   <span class="soft-chip">
-                    检测 {{ realtimeDetection.overlayFrame.detectionFps.toFixed(1) }} 帧/秒
+                    检测
+                    {{
+                      realtimeDetection.overlayFrame.detectionFps.toFixed(1)
+                    }}
+                    帧/秒
                   </span>
                   <span class="soft-chip">
-                    推理 {{ realtimeDetection.overlayFrame.inferenceMs.toFixed(1) }} 毫秒
+                    推理
+                    {{
+                      realtimeDetection.overlayFrame.inferenceMs.toFixed(1)
+                    }}
+                    毫秒
                   </span>
                   <span class="soft-chip">
                     {{
@@ -3380,7 +3733,7 @@ onBeforeUnmount(() => {
                           ? '已达到管理员设置的总交互轮次上限，建议结束当前辅助问询流程。'
                           : currentRound.completed
                             ? '本轮采样与摘要已完成，可继续进入下一轮追问或提交人工辅助判断。'
-                          : '完成采样并等待摘要上传后，可解锁下一轮或进入人工判断。'
+                            : '完成采样并等待摘要上传后，可解锁下一轮或进入人工判断。'
                       }}
                     </span>
                     <small
@@ -3398,7 +3751,9 @@ onBeforeUnmount(() => {
                     <button
                       class="secondary-action"
                       type="button"
-                      :disabled="!canAdvanceRound || Boolean(activeStageLoading)"
+                      :disabled="
+                        !canAdvanceRound || Boolean(activeStageLoading)
+                      "
                       @click="enterNextRound"
                     >
                       进入下一轮
@@ -3416,152 +3771,160 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
 
-              <div class="panel-subhead">
-                <strong>当前问题</strong>
-                <span>{{ currentRound.questions.length }} 条</span>
-              </div>
-
-              <div class="current-questions current-questions--scroll">
-                <article
-                  v-for="question in currentRound.questions"
-                  :key="question.id"
-                  class="question-brief"
-                >
-                  <strong>{{ question.title }}</strong>
-                  <p>{{ question.prompt }}</p>
-                  <span>{{ question.objective }}</span>
-                </article>
-              </div>
-
-              <div class="panel-subhead">
-                <strong>实时转写</strong>
-                <span>{{ currentRound.transcripts.length }} 条</span>
-              </div>
-
-              <div class="transcript-stream transcript-stream--compact">
-                <article
-                  v-for="entry in currentRound.transcripts"
-                  :key="entry.id"
-                  class="transcript-entry"
-                  :class="`transcript-entry--${entry.role}`"
-                >
-                  <div class="transcript-entry__meta">
-                    <strong>{{ entry.speaker }}</strong>
-                    <span>{{ entry.time }}</span>
-                  </div>
-                  <p>{{ entry.text }}</p>
-                </article>
-
-                <div
-                  v-if="!currentRound.transcripts.length"
-                  class="empty-panel empty-panel--compact"
-                >
-                  <strong>尚无实时转写记录</strong>
-                  <span>开始采样后，这里会显示问询对象的实时回答文本。</span>
-                </div>
-              </div>
-
-              <div v-if="samplingState.errorMessage" class="inline-alert">
-                {{ samplingState.errorMessage }}
-              </div>
-
-              <div
-                class="summary-stack summary-stack--compact round-summary-stack"
-              >
-                <div class="summary-item">
-                  <span class="meta-label">窗口上传</span>
-                  <div class="summary-item__inline">
-                    <strong>{{
-                      roundUploadStateLabel(currentRound.uploadState)
-                    }}</strong>
-                    <span
-                      class="status-chip"
-                      :class="roundUploadStateClass(currentRound.uploadState)"
-                    >
-                      {{ roundUploadStateLabel(currentRound.uploadState) }}
-                    </span>
-                  </div>
-                  <p>
-                    {{
-                      currentRound.recordedFileName ||
-                      '结束采样后会生成本轮真实 MP4/H.264 音视频片段并上传至 HumanOmni 摘要接口。'
-                    }}
-                  </p>
+                <div class="panel-subhead">
+                  <strong>当前问题</strong>
+                  <span>{{ currentRound.questions.length }} 条</span>
                 </div>
 
-                <div class="summary-item">
-                  <span class="meta-label">窗口摘要</span>
-                  <p>
-                    {{
-                      currentRound.humanOmniWindow?.rawSummary ||
-                      (currentRound.uploadState === 'uploading'
-                        ? '正在等待系统返回窗口摘要。'
-                        : '尚未生成窗口摘要。')
-                    }}
-                  </p>
-                </div>
-              </div>
-
-              <div v-if="currentRound.uploadErrorMessage" class="inline-alert">
-                {{ currentRound.uploadErrorMessage }}
-              </div>
-
-              <div v-if="roundServiceError" class="inline-alert">
-                {{ roundServiceError }}
-              </div>
-
-              <section class="memory-panel memory-panel--inline">
-                <div class="memory-panel__head">
-                  <div>
-                    <span class="meta-label">智能体记忆</span>
-                    <strong>{{ memoryStatusLabel }}</strong>
-                  </div>
-                  <span
-                    class="status-chip"
-                    :class="`status-chip--${memoryLoadState}`"
-                  >
-                    {{ memoryLastSyncedAt || '未同步' }}
-                  </span>
-                </div>
-
-                <div
-                  v-if="groupedMemoryReferences.length"
-                  class="memory-reference-row"
-                >
-                  <span
-                    v-for="reference in groupedMemoryReferences"
-                    :key="reference.key"
-                    class="memory-reference-chip"
-                    :title="`引用：${reference.title}`"
-                  >
-                    <span>引用：{{ reference.title }}</span>
-                    <small>{{ reference.scopeLabel }} · {{ reference.typeLabel }}</small>
-                    <b>×{{ reference.count }}</b>
-                  </span>
-                </div>
-
-                <div v-if="memoryPanelItems.length" class="memory-list">
+                <div class="current-questions current-questions--scroll">
                   <article
-                    v-for="item in memoryPanelItems"
-                    :key="item.key"
-                    class="memory-item"
+                    v-for="question in currentRound.questions"
+                    :key="question.id"
+                    class="question-brief"
                   >
-                    <div class="memory-item__meta">
-                      <strong>{{ item.title }}</strong>
-                      <span>{{ item.scopeLabel }} · {{ item.typeLabel }}</span>
-                    </div>
-                    <p>{{ item.content }}</p>
+                    <strong>{{ question.title }}</strong>
+                    <p>{{ question.prompt }}</p>
+                    <span>{{ question.objective }}</span>
                   </article>
                 </div>
 
-                <div v-else class="empty-panel empty-panel--compact">
-                  <strong>尚无可用记忆</strong>
-                  <span>完成采样与追问后，系统会更新记忆上下文。</span>
+                <div class="panel-subhead">
+                  <strong>实时转写</strong>
+                  <span>{{ currentRound.transcripts.length }} 条</span>
                 </div>
 
-                <div v-if="memoryErrorMessage" class="inline-alert">
-                  {{ memoryErrorMessage }}
+                <div class="transcript-stream transcript-stream--compact">
+                  <article
+                    v-for="entry in currentRound.transcripts"
+                    :key="entry.id"
+                    class="transcript-entry"
+                    :class="`transcript-entry--${entry.role}`"
+                  >
+                    <div class="transcript-entry__meta">
+                      <strong>{{ entry.speaker }}</strong>
+                      <span>{{ entry.time }}</span>
+                    </div>
+                    <p>{{ entry.text }}</p>
+                  </article>
+
+                  <div
+                    v-if="!currentRound.transcripts.length"
+                    class="empty-panel empty-panel--compact"
+                  >
+                    <strong>尚无实时转写记录</strong>
+                    <span>开始采样后，这里会显示问询对象的实时回答文本。</span>
+                  </div>
                 </div>
+
+                <div v-if="samplingState.errorMessage" class="inline-alert">
+                  {{ samplingState.errorMessage }}
+                </div>
+
+                <div
+                  class="summary-stack summary-stack--compact round-summary-stack"
+                >
+                  <div class="summary-item">
+                    <span class="meta-label">窗口上传</span>
+                    <div class="summary-item__inline">
+                      <strong>{{
+                        roundUploadStateLabel(currentRound.uploadState)
+                      }}</strong>
+                      <span
+                        class="status-chip"
+                        :class="roundUploadStateClass(currentRound.uploadState)"
+                      >
+                        {{ roundUploadStateLabel(currentRound.uploadState) }}
+                      </span>
+                    </div>
+                    <p>
+                      {{
+                        currentRound.recordedFileName ||
+                        '结束采样后会生成本轮真实 MP4/H.264 音视频片段并上传至 HumanOmni 摘要接口。'
+                      }}
+                    </p>
+                  </div>
+
+                  <div class="summary-item">
+                    <span class="meta-label">窗口摘要</span>
+                    <p>
+                      {{
+                        currentRound.humanOmniWindow?.rawSummary ||
+                        (currentRound.uploadState === 'uploading'
+                          ? '正在等待系统返回窗口摘要。'
+                          : '尚未生成窗口摘要。')
+                      }}
+                    </p>
+                  </div>
+                </div>
+
+                <div
+                  v-if="currentRound.uploadErrorMessage"
+                  class="inline-alert"
+                >
+                  {{ currentRound.uploadErrorMessage }}
+                </div>
+
+                <div v-if="roundServiceError" class="inline-alert">
+                  {{ roundServiceError }}
+                </div>
+
+                <section class="memory-panel memory-panel--inline">
+                  <div class="memory-panel__head">
+                    <div>
+                      <span class="meta-label">智能体记忆</span>
+                      <strong>{{ memoryStatusLabel }}</strong>
+                    </div>
+                    <span
+                      class="status-chip"
+                      :class="`status-chip--${memoryLoadState}`"
+                    >
+                      {{ memoryLastSyncedAt || '未同步' }}
+                    </span>
+                  </div>
+
+                  <div
+                    v-if="groupedMemoryReferences.length"
+                    class="memory-reference-row"
+                  >
+                    <span
+                      v-for="reference in groupedMemoryReferences"
+                      :key="reference.key"
+                      class="memory-reference-chip"
+                      :title="`引用：${reference.title}`"
+                    >
+                      <span>引用：{{ reference.title }}</span>
+                      <small
+                        >{{ reference.scopeLabel }} ·
+                        {{ reference.typeLabel }}</small
+                      >
+                      <b>×{{ reference.count }}</b>
+                    </span>
+                  </div>
+
+                  <div v-if="memoryPanelItems.length" class="memory-list">
+                    <article
+                      v-for="item in memoryPanelItems"
+                      :key="item.key"
+                      class="memory-item"
+                    >
+                      <div class="memory-item__meta">
+                        <strong>{{ item.title }}</strong>
+                        <span
+                          >{{ item.scopeLabel }} · {{ item.typeLabel }}</span
+                        >
+                      </div>
+                      <p>{{ item.content }}</p>
+                    </article>
+                  </div>
+
+                  <div v-else class="empty-panel empty-panel--compact">
+                    <strong>尚无可用记忆</strong>
+                    <span>完成采样与追问后，系统会更新记忆上下文。</span>
+                  </div>
+
+                  <div v-if="memoryErrorMessage" class="inline-alert">
+                    {{ memoryErrorMessage }}
+                  </div>
                 </section>
               </div>
             </section>
@@ -4620,6 +4983,33 @@ onBeforeUnmount(() => {
 
 .empty-panel--compact {
   min-height: 104px;
+}
+
+.empty-panel--locked,
+.locked-panel {
+  border-style: dashed;
+  background: rgba(246, 250, 251, 0.86);
+}
+
+.locked-panel {
+  display: grid;
+  gap: 12px;
+  place-items: center;
+  min-height: 320px;
+  padding: 22px;
+  text-align: center;
+  border-radius: 18px;
+  border: 1px dashed rgba(11, 114, 136, 0.24);
+}
+
+.locked-panel strong {
+  color: var(--text-main);
+}
+
+.locked-panel p {
+  max-width: 320px;
+  margin: 0;
+  color: var(--text-muted);
 }
 
 .primary-action,
