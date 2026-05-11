@@ -447,47 +447,77 @@ func (h *Handler) putProfileAsset(
 	preset sensitive.RenderPreset,
 	page string,
 ) sensitive.AssetRef {
+	riskTags := profileStringSlice(profile, "riskInfo", "riskTags")
+	company := profileField(profile, "occupation", "company")
+	tags := compactStrings([]string{formatRiskTag(profile.IsHighRisk)})
+	sections := make([]sensitive.Section, 0, 3)
+
+	if preset == sensitive.PresetList {
+		tags = append(tags, compactStrings([]string{
+			formatProfileTag("证件类型", formatDocumentTypeLabel(profileField(profile, "basicInfo", "documentType"))),
+			formatProfileTag("性别", formatGenderLabel(profileField(profile, "basicInfo", "gender"))),
+			formatProfileTag("国籍", profileField(profile, "basicInfo", "nationality")),
+		})...)
+		if profile.ID == 0 {
+			tags = append(tags, "基础画像未导入")
+		}
+		tags = append(tags, riskTags...)
+
+		sections = append(sections, sensitive.Section{
+			Heading: "概要信息",
+			Lines: compactStrings([]string{
+				formatProfileFieldLabel("证件号码", profile.DocumentNum),
+				formatProfileFieldLabel("目的地", profileField(profile, "tripInfo", "destination")),
+				formatProfileFieldLabel("高风险原因", profile.RiskReason),
+			}),
+		})
+	} else {
+		tags = append(tags, compactStrings([]string{
+			formatProfileTag("证件类型", formatDocumentTypeLabel(profileField(profile, "basicInfo", "documentType"))),
+			formatProfileTag("性别", formatGenderLabel(profileField(profile, "basicInfo", "gender"))),
+			formatProfileTag("国籍", profileField(profile, "basicInfo", "nationality")),
+			formatProfileTag("出生", profileField(profile, "basicInfo", "birthDate")),
+			formatProfileTag("电话", profileField(profile, "basicInfo", "phone")),
+			formatProfileTag("PNR", profileField(profile, "tripInfo", "pnr")),
+			formatProfileTag("航班", profileField(profile, "tripInfo", "flightNo")),
+			formatProfileTag("目的地", profileField(profile, "tripInfo", "destination")),
+			formatProfileTag("申报目的", profileField(profile, "tripInfo", "purposeDeclared")),
+			formatProfileTag("职业", profileField(profile, "occupation", "occupation")),
+			buildRouteTag(profile),
+		})...)
+		if profile.ID == 0 {
+			tags = append(tags, "基础画像未导入")
+		}
+		tags = append(tags, riskTags...)
+
+		if summaryLines := compactStrings([]string{
+			formatProfileFieldLabel("证件号码", profile.DocumentNum),
+			formatProfileFieldLabel("单位", company),
+		}); len(summaryLines) > 0 {
+			sections = append(sections, sensitive.Section{
+				Heading: "补充信息",
+				Lines:   summaryLines,
+			})
+		}
+
+		if riskLines := compactStrings([]string{
+			formatProfileFieldLabel("高风险原因", profile.RiskReason),
+			formatProfileFieldLabel("违法犯罪记录", profileField(profile, "riskInfo", "criminalRecord")),
+			formatProfileFieldLabel("备注", profileField(profile, "riskInfo", "note")),
+		}); len(riskLines) > 0 {
+			sections = append(sections, sensitive.Section{
+				Heading: "风险说明",
+				Lines:   riskLines,
+			})
+		}
+	}
+
 	document := sensitive.Document{
 		Eyebrow:  "",
 		Title:    firstNonEmptyText(strings.TrimSpace(profile.FullName), "旅客画像"),
 		Subtitle: "证件号 " + firstNonEmptyText(strings.TrimSpace(profile.DocumentNum), "-"),
-		Tags: compactStrings([]string{
-			formatRiskTag(profile.IsHighRisk),
-			formatProfileFieldLabel("证件类型", profileField(profile, "basicInfo", "documentType")),
-			formatProfileFieldLabel("性别", profileField(profile, "basicInfo", "gender")),
-			formatProfileFieldLabel("国籍", profileField(profile, "basicInfo", "nationality")),
-		}),
-		Sections: []sensitive.Section{
-			{
-				Heading: "基本信息",
-				Lines: compactStrings([]string{
-					formatProfileFieldLabel("姓名", profile.FullName),
-					formatProfileFieldLabel("证件号码", profile.DocumentNum),
-					formatProfileFieldLabel("出生日期", profileField(profile, "basicInfo", "birthDate")),
-					formatProfileFieldLabel("联系电话", profileField(profile, "basicInfo", "phone")),
-				}),
-			},
-			{
-				Heading: "行程信息",
-				Lines: compactStrings([]string{
-					formatProfileFieldLabel("PNR", profileField(profile, "tripInfo", "pnr")),
-					formatProfileFieldLabel("航班号", profileField(profile, "tripInfo", "flightNo")),
-					formatProfileFieldLabel("目的地", profileField(profile, "tripInfo", "destination")),
-					formatProfileFieldLabel("申报目的", profileField(profile, "tripInfo", "purposeDeclared")),
-				}),
-			},
-			{
-				Heading: "职业与风险",
-				Lines: compactStrings([]string{
-					formatProfileFieldLabel("职业", profileField(profile, "occupation", "occupation")),
-					formatProfileFieldLabel("单位", profileField(profile, "occupation", "company")),
-					formatProfileFieldLabel("高风险原因", profile.RiskReason),
-					formatProfileFieldLabel("风险标签", strings.Join(profileStringSlice(profile, "riskInfo", "riskTags"), "、")),
-					formatProfileFieldLabel("违法犯罪记录", profileField(profile, "riskInfo", "criminalRecord")),
-					formatProfileFieldLabel("备注", profileField(profile, "riskInfo", "note")),
-				}),
-			},
-		},
+		Tags:     tags,
+		Sections: sections,
 		Footer: []string{
 			"更新时间 " + formatTime(profile.UpdatedAt),
 		},
@@ -619,6 +649,65 @@ func formatProfileFieldLabel(label string, value string) string {
 		return ""
 	}
 	return label + "：" + value
+}
+
+func formatProfileTag(label string, value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if strings.TrimSpace(label) == "" {
+		return value
+	}
+	return label + " " + value
+}
+
+func buildRouteTag(profile SearchProfileResponse) string {
+	route := profileField(profile, "tripInfo", "route")
+	if route != "" {
+		return formatProfileTag("行程", route)
+	}
+
+	flightNo := profileField(profile, "tripInfo", "flightNo")
+	origin := profileField(profile, "tripInfo", "origin")
+	destination := profileField(profile, "tripInfo", "destination")
+
+	switch {
+	case flightNo != "" && origin != "" && destination != "":
+		return formatProfileTag("行程", flightNo+" "+origin+" -> "+destination)
+	case origin != "" && destination != "":
+		return formatProfileTag("行程", origin+" -> "+destination)
+	case destination != "":
+		return formatProfileTag("行程", "目的地 "+destination)
+	default:
+		return ""
+	}
+}
+
+func formatDocumentTypeLabel(value string) string {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case "PASSPORT":
+		return "护照"
+	case "ID_CARD":
+		return "身份证"
+	case "HKMTP":
+		return "港澳通行证"
+	default:
+		return strings.TrimSpace(value)
+	}
+}
+
+func formatGenderLabel(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "male", "m", "1":
+		return "男"
+	case "female", "f", "2":
+		return "女"
+	case "unknown", "0":
+		return "未知"
+	default:
+		return strings.TrimSpace(value)
+	}
 }
 
 func formatTime(value time.Time) string {

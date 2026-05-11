@@ -45,6 +45,15 @@ type drawnLine struct {
 	y    int
 	face font.Face
 	fill color.Color
+	chip *drawnChip
+}
+
+type drawnChip struct {
+	rect           image.Rectangle
+	fill           color.Color
+	border         color.Color
+	radius         int
+	drawBackground bool
 }
 
 type watermarkTile struct {
@@ -166,68 +175,224 @@ func measureDocument(
 ) ([]drawnLine, int) {
 	lines := make([]drawnLine, 0, 64)
 	x := layout.Padding
-	y := layout.Padding + titleFace.Metrics().Ascent.Ceil()
 	maxWidth := layout.Width - layout.Padding*2
+	y := layout.Padding
 
 	if eyebrow := strings.TrimSpace(doc.Eyebrow); eyebrow != "" {
-		for _, wrapped := range wrapText(bodyFace, strings.ToUpper(eyebrow), maxWidth) {
-			lines = append(lines, drawnLine{text: wrapped, x: x, y: y, face: bodyFace, fill: color.RGBA{70, 92, 100, 255}})
-			y += bodyFace.Metrics().Height.Ceil()
-		}
+		lines, y = appendWrappedText(
+			lines,
+			bodyFace,
+			color.RGBA{70, 92, 100, 255},
+			x,
+			y,
+			maxWidth,
+			strings.ToUpper(eyebrow),
+		)
 		y += 8
 	}
 
-	for _, wrapped := range wrapText(titleFace, strings.TrimSpace(doc.Title), maxWidth) {
-		lines = append(lines, drawnLine{text: wrapped, x: x, y: y, face: titleFace, fill: color.RGBA{21, 37, 43, 255}})
-		y += titleFace.Metrics().Height.Ceil()
-	}
+	lines, y = appendWrappedText(
+		lines,
+		titleFace,
+		color.RGBA{21, 37, 43, 255},
+		x,
+		y,
+		maxWidth,
+		strings.TrimSpace(doc.Title),
+	)
 
 	if subtitle := strings.TrimSpace(doc.Subtitle); subtitle != "" {
 		y += 4
-		for _, wrapped := range wrapText(bodyFace, subtitle, maxWidth) {
-			lines = append(lines, drawnLine{text: wrapped, x: x, y: y, face: bodyFace, fill: color.RGBA{58, 78, 86, 255}})
-			y += bodyFace.Metrics().Height.Ceil()
-		}
+		lines, y = appendWrappedText(
+			lines,
+			bodyFace,
+			color.RGBA{58, 78, 86, 255},
+			x,
+			y,
+			maxWidth,
+			subtitle,
+		)
 	}
 
 	if len(doc.Tags) > 0 {
 		y += 14
-		tagLine := strings.Join(compactValues(doc.Tags), "    ")
-		for _, wrapped := range wrapText(tagFace, tagLine, maxWidth) {
-			lines = append(lines, drawnLine{text: wrapped, x: x, y: y, face: tagFace, fill: color.RGBA{10, 83, 101, 255}})
-			y += tagFace.Metrics().Height.Ceil()
-		}
+		lines, y = appendTags(lines, tagFace, x, y, maxWidth, doc.Tags)
 	}
 
 	for _, section := range doc.Sections {
-		if heading := strings.TrimSpace(section.Heading); heading != "" {
-			y += 18
-			for _, wrapped := range wrapText(bodyFace, heading, maxWidth) {
-				lines = append(lines, drawnLine{text: wrapped, x: x, y: y, face: bodyFace, fill: color.RGBA{21, 37, 43, 255}})
-				y += bodyFace.Metrics().Height.Ceil()
-			}
+		sectionLines := compactValues(section.Lines)
+		if strings.TrimSpace(section.Heading) == "" && len(sectionLines) == 0 {
+			continue
 		}
 
-		for _, rawLine := range compactValues(section.Lines) {
+		if heading := strings.TrimSpace(section.Heading); heading != "" {
+			y += 18
+			lines, y = appendWrappedText(
+				lines,
+				bodyFace,
+				color.RGBA{21, 37, 43, 255},
+				x,
+				y,
+				maxWidth,
+				heading,
+			)
+		}
+
+		for _, rawLine := range sectionLines {
 			y += 4
-			for _, wrapped := range wrapText(bodyFace, rawLine, maxWidth) {
-				lines = append(lines, drawnLine{text: wrapped, x: x, y: y, face: bodyFace, fill: color.RGBA{30, 48, 56, 255}})
-				y += bodyFace.Metrics().Height.Ceil()
-			}
+			lines, y = appendWrappedText(
+				lines,
+				bodyFace,
+				color.RGBA{30, 48, 56, 255},
+				x,
+				y,
+				maxWidth,
+				rawLine,
+			)
 		}
 	}
 
 	if len(doc.Footer) > 0 {
 		y += 18
 		for _, rawLine := range compactValues(doc.Footer) {
-			for _, wrapped := range wrapText(bodyFace, rawLine, maxWidth) {
-				lines = append(lines, drawnLine{text: wrapped, x: x, y: y, face: bodyFace, fill: color.RGBA{76, 95, 102, 255}})
-				y += bodyFace.Metrics().Height.Ceil()
-			}
+			lines, y = appendWrappedText(
+				lines,
+				bodyFace,
+				color.RGBA{76, 95, 102, 255},
+				x,
+				y,
+				maxWidth,
+				rawLine,
+			)
 		}
 	}
 
 	return lines, y + layout.Padding
+}
+
+func appendWrappedText(
+	lines []drawnLine,
+	face font.Face,
+	fill color.Color,
+	x int,
+	top int,
+	maxWidth int,
+	value string,
+) ([]drawnLine, int) {
+	wrapped := wrapText(face, value, maxWidth)
+	if len(wrapped) == 0 {
+		return lines, top
+	}
+
+	lineHeight := face.Metrics().Height.Ceil()
+	baseline := top + face.Metrics().Ascent.Ceil()
+	for _, wrappedLine := range wrapped {
+		lines = append(lines, drawnLine{
+			text: wrappedLine,
+			x:    x,
+			y:    baseline,
+			face: face,
+			fill: fill,
+		})
+		baseline += lineHeight
+	}
+
+	return lines, top + lineHeight*len(wrapped)
+}
+
+func appendTags(
+	lines []drawnLine,
+	face font.Face,
+	x int,
+	top int,
+	maxWidth int,
+	tags []string,
+) ([]drawnLine, int) {
+	cleaned := compactValues(tags)
+	if len(cleaned) == 0 {
+		return lines, top
+	}
+
+	const (
+		paddingX      = 14
+		paddingTop    = 6
+		paddingBottom = 6
+		gapX          = 10
+		gapY          = 10
+		lineGap       = 4
+		maxRadius     = 14
+	)
+
+	lineHeight := face.Metrics().Height.Ceil()
+	ascent := face.Metrics().Ascent.Ceil()
+	cursorX := x
+	cursorY := top
+	rowHeight := 0
+	maxX := x + maxWidth
+
+	for _, tag := range cleaned {
+		wrapped := wrapSingleLine(face, tag, maxWidth-paddingX*2)
+		if len(wrapped) == 0 {
+			continue
+		}
+
+		boxTextWidth := 0
+		for _, wrappedLine := range wrapped {
+			boxTextWidth = maxInt(boxTextWidth, textWidth(face, wrappedLine))
+		}
+
+		boxWidth := minInt(maxWidth, boxTextWidth+paddingX*2)
+		boxHeight := paddingTop + paddingBottom + lineHeight*len(wrapped)
+		if len(wrapped) > 1 {
+			boxHeight += lineGap * (len(wrapped) - 1)
+		}
+
+		if cursorX > x && cursorX+boxWidth > maxX {
+			cursorY += rowHeight + gapY
+			cursorX = x
+			rowHeight = 0
+		}
+
+		textColor, backgroundColor, borderColor := resolveTagPalette(tag)
+		rect := image.Rect(cursorX, cursorY, cursorX+boxWidth, cursorY+boxHeight)
+		baseline := cursorY + paddingTop + ascent
+		for index, wrappedLine := range wrapped {
+			line := drawnLine{
+				text: wrappedLine,
+				x:    cursorX + paddingX,
+				y:    baseline + index*(lineHeight+lineGap),
+				face: face,
+				fill: textColor,
+			}
+			if index == 0 {
+				line.chip = &drawnChip{
+					rect:           rect,
+					fill:           backgroundColor,
+					border:         borderColor,
+					radius:         minInt(maxRadius, boxHeight/2),
+					drawBackground: true,
+				}
+			}
+			lines = append(lines, line)
+		}
+
+		rowHeight = maxInt(rowHeight, boxHeight)
+		cursorX += boxWidth + gapX
+	}
+
+	return lines, cursorY + rowHeight
+}
+
+func resolveTagPalette(tag string) (color.Color, color.Color, color.Color) {
+	normalized := strings.ToLower(strings.TrimSpace(tag))
+	switch {
+	case strings.Contains(normalized, "高风险"):
+		return color.RGBA{154, 61, 41, 255}, color.RGBA{251, 232, 227, 255}, color.RGBA{226, 183, 172, 255}
+	case strings.Contains(normalized, "未导入"):
+		return color.RGBA{112, 83, 17, 255}, color.RGBA{251, 243, 219, 255}, color.RGBA{224, 206, 137, 255}
+	default:
+		return color.RGBA{9, 89, 108, 255}, color.RGBA{221, 239, 244, 255}, color.RGBA{168, 198, 208, 255}
+	}
 }
 
 func drawAccent(dst *image.RGBA, layout presetLayout, preset RenderPreset) {
@@ -380,8 +545,71 @@ func maxInt(left int, right int) int {
 
 func drawDocument(dst *image.RGBA, lines []drawnLine) {
 	for _, line := range lines {
+		if line.chip != nil && line.chip.drawBackground {
+			drawRoundedRect(dst, line.chip.rect, line.chip.radius, line.chip.fill, line.chip.border)
+		}
 		drawString(dst, line.face, line.fill, line.x, line.y, line.text)
 	}
+}
+
+func drawRoundedRect(dst *image.RGBA, rect image.Rectangle, radius int, fill color.Color, border color.Color) {
+	if rect.Dx() <= 0 || rect.Dy() <= 0 {
+		return
+	}
+
+	fillRoundedRect(dst, rect, radius, border)
+	inner := image.Rect(rect.Min.X+1, rect.Min.Y+1, rect.Max.X-1, rect.Max.Y-1)
+	if inner.Dx() <= 0 || inner.Dy() <= 0 {
+		return
+	}
+
+	fillRoundedRect(dst, inner, maxInt(radius-1, 0), fill)
+}
+
+func fillRoundedRect(dst *image.RGBA, rect image.Rectangle, radius int, fill color.Color) {
+	if rect.Dx() <= 0 || rect.Dy() <= 0 {
+		return
+	}
+
+	radius = maxInt(radius, 0)
+	radius = minInt(radius, rect.Dx()/2)
+	radius = minInt(radius, rect.Dy()/2)
+	converted := color.RGBAModel.Convert(fill).(color.RGBA)
+
+	for py := rect.Min.Y; py < rect.Max.Y; py++ {
+		for px := rect.Min.X; px < rect.Max.X; px++ {
+			if !pointInsideRoundedRect(px, py, rect, radius) {
+				continue
+			}
+			blendPixel(dst, px, py, converted)
+		}
+	}
+}
+
+func pointInsideRoundedRect(px int, py int, rect image.Rectangle, radius int) bool {
+	if radius <= 0 {
+		return true
+	}
+
+	if px >= rect.Min.X+radius && px < rect.Max.X-radius {
+		return true
+	}
+	if py >= rect.Min.Y+radius && py < rect.Max.Y-radius {
+		return true
+	}
+
+	centerX := rect.Min.X + radius
+	if px >= rect.Max.X-radius {
+		centerX = rect.Max.X - radius - 1
+	}
+	centerY := rect.Min.Y + radius
+	if py >= rect.Max.Y-radius {
+		centerY = rect.Max.Y - radius - 1
+	}
+
+	dx := float64(px - centerX)
+	dy := float64(py - centerY)
+	return dx*dx+dy*dy <= float64(radius*radius)
 }
 
 func drawString(dst *image.RGBA, face font.Face, fill color.Color, x int, y int, value string) {
