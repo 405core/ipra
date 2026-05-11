@@ -3027,27 +3027,6 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="ask-page">
-    <header class="workflow-hero">
-      <div>
-        <h2>辅助问询</h2>
-        <p class="section-copy">
-          使用单一主工作面管理策略生成、多轮采样和人工判定。当前已对接
-          AI-Service 三个接口，摄像头、话筒和实时转写随采样流程同步启动。
-        </p>
-      </div>
-
-      <div class="workflow-hero__meta">
-        <div class="meta-chip">
-          <span>编号</span>
-          <strong>{{ archiveCode }}</strong>
-        </div>
-        <div class="meta-chip">
-          <span>检查员</span>
-          <strong>{{ inspectorName }} · {{ inspectorWorkId }}</strong>
-        </div>
-      </div>
-    </header>
-
     <Transition name="stage-switch" mode="out-in">
       <article :key="stageCardKey" class="stage-card">
         <div class="stage-card__progress">
@@ -3613,16 +3592,12 @@ onBeforeUnmount(() => {
                 <div class="console-metrics">
                   <span class="soft-chip">
                     检测
-                    {{
-                      realtimeDetection.overlayFrame.detectionFps.toFixed(1)
-                    }}
+                    {{ realtimeDetection.overlayFrame.detectionFps.toFixed(1) }}
                     帧/秒
                   </span>
                   <span class="soft-chip">
                     推理
-                    {{
-                      realtimeDetection.overlayFrame.inferenceMs.toFixed(1)
-                    }}
+                    {{ realtimeDetection.overlayFrame.inferenceMs.toFixed(1) }}
                     毫秒
                   </span>
                   <span class="soft-chip">
@@ -4310,7 +4285,6 @@ onBeforeUnmount(() => {
   gap: 22px;
 }
 
-.workflow-hero,
 .stage-card {
   border-radius: 28px;
   background: var(--surface-bg);
@@ -4318,12 +4292,10 @@ onBeforeUnmount(() => {
   box-shadow: var(--shadow);
 }
 
-.workflow-hero,
 .stage-card {
   overflow: hidden;
 }
 
-.workflow-hero,
 .stage-card__progress-head,
 .stage-card__head,
 .workspace-panel__head,
@@ -4342,18 +4314,6 @@ onBeforeUnmount(() => {
   gap: 16px;
 }
 
-.workflow-hero {
-  padding: 28px;
-  background:
-    linear-gradient(
-      135deg,
-      rgba(11, 114, 136, 0.06),
-      rgba(255, 255, 255, 0.96)
-    ),
-    var(--surface-bg);
-}
-
-.workflow-hero h2,
 .stage-card h3,
 .stage-card__progress-head h4,
 .workspace-panel h4,
@@ -4363,10 +4323,6 @@ onBeforeUnmount(() => {
 .analysis-column h4 {
   margin: 6px 0 0;
   color: var(--text-main);
-}
-
-.workflow-hero h2 {
-  margin-top: 0;
 }
 
 .stage-card h3 {
@@ -4412,7 +4368,6 @@ onBeforeUnmount(() => {
   max-width: 680px;
 }
 
-.workflow-hero__meta,
 .stage-chip-group,
 .action-row,
 .tag-row {
@@ -4422,11 +4377,6 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
-.workflow-hero__meta {
-  justify-content: flex-end;
-}
-
-.meta-chip,
 .soft-chip,
 .status-chip,
 .risk-chip,
@@ -4441,22 +4391,10 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 
-.meta-chip,
 .soft-chip,
 .progress-note {
   background: rgba(11, 114, 136, 0.08);
   color: var(--accent-strong);
-}
-
-.meta-chip {
-  display: grid;
-  gap: 2px;
-  padding: 10px 14px;
-}
-
-.meta-chip span {
-  font-size: 0.72rem;
-  color: var(--text-muted);
 }
 
 .stage-card {
@@ -6212,7 +6150,6 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 959px) {
-  .workflow-hero,
   .stage-card__progress-head,
   .stage-card__head,
   .sampling-console__head,
@@ -6265,8 +6202,7 @@ onBeforeUnmount(() => {
     --stage-card-padding: 16px;
   }
 
-  .stage-card,
-  .workflow-hero {
+  .stage-card {
     padding: 16px;
   }
 
@@ -6332,7 +6268,6 @@ onBeforeUnmount(() => {
   }
 
   .action-row,
-  .workflow-hero__meta,
   .stage-chip-group {
     width: 100%;
   }
