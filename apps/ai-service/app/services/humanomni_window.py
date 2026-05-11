@@ -18,7 +18,6 @@ from schemas.humanomni import (
     UploadedWindowFile,
 )
 from schemas.inquiry import HumanOmniWindowSummary
-from storage import is_minio_enabled, store_file
 
 
 HUMANOMNI_MARKER = "=== HumanOmni Output ==="
@@ -60,16 +59,6 @@ async def summarize_uploaded_window(
     stored_path = str(saved_path)
     stored_bucket: str | None = None
     stored_object_key: str | None = None
-    if is_minio_enabled():
-        stored_object = store_file(
-            saved_path,
-            _build_object_name(session_id, resolved_window_id, saved_path.suffix.lower()),
-            file.content_type,
-        )
-        stored_path = stored_object.stored_path
-        stored_bucket = stored_object.bucket or None
-        stored_object_key = stored_object.object_key or None
-        _delete_if_exists(saved_path)
 
     summary = result.raw_summary
     return HumanOmniSummarizeWindowResponse(

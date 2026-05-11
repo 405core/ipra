@@ -25,9 +25,10 @@ const (
 )
 
 type Handler struct {
-	db      *gorm.DB
-	storage objectStorage
-	now     func() time.Time
+	db          *gorm.DB
+	storage     objectStorage
+	videoBucket string
+	now         func() time.Time
 }
 
 type createArchiveRequest struct {
@@ -117,9 +118,10 @@ type archiveRoundDetail struct {
 
 func NewHandler(db *gorm.DB, minioConfig config.MinIOConfig) *Handler {
 	return &Handler{
-		db:      db,
-		storage: newMinIOClient(minioConfig),
-		now:     time.Now,
+		db:          db,
+		storage:     newMinIOClient(minioConfig),
+		videoBucket: strings.TrimSpace(firstNonEmpty(minioConfig.BucketVideo)),
+		now:         time.Now,
 	}
 }
 
@@ -129,6 +131,7 @@ func (h *Handler) Register(r gin.IRouter, authMiddleware gin.HandlerFunc) {
 		group.Use(authMiddleware)
 	}
 	group.POST("/archives", h.handleCreate)
+	group.POST("/archive-videos", h.handleUploadVideo)
 }
 
 func (h *Handler) RegisterAdminRoutes(r gin.IRouter, authMiddleware gin.HandlerFunc) {

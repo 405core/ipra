@@ -31,6 +31,7 @@ import {
 import { recordAuditEvent } from '../app/audit-service';
 import {
   createInquiryArchive,
+  uploadInquiryArchiveVideo,
   type CreateInquiryArchivePayload,
   type CreateInquiryArchiveRoundPayload,
   type CreateInquiryArchiveVideoPayload,
@@ -53,6 +54,11 @@ import {
 import { getInquirySettings } from '../app/admin-service';
 import { ElMessage } from '../app/el-message';
 import { loadAuthSession } from '../auth';
+import {
+  buildScopedWatermarkText,
+  VIDEO_CAPTURE_WATERMARK_TILE_LAYOUTS,
+  WATERMARK_REFRESH_INTERVAL_MS,
+} from '../app/watermark';
 
 type WorkflowStage = 'strategy' | 'interview' | 'judgement';
 type RiskLevel = 'high' | 'medium';
@@ -346,6 +352,7 @@ const archivedAt = ref('');
 const archiveCode = ref('');
 const stageLoadingMode = ref<StageLoadingMode | null>(null);
 const stageLoadingPhraseIndex = ref(0);
+const videoWatermarkTimestamp = ref(Date.now());
 const speechRecognitionPhase = ref<SpeechRecognitionPhase>('idle');
 const speechRecognitionMessage = ref('等待开始采样。');
 const selectedProfile = ref<PassengerProfileRecord | null>(null);
@@ -390,6 +397,7 @@ const ASR_TARGET_SAMPLE_RATE = 16000;
 const ASR_FRAME_BYTES = 1280;
 const ASR_STOP_GRACE_MS = 2500;
 let stageLoadingTimerId: number | null = null;
+let videoWatermarkTimerId: number | null = null;
 const MP4_H264_MIME_TYPES = [
   'video/mp4;codecs=avc1.64001F,mp4a.40.2',
   'video/mp4;codecs=avc1.4D401F,mp4a.40.2',
@@ -407,6 +415,16 @@ const currentRound = computed(() => {
     rounds.value.find((round) => round.id === currentRoundId.value) || null
   );
 });
+
+const captureVideoWatermarkText = computed(() =>
+  session
+    ? buildScopedWatermarkText(
+        session,
+        '采集视频',
+        videoWatermarkTimestamp.value,
+      )
+    : '',
+);
 
 const completedRounds = computed(() =>
   rounds.value.filter((round) => round.completed),
@@ -1603,8 +1621,11 @@ function buildFollowupPayload(roundNumber: number, round: InterviewRound) {
   };
 }
 
-function buildSummarizeWindowFormData(round: InterviewRound, file: File) {
-  const windowId = createWindowId(round);
+function buildSummarizeWindowFormData(
+  round: InterviewRound,
+  file: File,
+  windowId: string,
+) {
   const formData = new FormData();
   formData.append('file', file, file.name);
   formData.append('sessionId', sessionId.value);
@@ -1616,11 +1637,49 @@ function buildSummarizeWindowFormData(round: InterviewRound, file: File) {
   return formData;
 }
 
+function buildArchiveVideoUploadFormData(
+  round: InterviewRound,
+  file: File,
+  windowId: string,
+) {
+  const formData = new FormData();
+  formData.append('file', file, file.name);
+  formData.append('sessionId', sessionId.value);
+  formData.append('roundNo', String(round.roundNumber));
+  formData.append('roundClientId', round.id);
+  formData.append('questionId', round.questions[0]?.id || round.id);
+  formData.append('windowId', windowId);
+  formData.append('videoKind', 'round_clip');
+  formData.append('modal', 'video_audio');
+  formData.append('startSeconds', '0');
+  formData.append('endSeconds', String(Math.max(1, round.durationSeconds)));
+  return formData;
+}
+
 function clearStageLoadingTimer() {
   if (stageLoadingTimerId !== null) {
     window.clearInterval(stageLoadingTimerId);
     stageLoadingTimerId = null;
   }
+}
+
+function startVideoWatermarkTimer() {
+  if (videoWatermarkTimerId !== null || typeof window === 'undefined') {
+    return;
+  }
+
+  videoWatermarkTimerId = window.setInterval(() => {
+    videoWatermarkTimestamp.value = Date.now();
+  }, WATERMARK_REFRESH_INTERVAL_MS);
+}
+
+function stopVideoWatermarkTimer() {
+  if (videoWatermarkTimerId === null || typeof window === 'undefined') {
+    return;
+  }
+
+  window.clearInterval(videoWatermarkTimerId);
+  videoWatermarkTimerId = null;
 }
 
 function openStageLoading(mode: StageLoadingMode) {
@@ -2195,12 +2254,24 @@ async function endSampling() {
   round.uploadErrorMessage = '';
 
   try {
+    const windowId = createWindowId(round);
     const response = await uploadHumanOmniWindow(
-      buildSummarizeWindowFormData(round, recordedFile),
+      buildSummarizeWindowFormData(round, recordedFile, windowId),
     );
-    round.humanOmniWindow = response.humanOmniWindow;
-    round.recordedFileName = response.uploadedFile.filename;
-    round.uploadedFile = response.uploadedFile;
+    const archiveVideo = await uploadInquiryArchiveVideo(
+      buildArchiveVideoUploadFormData(
+        round,
+        recordedFile,
+        response.humanOmniWindow?.windowId || response.windowId || windowId,
+      ),
+    );
+    round.humanOmniWindow = {
+      ...response.humanOmniWindow,
+      windowId:
+        response.humanOmniWindow?.windowId || response.windowId || windowId,
+    };
+    round.recordedFileName = archiveVideo.uploadedFile.filename;
+    round.uploadedFile = archiveVideo.uploadedFile;
     round.uploadState = 'uploaded';
     round.uploadErrorMessage = '';
     updateCurrentRoundSummary(round);
@@ -2455,7 +2526,9 @@ function buildArchiveRoundPayload(
   };
 }
 
-function buildArchiveVideos(round: InterviewRound): CreateInquiryArchiveVideoPayload[] {
+function buildArchiveVideos(
+  round: InterviewRound,
+): CreateInquiryArchiveVideoPayload[] {
   const uploadedFile = round.uploadedFile;
   const objectInfo = resolveMinioObjectInfo(uploadedFile);
   if (!uploadedFile || !objectInfo) {
@@ -2466,7 +2539,8 @@ function buildArchiveVideos(round: InterviewRound): CreateInquiryArchiveVideoPay
     {
       videoKind: 'round_clip',
       windowId: round.humanOmniWindow?.windowId || null,
-      questionId: round.humanOmniWindow?.questionId || round.questions[0]?.id || null,
+      questionId:
+        round.humanOmniWindow?.questionId || round.questions[0]?.id || null,
       videoUrl: uploadedFile.storedPath,
       minioBucket: objectInfo.bucket,
       minioObjectKey: objectInfo.objectKey,
@@ -2475,7 +2549,8 @@ function buildArchiveVideos(round: InterviewRound): CreateInquiryArchiveVideoPay
       sizeBytes: uploadedFile.sizeBytes,
       modal: round.humanOmniWindow?.modal || 'video_audio',
       startSeconds: round.humanOmniWindow?.startSeconds ?? 0,
-      endSeconds: round.humanOmniWindow?.endSeconds ?? Math.max(1, round.durationSeconds),
+      endSeconds:
+        round.humanOmniWindow?.endSeconds ?? Math.max(1, round.durationSeconds),
       humanOmniModel: round.humanOmniWindow?.modelName || null,
       humanOmniRawSummary: round.humanOmniWindow?.rawSummary || null,
       uploadPayload: {
@@ -2485,7 +2560,9 @@ function buildArchiveVideos(round: InterviewRound): CreateInquiryArchiveVideoPay
   ];
 }
 
-function resolveMinioObjectInfo(uploadedFile: UploadedWindowFilePayload | null) {
+function resolveMinioObjectInfo(
+  uploadedFile: UploadedWindowFilePayload | null,
+) {
   if (!uploadedFile) {
     return null;
   }
@@ -3140,6 +3217,7 @@ function stopSpeechRecognition(options: { reset?: boolean } = {}) {
 
 onMounted(() => {
   setupInterviewPanelSizing();
+  startVideoWatermarkTimer();
 });
 
 watch(
@@ -3170,6 +3248,7 @@ watch(
 onBeforeUnmount(() => {
   interviewPanelResizeObserver?.disconnect();
   window.removeEventListener('resize', syncRoundPanelMaxHeight);
+  stopVideoWatermarkTimer();
   stopSamplingResources();
   stopSpeechRecognition({ reset: true });
   closeStageLoading();
@@ -3596,6 +3675,25 @@ onBeforeUnmount(() => {
                   ref="overlayCanvas"
                   class="video-stage__canvas"
                 ></canvas>
+                <div
+                  v-if="captureVideoWatermarkText"
+                  class="video-stage__watermark video-stage__watermark--capture"
+                  aria-hidden="true"
+                >
+                  <span
+                    v-for="tile in VIDEO_CAPTURE_WATERMARK_TILE_LAYOUTS"
+                    :key="tile.id"
+                    class="video-stage__watermark-tile"
+                    :style="{
+                      top: tile.top,
+                      left: tile.left,
+                      opacity: tile.opacity,
+                      transform: `translate(-50%, -50%) rotate(${tile.rotation}deg)`,
+                    }"
+                  >
+                    {{ captureVideoWatermarkText }}
+                  </span>
+                </div>
 
                 <div class="video-stage__assist">
                   <span
@@ -5238,6 +5336,27 @@ onBeforeUnmount(() => {
   transform: scaleX(-1);
 }
 
+.video-stage__watermark {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+}
+
+.video-stage__watermark-tile {
+  position: absolute;
+  max-width: min(64%, 360px);
+  color: rgba(255, 255, 255, 0.56);
+  font-size: clamp(0.72rem, 0.64rem + 0.22vw, 0.86rem);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1.45;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.34);
+  white-space: normal;
+}
+
 .video-stage__assist {
   position: absolute;
   top: 16px;
@@ -5925,6 +6044,10 @@ onBeforeUnmount(() => {
 }
 
 .completion-hero {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  justify-content: start;
   padding: 22px;
   border-radius: 24px;
   background:
@@ -5933,11 +6056,25 @@ onBeforeUnmount(() => {
   border: 1px solid rgba(157, 189, 202, 0.22);
 }
 
+.completion-hero > div {
+  min-width: 0;
+}
+
+.completion-hero h4 {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.completion-hero p {
+  max-width: 760px;
+  overflow-wrap: anywhere;
+}
+
 .completion-seal {
   display: grid;
   place-items: center;
-  min-width: 160px;
-  min-height: 160px;
+  width: 160px;
+  height: 160px;
   border-radius: 50%;
   background: linear-gradient(135deg, var(--accent), var(--accent-bright));
   color: #ffffff;
@@ -5947,11 +6084,28 @@ onBeforeUnmount(() => {
 
 .completion-grid {
   display: grid;
+  min-width: 0;
   gap: 16px;
 }
 
 .completion-panel {
+  min-width: 0;
   padding: 18px;
+}
+
+.completion-panel p,
+.completion-panel strong,
+.completion-panel .tag-row {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.completion-panel .tag-chip {
+  max-width: 100%;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .judgement-pill--alert {
@@ -6296,7 +6450,7 @@ onBeforeUnmount(() => {
   }
 
   .completion-grid {
-    grid-template-columns: 0.9fr 1.2fr 0.9fr;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.2fr) minmax(0, 0.9fr);
   }
 }
 
@@ -6305,9 +6459,13 @@ onBeforeUnmount(() => {
   .stage-card__head,
   .sampling-console__head,
   .round-actions,
-  .completion-hero,
   .analysis-hero {
     flex-direction: column;
+  }
+
+  .completion-hero {
+    grid-template-columns: 1fr;
+    justify-items: start;
   }
 
   .progress-track {
@@ -6457,8 +6615,8 @@ onBeforeUnmount(() => {
   }
 
   .completion-seal {
-    min-width: 132px;
-    min-height: 132px;
+    width: 132px;
+    height: 132px;
   }
 }
 </style>
