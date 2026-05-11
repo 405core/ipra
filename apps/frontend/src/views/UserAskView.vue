@@ -482,12 +482,18 @@ const totalTranscriptCount = computed(() =>
   ),
 );
 
-const totalSampleDuration = computed(() =>
-  protectedSession.value?.totalSampleDuration ??
-    completedRounds.value.reduce((sum, round) => sum + round.durationSeconds, 0),
+const totalSampleDuration = computed(
+  () =>
+    protectedSession.value?.totalSampleDuration ??
+    completedRounds.value.reduce(
+      (sum, round) => sum + round.durationSeconds,
+      0,
+    ),
 );
 
-const strategyGenerated = computed(() => Boolean(protectedSession.value?.strategyAsset));
+const strategyGenerated = computed(() =>
+  Boolean(protectedSession.value?.strategyAsset),
+);
 const canEnterInterview = computed(
   () =>
     strategyGenerated.value &&
@@ -1214,9 +1220,11 @@ function createProtectedInterviewRound(
     summary: existing?.summary ?? '',
     uploadState: mapProtectedRoundStatus(snapshot.status, existing),
     uploadErrorMessage: existing?.uploadErrorMessage ?? '',
-    humanOmniWindow: snapshot.humanOmniWindow ?? existing?.humanOmniWindow ?? null,
+    humanOmniWindow:
+      snapshot.humanOmniWindow ?? existing?.humanOmniWindow ?? null,
     actionObservations: existing?.actionObservations ?? [],
-    recordedFileName: snapshot.recordedFileName ?? existing?.recordedFileName ?? '',
+    recordedFileName:
+      snapshot.recordedFileName ?? existing?.recordedFileName ?? '',
     uploadedFile: snapshot.uploadedFile ?? existing?.uploadedFile ?? null,
     asrText: existing?.asrText ?? '',
   };
@@ -1237,6 +1245,16 @@ function syncProtectedSessionState(snapshot: ProtectedInquirySessionSnapshot) {
     createProtectedInterviewRound(item, existingById.get(item.id)),
   );
   currentRoundId.value = snapshot.currentRound?.id ?? null;
+}
+
+function findProtectedRoundSnapshot(
+  snapshot: ProtectedInquirySessionSnapshot,
+  roundId: string,
+) {
+  return [
+    ...snapshot.historicalRounds,
+    ...(snapshot.currentRound ? [snapshot.currentRound] : []),
+  ].find((round) => round.id === roundId);
 }
 
 async function refreshMemoryContext() {
@@ -1723,6 +1741,16 @@ function buildSummarizeWindowFormData(
   formData.append('modal', 'video_audio');
   formData.append('startSeconds', '0');
   formData.append('endSeconds', String(Math.max(1, round.durationSeconds)));
+  formData.append(
+    'durationSeconds',
+    String(Math.max(1, round.durationSeconds)),
+  );
+  formData.append('answerText', collectSubjectTranscript(round));
+  formData.append(
+    'actionObservations',
+    JSON.stringify(round.actionObservations),
+  );
+  formData.append('asr', JSON.stringify(buildRoundAsrPayload(round)));
   return formData;
 }
 
@@ -1742,7 +1770,10 @@ function buildArchiveVideoUploadFormData(
   formData.append('modal', 'video_audio');
   formData.append('startSeconds', '0');
   formData.append('endSeconds', String(Math.max(1, round.durationSeconds)));
-  formData.append('durationSeconds', String(Math.max(1, round.durationSeconds)));
+  formData.append(
+    'durationSeconds',
+    String(Math.max(1, round.durationSeconds)),
+  );
   formData.append('recordedFileName', file.name);
   formData.append('answerText', collectSubjectTranscript(round));
   formData.append(
@@ -2161,9 +2192,14 @@ async function generateStrategy() {
     const response = await generateProtectedInquiryStrategy({
       sessionId: sessionId.value,
       passengerId: profile.documentNum,
-      passengerProfile:
-        buildPassengerPayload(profile) as unknown as Record<string, unknown>,
-      tripProfile: buildTripPayload(profile) as unknown as Record<string, unknown>,
+      passengerProfile: buildPassengerPayload(profile) as unknown as Record<
+        string,
+        unknown
+      >,
+      tripProfile: buildTripPayload(profile) as unknown as Record<
+        string,
+        unknown
+      >,
       knownFacts: buildKnownFacts(profile),
       constraints: buildOutputConstraints(6),
     });
@@ -2339,26 +2375,38 @@ async function endSampling() {
 
   try {
     const windowId = createWindowId(round);
-    const response = await uploadHumanOmniWindow(
+    const response = await uploadProtectedInquiryRoundWindow(
+      sessionId.value,
+      round.id,
       buildSummarizeWindowFormData(round, recordedFile, windowId),
     );
+    const uploadedRoundSnapshot = findProtectedRoundSnapshot(
+      response,
+      round.id,
+    );
+    const humanOmniWindow = uploadedRoundSnapshot?.humanOmniWindow ?? null;
     const archiveVideo = await uploadInquiryArchiveVideo(
       buildArchiveVideoUploadFormData(
         round,
         recordedFile,
-        response.humanOmniWindow?.windowId || response.windowId || windowId,
+        humanOmniWindow?.windowId || windowId,
       ),
     );
-    round.humanOmniWindow = {
-      ...response.humanOmniWindow,
-      windowId:
-        response.humanOmniWindow?.windowId || response.windowId || windowId,
-    };
-    round.recordedFileName = archiveVideo.uploadedFile.filename;
-    round.uploadedFile = archiveVideo.uploadedFile;
-    round.uploadState = 'uploaded';
-    round.uploadErrorMessage = '';
-    updateCurrentRoundSummary(round);
+    syncProtectedSessionState(response);
+    const uploadedRound =
+      rounds.value.find((item) => item.id === round.id) || round;
+    if (humanOmniWindow) {
+      uploadedRound.humanOmniWindow = {
+        ...humanOmniWindow,
+        windowId: humanOmniWindow.windowId || windowId,
+      };
+    }
+    uploadedRound.recordedFileName = archiveVideo.uploadedFile.filename;
+    uploadedRound.uploadedFile = archiveVideo.uploadedFile;
+    uploadedRound.completed = true;
+    uploadedRound.uploadState = 'uploaded';
+    uploadedRound.uploadErrorMessage = '';
+    updateCurrentRoundSummary(uploadedRound);
     void recordAuditEvent({
       action: 'end_sampling',
       resource: '辅助问询',
@@ -2403,18 +2451,15 @@ async function enterNextRound() {
 
   try {
     const nextRoundNumber = round.roundNumber + 1;
-    const response = await requestProtectedInquiryFollowup(
-      sessionId.value,
-      {
-        roundNumber: nextRoundNumber,
-        recordedFileName: round.recordedFileName,
-        durationSeconds: round.durationSeconds,
-        answerText: collectSubjectTranscript(round),
-        humanOmniWindow: round.humanOmniWindow ?? {},
-        actionObservations: round.actionObservations,
-        asr: buildRoundAsrPayload(round),
-      },
-    );
+    const response = await requestProtectedInquiryFollowup(sessionId.value, {
+      roundNumber: nextRoundNumber,
+      recordedFileName: round.recordedFileName,
+      durationSeconds: round.durationSeconds,
+      answerText: collectSubjectTranscript(round),
+      humanOmniWindow: round.humanOmniWindow ?? {},
+      actionObservations: round.actionObservations,
+      asr: buildRoundAsrPayload(round),
+    });
     syncProtectedSessionState(response);
     resetSamplingIndicators();
     resetRealtimeDetectionViewState();
@@ -3492,11 +3537,11 @@ onBeforeUnmount(() => {
                   <h4>首轮问题包</h4>
                 </div>
 
-	                <span class="soft-chip">
-	                  {{
-	                    isStrategyLocked
-	                      ? '等待数据检索'
-	                      : isGeneratingStrategy
+                <span class="soft-chip">
+                  {{
+                    isStrategyLocked
+                      ? '等待数据检索'
+                      : isGeneratingStrategy
                         ? '系统生成中'
                         : strategyGenerated
                           ? `${generatedQuestions.length} 个问题已生成`
@@ -3513,13 +3558,13 @@ onBeforeUnmount(() => {
                 }}
               </p>
 
-	              <SensitiveAssetImage
-	                v-if="protectedStrategyAsset"
-	                :src="protectedStrategyAsset.url"
-	                alt="首轮策略敏感图片"
-	              />
+              <SensitiveAssetImage
+                v-if="protectedStrategyAsset"
+                :src="protectedStrategyAsset.url"
+                alt="首轮策略敏感图片"
+              />
 
-	              <div
+              <div
                 v-if="
                   !isStrategyLocked &&
                   (strategyRiskAssessment || strategyOperatorNote)
@@ -3998,7 +4043,9 @@ onBeforeUnmount(() => {
                   <p class="section-eyebrow">本轮重点</p>
                   <h4>{{ currentRound.title }}</h4>
                 </div>
-                <span class="soft-chip">{{ currentRound.questionCount }} 条问题</span>
+                <span class="soft-chip"
+                  >{{ currentRound.questionCount }} 条问题</span
+                >
               </div>
 
               <div class="transcript-panel__scroll">
@@ -4072,16 +4119,16 @@ onBeforeUnmount(() => {
                   </article>
                 </div>
 
-              <div class="panel-subhead">
-                <strong>当前问题</strong>
-                <span>{{ currentRound.questionCount }} 条</span>
-              </div>
+                <div class="panel-subhead">
+                  <strong>当前问题</strong>
+                  <span>{{ currentRound.questionCount }} 条</span>
+                </div>
 
-              <SensitiveAssetImage
-                v-if="currentRound.promptAsset"
-                :src="currentRound.promptAsset.url"
-                alt="当前轮问题包敏感图片"
-              />
+                <SensitiveAssetImage
+                  v-if="currentRound.promptAsset"
+                  :src="currentRound.promptAsset.url"
+                  alt="当前轮问题包敏感图片"
+                />
                 <div class="panel-subhead">
                   <strong>实时转写</strong>
                   <span>{{ currentRound.transcripts.length }} 条</span>
@@ -4114,25 +4161,25 @@ onBeforeUnmount(() => {
                   {{ samplingState.errorMessage }}
                 </div>
 
-	              <section class="memory-panel memory-panel--inline">
-                <div class="memory-panel__head">
-                  <div>
-                    <span class="meta-label">智能体记忆</span>
-                    <strong>{{ memoryStatusLabel }}</strong>
+                <section class="memory-panel memory-panel--inline">
+                  <div class="memory-panel__head">
+                    <div>
+                      <span class="meta-label">智能体记忆</span>
+                      <strong>{{ memoryStatusLabel }}</strong>
+                    </div>
+                    <span
+                      class="status-chip"
+                      :class="`status-chip--${memoryLoadState}`"
+                    >
+                      {{ memoryLastSyncedAt || '未同步' }}
+                    </span>
                   </div>
-                  <span
-                    class="status-chip"
-                    :class="`status-chip--${memoryLoadState}`"
-                  >
-                    {{ memoryLastSyncedAt || '未同步' }}
-                  </span>
-                </div>
 
-                <SensitiveAssetImage
-                  v-if="protectedMemoryAsset"
-                  :src="protectedMemoryAsset.url"
-                  alt="问询记忆敏感图片"
-                />
+                  <SensitiveAssetImage
+                    v-if="protectedMemoryAsset"
+                    :src="protectedMemoryAsset.url"
+                    alt="问询记忆敏感图片"
+                  />
 
                   <div
                     v-if="groupedMemoryReferences.length"
@@ -4300,7 +4347,10 @@ onBeforeUnmount(() => {
                 <span class="soft-chip">{{ passengerProfile.alias }}</span>
               </div>
 
-              <div v-if="protectedJudgementAsset" class="summary-stack digest-stack">
+              <div
+                v-if="protectedJudgementAsset"
+                class="summary-stack digest-stack"
+              >
                 <div class="digest-kpis">
                   <div class="summary-item">
                     <span class="meta-label">对象</span>
@@ -4349,9 +4399,9 @@ onBeforeUnmount(() => {
             <div>
               <p class="section-eyebrow">已归档</p>
               <h3>流程已完成归档</h3>
-                <p class="section-copy">
-                  页面已进入锁定完成态，以下展示最终判定、理由摘要与本次问询的关键依据，当前内容不再允许修改。
-                </p>
+              <p class="section-copy">
+                页面已进入锁定完成态，以下展示最终判定、理由摘要与本次问询的关键依据，当前内容不再允许修改。
+              </p>
             </div>
 
             <div class="stage-chip-group">

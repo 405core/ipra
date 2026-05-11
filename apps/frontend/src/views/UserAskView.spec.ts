@@ -446,7 +446,8 @@ describe('UserAskView realtime speech sampling', () => {
                 recordedFileName: 'round-1.mp4',
                 uploadedFile: {
                   filename: 'round-1.mp4',
-                  storedPath: 'minio://ipra-videos/humanomni-windows/round-1.mp4',
+                  storedPath:
+                    'minio://ipra-videos/humanomni-windows/round-1.mp4',
                   contentType: 'video/mp4',
                   sizeBytes: 4,
                   bucket: 'ipra-videos',
@@ -515,35 +516,8 @@ describe('UserAskView realtime speech sampling', () => {
         roundNumber: 2,
         title: '第 2 轮 · AI 追问引导',
         questionCount: 1,
-        status: 'uploaded',
-        promptAsset: createProtectedAsset('prompt-1'),
-        summaryAsset: createProtectedAsset('summary-1'),
-      questionId: 'q-1',
-      windowId: 'window-1',
-      startSeconds: 0,
-      endSeconds: 1,
-      modal: 'video_audio',
-      uploadedFile: {
-        filename: 'round-1.mp4',
-        storedPath: '/tmp/humanomni-windows/round-1.mp4',
-        contentType: 'video/mp4',
-        sizeBytes: 4,
-        bucket: null,
-        objectKey: null,
-      },
-      humanOmni: {
-        modelName: 'test',
-        rawSummary: '对象表述平稳。',
-        elapsedSeconds: 1,
-      },
-      humanOmniWindow: {
-        windowId: 'window-1',
-        questionId: 'q-1',
-        startSeconds: 0,
-        endSeconds: 1,
-        modal: 'video_audio',
-        rawSummary: '对象表述平稳。',
-        modelName: 'test',
+        status: 'pending',
+        promptAsset: createProtectedAsset('prompt-2'),
       },
       historicalRounds: [
         {
@@ -554,6 +528,24 @@ describe('UserAskView realtime speech sampling', () => {
           status: 'uploaded',
           promptAsset: createProtectedAsset('prompt-1'),
           summaryAsset: createProtectedAsset('summary-1'),
+          recordedFileName: 'round-1.mp4',
+          uploadedFile: {
+            filename: 'round-1.mp4',
+            storedPath: 'minio://ipra-videos/humanomni-windows/round-1.mp4',
+            contentType: 'video/mp4',
+            sizeBytes: 4,
+            bucket: 'ipra-videos',
+            objectKey: 'humanomni-windows/round-1.mp4',
+          },
+          humanOmniWindow: {
+            windowId: 'window-1',
+            questionId: 'q-1',
+            startSeconds: 0,
+            endSeconds: 1,
+            modal: 'video_audio',
+            rawSummary: '对象表述平稳。',
+            modelName: 'test',
+          },
         },
       ],
       completedRounds: 1,
@@ -655,7 +647,9 @@ describe('UserAskView realtime speech sampling', () => {
     expect(strategyButton.attributes('disabled')).toBeDefined();
     await strategyButton.trigger('click');
 
-    expect(inquiryProtectedMocks.generateProtectedInquiryStrategy).not.toHaveBeenCalled();
+    expect(
+      inquiryProtectedMocks.generateProtectedInquiryStrategy,
+    ).not.toHaveBeenCalled();
   });
 
   it('loads the searched passenger profile into the strategy stage', async () => {
@@ -684,7 +678,9 @@ describe('UserAskView realtime speech sampling', () => {
     await findButton(wrapper, '生成策略').trigger('click');
     await flushPromises();
 
-    expect(inquiryProtectedMocks.generateProtectedInquiryStrategy).toHaveBeenCalledTimes(1);
+    expect(
+      inquiryProtectedMocks.generateProtectedInquiryStrategy,
+    ).toHaveBeenCalledTimes(1);
     const payload =
       inquiryProtectedMocks.generateProtectedInquiryStrategy.mock.calls[0][0];
     expect(payload.passengerProfile).toMatchObject({
@@ -724,7 +720,9 @@ describe('UserAskView realtime speech sampling', () => {
     const strategyButton = findButton(wrapper, '生成策略');
     expect(strategyButton.attributes('disabled')).toBeDefined();
     await strategyButton.trigger('click');
-    expect(inquiryProtectedMocks.generateProtectedInquiryStrategy).not.toHaveBeenCalled();
+    expect(
+      inquiryProtectedMocks.generateProtectedInquiryStrategy,
+    ).not.toHaveBeenCalled();
   });
 
   it('passes realtime Iflytek ASR text into followup guidance', async () => {
@@ -759,9 +757,12 @@ describe('UserAskView realtime speech sampling', () => {
     await findButton(wrapper, '进入下一轮').trigger('click');
     await flushPromises();
 
-    expect(inquiryProtectedMocks.requestProtectedInquiryFollowup).toHaveBeenCalledTimes(1);
     expect(
-      inquiryProtectedMocks.requestProtectedInquiryFollowup.mock.calls[0][1].asr,
+      inquiryProtectedMocks.requestProtectedInquiryFollowup,
+    ).toHaveBeenCalledTimes(1);
+    expect(
+      inquiryProtectedMocks.requestProtectedInquiryFollowup.mock.calls[0][1]
+        .asr,
     ).toMatchObject({
       status: 'provided',
       provider: 'iflytek-rtasr-llm',
@@ -1013,14 +1014,19 @@ describe('UserAskView realtime speech sampling', () => {
     expect(wrapper.text()).toContain('当前浏览器不支持 WebSocket 音频转写');
 
     await finishSampling(wrapper);
-    expect(inquiryProtectedMocks.uploadProtectedInquiryRoundWindow).toHaveBeenCalledTimes(1);
+    expect(
+      inquiryProtectedMocks.uploadProtectedInquiryRoundWindow,
+    ).toHaveBeenCalledTimes(1);
 
     await findButton(wrapper, '进入下一轮').trigger('click');
     await flushPromises();
 
-    expect(inquiryProtectedMocks.requestProtectedInquiryFollowup).toHaveBeenCalledTimes(1);
     expect(
-      inquiryProtectedMocks.requestProtectedInquiryFollowup.mock.calls[0][1].asr,
+      inquiryProtectedMocks.requestProtectedInquiryFollowup,
+    ).toHaveBeenCalledTimes(1);
+    expect(
+      inquiryProtectedMocks.requestProtectedInquiryFollowup.mock.calls[0][1]
+        .asr,
     ).toMatchObject({
       status: 'not_connected',
       provider: 'iflytek-rtasr-llm',
@@ -1049,7 +1055,9 @@ describe('UserAskView realtime speech sampling', () => {
     await flushPromises();
     await nextTick();
 
-    expect(inquiryProtectedMocks.requestProtectedInquiryFollowup).toHaveBeenCalledTimes(1);
+    expect(
+      inquiryProtectedMocks.requestProtectedInquiryFollowup,
+    ).toHaveBeenCalledTimes(1);
 
     await findButton(wrapper, '开始采样').trigger('click');
     await flushPromises();
@@ -1066,7 +1074,9 @@ describe('UserAskView realtime speech sampling', () => {
     await nextRoundButton.trigger('click');
     await flushPromises();
 
-    expect(inquiryProtectedMocks.requestProtectedInquiryFollowup).toHaveBeenCalledTimes(1);
+    expect(
+      inquiryProtectedMocks.requestProtectedInquiryFollowup,
+    ).toHaveBeenCalledTimes(1);
     expect(wrapper.text()).toContain('最多只能进行 2 轮问询');
     expect(elMessageMocks.warning).toHaveBeenCalledWith(
       '最多只能进行 2 轮问询，请进入人工辅助判断。',
@@ -1077,7 +1087,9 @@ describe('UserAskView realtime speech sampling', () => {
     await judgementButton.trigger('click');
     await flushPromises();
 
-    expect(inquiryProtectedMocks.requestProtectedInquiryFollowup).toHaveBeenCalledTimes(1);
+    expect(
+      inquiryProtectedMocks.requestProtectedInquiryFollowup,
+    ).toHaveBeenCalledTimes(1);
     expect(wrapper.text()).toContain('人工辅助判断');
   });
 
