@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+ADMIN_WORK_ID="${IPRA_SEED_ADMIN_WORK_ID:-admin}"
+ADMIN_NAME="${IPRA_SEED_ADMIN_NAME:-管理员}"
+DEFAULT_ADMIN_PASSWORD_HASH='$2a$10$HpDAm25lYrJe3NDr.wQWjOu3T1saYflbapFCB/m.XChe/Ec0fQoq.'
+ADMIN_PASSWORD_HASH="${IPRA_SEED_ADMIN_PASSWORD_HASH:-$DEFAULT_ADMIN_PASSWORD_HASH}"
+
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<EOSQL
+INSERT INTO system_user (password_hash, work_id, status, name, role)
+VALUES ('${ADMIN_PASSWORD_HASH}', '${ADMIN_WORK_ID}', 'active', '${ADMIN_NAME}', 'admin')
+ON CONFLICT (work_id) DO NOTHING;
+EOSQL
