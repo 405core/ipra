@@ -1,18 +1,22 @@
 package audit
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	dbschema "ipra/backend/internal/database"
+	"ipra/backend/internal/sensitive"
 )
 
 type Handler struct {
 	recorder        *Recorder
 	authMiddleware  gin.HandlerFunc
 	resolveIdentity IdentityResolver
+	sensitive       *sensitive.Manager
 }
 
 type listResult struct {
@@ -40,6 +44,13 @@ func NewHandler(
 	}
 }
 
+func (h *Handler) SetSensitiveManager(manager *sensitive.Manager) {
+	if h == nil {
+		return
+	}
+	h.sensitive = manager
+}
+
 func (h *Handler) Register(r gin.IRouter) {
 	group := r.Group("/api/audit-logs")
 	if h.authMiddleware != nil {
@@ -47,6 +58,8 @@ func (h *Handler) Register(r gin.IRouter) {
 	}
 
 	group.GET("", h.handleList)
+	group.GET("/protected", h.handleProtectedList)
+	group.GET("/:id/protected", h.handleProtectedDetail)
 	group.POST("/events", h.handleRecordEvent)
 }
 
@@ -112,6 +125,76 @@ func (h *Handler) handleList(c *gin.Context) {
 	})
 }
 
+func (h *Handler) handleProtectedList(c *gin.Context) {
+	if h.sensitive == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"message": "敏感图片服务未启用"})
+		return
+	}
+
+	identity, ok := h.resolve(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "未授权"})
+		return
+	}
+
+	items, total, err := h.queryLogs(c, identity)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "查询审计日志失败"})
+		return
+	}
+
+	listItems := make([]sensitive.ListItem, 0, len(items))
+	for _, item := range items {
+		listItems = append(listItems, sensitive.ListItem{
+			ID:          strconv.FormatUint(item.ID, 10),
+			Asset:       h.putAuditAsset(c, identity, item, sensitive.PresetList, "audit:list"),
+			DetailAsset: h.putAuditAsset(c, identity, item, sensitive.PresetDialog, "audit:detail"),
+			Actions:     []string{"detail"},
+		})
+	}
+
+	c.JSON(http.StatusOK, sensitive.ListResponse{
+		Items:    listItems,
+		Total:    total,
+		Page:     1,
+		PageSize: len(listItems),
+	})
+}
+
+func (h *Handler) handleProtectedDetail(c *gin.Context) {
+	if h.sensitive == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"message": "敏感图片服务未启用"})
+		return
+	}
+
+	identity, ok := h.resolve(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "未授权"})
+		return
+	}
+
+	id, err := strconv.ParseUint(strings.TrimSpace(c.Param("id")), 10, 64)
+	if err != nil || id == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "ID 参数无效"})
+		return
+	}
+
+	var item dbschema.AuditLog
+	dbQuery := h.recorder.db.Model(&dbschema.AuditLog{})
+	if !identity.IsAdmin() {
+		dbQuery = dbQuery.Where("actor_user_id = ?", identity.UserID)
+	}
+	if err := dbQuery.First(&item, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"message": "审计日志不存在"})
+		return
+	}
+
+	c.JSON(http.StatusOK, sensitive.DetailResponse{
+		ID:    strconv.FormatUint(item.ID, 10),
+		Asset: h.putAuditAsset(c, identity, item, sensitive.PresetDialog, "audit:detail"),
+	})
+}
+
 func (h *Handler) handleRecordEvent(c *gin.Context) {
 	identity, ok := h.resolve(c)
 	if !ok {
@@ -173,4 +256,169 @@ func (h *Handler) resolve(c *gin.Context) (Identity, bool) {
 
 func (i Identity) IsAdmin() bool {
 	return strings.EqualFold(strings.TrimSpace(i.Role), "admin")
+}
+
+func (h *Handler) queryLogs(c *gin.Context, identity Identity) ([]dbschema.AuditLog, int64, error) {
+	limit := 100
+	if rawLimit := strings.TrimSpace(c.Query("limit")); rawLimit != "" {
+		if parsed, err := strconv.Atoi(rawLimit); err == nil && parsed > 0 {
+			if parsed > 500 {
+				parsed = 500
+			}
+			limit = parsed
+		}
+	}
+
+	query := strings.TrimSpace(c.Query("query"))
+	result := strings.TrimSpace(c.Query("result"))
+	actorWorkID := strings.TrimSpace(c.Query("actorWorkId"))
+
+	dbQuery := h.recorder.db.Model(&dbschema.AuditLog{})
+	if !identity.IsAdmin() {
+		dbQuery = dbQuery.Where("actor_user_id = ?", identity.UserID)
+	} else if actorWorkID != "" {
+		dbQuery = dbQuery.Where("LOWER(actor_work_id) = ?", strings.ToLower(actorWorkID))
+	}
+
+	if query != "" {
+		pattern := "%" + query + "%"
+		dbQuery = dbQuery.Where(
+			`actor_work_id ILIKE ? OR actor_name ILIKE ? OR action ILIKE ? OR resource ILIKE ? OR path ILIKE ? OR result ILIKE ?`,
+			pattern,
+			pattern,
+			pattern,
+			pattern,
+			pattern,
+			pattern,
+		)
+	}
+	if result != "" {
+		dbQuery = dbQuery.Where("result = ?", result)
+	}
+
+	var total int64
+	if err := dbQuery.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var items []dbschema.AuditLog
+	if err := dbQuery.Order("created_at DESC").Limit(limit).Find(&items).Error; err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
+}
+
+func (h *Handler) putAuditAsset(
+	c *gin.Context,
+	identity Identity,
+	item dbschema.AuditLog,
+	preset sensitive.RenderPreset,
+	page string,
+) sensitive.AssetRef {
+	document := sensitive.Document{
+		Eyebrow:  "审计日志",
+		Title:    firstAuditValue(strings.TrimSpace(item.Resource), "员工操作记录"),
+		Subtitle: firstAuditValue(strings.TrimSpace(item.Action), "未命名动作") + " · " + formatAuditResult(item.Result),
+		Tags: compactAuditValues([]string{
+			"角色 " + firstAuditValue(strings.TrimSpace(item.ActorRole), "-"),
+			"工号 " + firstAuditValue(strings.TrimSpace(item.ActorWorkID), "-"),
+			"状态码 " + strconv.Itoa(item.StatusCode),
+		}),
+		Sections: []sensitive.Section{
+			{
+				Heading: "操作概览",
+				Lines: compactAuditValues([]string{
+					"操作人：" + firstAuditValue(strings.TrimSpace(item.ActorName), "-"),
+					"工号：" + firstAuditValue(strings.TrimSpace(item.ActorWorkID), "-"),
+					"角色：" + firstAuditValue(strings.TrimSpace(item.ActorRole), "-"),
+					"结果：" + formatAuditResult(item.Result),
+					"方法：" + firstAuditValue(strings.TrimSpace(item.Method), "-"),
+					"路径：" + firstAuditValue(strings.TrimSpace(item.Path), "-"),
+				}),
+			},
+			{
+				Heading: "环境信息",
+				Lines: compactAuditValues([]string{
+					"客户端 IP：" + firstAuditValue(strings.TrimSpace(item.ClientIP), "-"),
+					"User-Agent：" + firstAuditValue(strings.TrimSpace(item.UserAgent), "-"),
+					"详细数据：" + stringifyAuditDetail(item.Detail),
+				}),
+			},
+		},
+		Footer: []string{
+			"记录时间 " + formatAuditTime(item.CreatedAt),
+		},
+	}
+
+	return h.sensitive.Put(
+		identity.UserID,
+		document,
+		preset,
+		selectAuditFormat(preset),
+		buildAuditWatermarkContext(c, identity, page),
+	)
+}
+
+func buildAuditWatermarkContext(c *gin.Context, identity Identity, page string) sensitive.WatermarkContext {
+	return sensitive.NewWatermarkContext(
+		strings.TrimSpace(identity.WorkID),
+		strings.TrimSpace(identity.Name),
+		strings.TrimSpace(identity.Role),
+		strings.TrimSpace(c.ClientIP()),
+		c.Request.Method+" "+firstAuditValue(c.FullPath(), c.Request.URL.Path),
+		page,
+	)
+}
+
+func stringifyAuditDetail(value json.RawMessage) string {
+	if len(value) == 0 {
+		return "无"
+	}
+	return string(value)
+}
+
+func formatAuditTime(value time.Time) string {
+	if value.IsZero() {
+		return "-"
+	}
+	return value.Local().Format("2006-01-02 15:04:05")
+}
+
+func formatAuditResult(value string) string {
+	switch strings.TrimSpace(value) {
+	case "success":
+		return "成功"
+	case "denied":
+		return "拒绝"
+	case "failure":
+		return "失败"
+	default:
+		return firstAuditValue(strings.TrimSpace(value), "未知")
+	}
+}
+
+func compactAuditValues(values []string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
+}
+
+func firstAuditValue(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func selectAuditFormat(preset sensitive.RenderPreset) sensitive.RenderFormat {
+	if preset == sensitive.PresetDialog {
+		return sensitive.FormatPNG
+	}
+	return sensitive.FormatWebP
 }

@@ -7,19 +7,24 @@ import {
   resolveRoleHome,
   validateAuthSession,
 } from '../auth';
+import SensitiveAssetImage from '../app/SensitiveAssetImage.vue';
 import { ElMessage } from '../app/el-message';
 import { recordAuditEvent } from '../app/audit-service';
 import { openTouchInput } from '../app/touch-input';
+import { useProtectedPage } from '../app/use-protected-page';
 import {
   createAdminProfile,
   createAdminUser,
   createAdminWatchlist,
   deleteAdminProfile,
   deleteAdminWatchlist,
-  listAdminAuditLogs,
+  listAdminAuditLogsProtected,
   listAdminProfiles,
+  listAdminProfilesProtected,
   listAdminUsers,
+  listAdminUsersProtected,
   listAdminWatchlist,
+  listAdminWatchlistProtected,
   updateAdminProfile,
   updateAdminUser,
   updateAdminUserStatus,
@@ -27,7 +32,7 @@ import {
   type AdminUserItem,
   type AdminWatchlistItem,
 } from '../app/admin-service';
-import type { AuditLogItem } from '../app/audit-service';
+import type { ProtectedListItem } from '../app/protected-service';
 import type { PassengerProfileRecord } from '../app/profile-service';
 
 type TabKey = 'profiles' | 'watchlist' | 'users' | 'audit';
@@ -96,9 +101,12 @@ const auditActorWorkId = ref('');
 const touchInputHint = '单击正常输入，双击打开触控键盘';
 
 const profiles = ref<PassengerProfileRecord[]>([]);
+const protectedProfiles = ref<ProtectedListItem[]>([]);
 const watchlist = ref<AdminWatchlistItem[]>([]);
+const protectedWatchlist = ref<ProtectedListItem[]>([]);
 const users = ref<AdminUserItem[]>([]);
-const auditLogs = ref<AuditLogItem[]>([]);
+const protectedUsers = ref<ProtectedListItem[]>([]);
+const protectedAuditLogs = ref<ProtectedListItem[]>([]);
 const isProfileFormVisible = ref(false);
 const isWatchlistFormVisible = ref(false);
 const isUserFormVisible = ref(false);
@@ -212,28 +220,7 @@ const filteredUsers = computed(() =>
     return matchesSearch(buildUserSearchText(item), userQuery.value);
   })
 );
-const filteredAuditLogs = computed(() =>
-  auditLogs.value.filter((item) => {
-    if (auditFilters.value.result && item.result !== auditFilters.value.result) {
-      return false;
-    }
-    if (auditActorWorkId.value.trim() && item.actorWorkId !== auditActorWorkId.value.trim()) {
-      return false;
-    }
-    return matchesSearch(
-      [
-        item.actorWorkId,
-        item.actorName,
-        item.action,
-        item.resource,
-        item.result,
-        item.path,
-        item.method,
-      ],
-      auditQuery.value
-    );
-  })
-);
+const filteredAuditLogs = computed(() => protectedAuditLogs.value);
 const selectedProfileDocumentTypeLabel = computed(() =>
   describeFilterLabel('证件类型', profileDocumentTypeOptions.value, profileFilters.value.documentType)
 );
@@ -261,6 +248,8 @@ onMounted(() => {
   }
 });
 
+useProtectedPage('/admin/home');
+
 onBeforeUnmount(() => {
   if (typeof document !== 'undefined') {
     document.removeEventListener('click', handleDocumentClick);
@@ -281,26 +270,37 @@ async function refreshAll() {
 }
 
 async function loadProfiles() {
+  const protectedResult = await listAdminProfilesProtected(profileQuery.value);
+  protectedProfiles.value = protectedResult.items;
   const result = await listAdminProfiles('');
   profiles.value = result.items;
   statusMessages.value.profiles = `已加载基础画像 ${result.total} 条。`;
 }
 
 async function loadWatchlist() {
+  const protectedResult = await listAdminWatchlistProtected(watchlistQuery.value);
+  protectedWatchlist.value = protectedResult.items;
   const result = await listAdminWatchlist('');
   watchlist.value = result.items;
   statusMessages.value.watchlist = `已加载高风险名单 ${result.total} 条。`;
 }
 
 async function loadUsers() {
+  const protectedResult = await listAdminUsersProtected(userQuery.value);
+  protectedUsers.value = protectedResult.items;
   const result = await listAdminUsers('');
   users.value = result.items;
   statusMessages.value.users = `已加载用户 ${result.total} 条。`;
 }
 
 async function loadAuditLogs() {
-  const result = await listAdminAuditLogs({ limit: 500 });
-  auditLogs.value = result.items;
+  const result = await listAdminAuditLogsProtected({
+    query: auditQuery.value,
+    actorWorkId: auditActorWorkId.value,
+    result: auditFilters.value.result,
+    limit: 500,
+  });
+  protectedAuditLogs.value = result.items;
   statusMessages.value.audit = `已加载审计日志 ${result.total} 条。`;
 }
 
@@ -1115,47 +1115,26 @@ function formatAuditTime(value: string) {
           </div>
         </div>
 
-        <p class="admin-filter-summary">当前筛选后 {{ filteredProfiles.length }} 条基础画像。</p>
+        <p class="admin-filter-summary">当前展示 {{ protectedProfiles.length }} 条基础画像。</p>
 
         <div class="admin-table">
-          <article v-for="item in filteredProfiles" :key="item.id" class="admin-row admin-row--profile">
+          <article
+            v-for="(item, index) in protectedProfiles"
+            :key="item.id"
+            class="admin-row admin-row--profile"
+          >
             <div class="admin-row__profile-content">
-              <div class="admin-row__headline">
-                <strong>{{ item.fullName }}</strong>
-                <span class="admin-row__pill">{{ formatDocumentTypeLabel(readProfileField(item, 'basicInfo', 'documentType')) || '未填证件类型' }}</span>
-                <span class="admin-row__pill">{{ formatGenderLabel(readProfileField(item, 'basicInfo', 'gender')) || '未填性别' }}</span>
-                <span class="admin-row__identity">{{ item.documentNum }}</span>
-              </div>
-              <div class="admin-row__fact-list">
-                <span
-                  v-for="detail in buildProfileDetailEntries(item)"
-                  :key="`${item.id}-${detail.label}`"
-                  class="admin-row__fact"
-                >
-                  <span class="admin-row__fact-label">{{ detail.label }}</span>
-                  <strong class="admin-row__fact-value">{{ detail.value }}</strong>
-                </span>
-              </div>
-              <div v-if="buildProfileRiskTags(item).length || buildProfileNotes(item).length" class="admin-row__tags">
-                <span
-                  v-for="tag in buildProfileRiskTags(item)"
-                  :key="`${item.id}-${tag}`"
-                  class="admin-row__tag"
-                >
-                  {{ tag }}
-                </span>
-                <span
-                  v-for="note in buildProfileNotes(item)"
-                  :key="`${item.id}-${note.label}`"
-                  class="admin-row__tag admin-row__tag--muted"
-                >
-                  {{ note.label }}
-                </span>
-              </div>
+              <SensitiveAssetImage :src="item.asset.url" alt="基础画像敏感图片" />
             </div>
             <div class="admin-row__actions">
-              <button type="button" @click="editProfile(item)">编辑</button>
-              <button type="button" class="danger" @click="removeProfile(item.id)">删除</button>
+              <button type="button" @click="editProfile(filteredProfiles[index] || profiles[index])">编辑</button>
+              <button
+                type="button"
+                class="danger"
+                @click="removeProfile((filteredProfiles[index] || profiles[index]).id)"
+              >
+                删除
+              </button>
             </div>
           </article>
         </div>
@@ -1180,17 +1159,22 @@ function formatAuditTime(value: string) {
           </div>
         </div>
 
-        <p class="admin-filter-summary">当前筛选后 {{ filteredWatchlist.length }} 条高风险名单。</p>
+        <p class="admin-filter-summary">当前展示 {{ protectedWatchlist.length }} 条高风险名单。</p>
 
         <div class="admin-table">
-          <article v-for="item in filteredWatchlist" :key="item.id" class="admin-row">
-            <div>
-              <strong>{{ item.documentNum }}</strong>
-              <p>{{ item.riskReason || '高风险名单命中' }}</p>
+          <article v-for="(item, index) in protectedWatchlist" :key="item.id" class="admin-row">
+            <div class="admin-row__profile-content">
+              <SensitiveAssetImage :src="item.asset.url" alt="高风险名单敏感图片" />
             </div>
             <div class="admin-row__actions">
-              <button type="button" @click="editWatchlist(item)">编辑</button>
-              <button type="button" class="danger" @click="removeWatchlist(item.id)">删除</button>
+              <button type="button" @click="editWatchlist(filteredWatchlist[index] || watchlist[index])">编辑</button>
+              <button
+                type="button"
+                class="danger"
+                @click="removeWatchlist((filteredWatchlist[index] || watchlist[index]).id)"
+              >
+                删除
+              </button>
             </div>
           </article>
         </div>
@@ -1245,29 +1229,11 @@ function formatAuditTime(value: string) {
             </div>
           </div>
 
-          <p class="admin-filter-summary">当前筛选后 {{ filteredAuditLogs.length }} 条审计日志。</p>
+          <p class="admin-filter-summary">当前展示 {{ filteredAuditLogs.length }} 条审计日志。</p>
 
           <div class="admin-audit-list">
             <article v-for="item in filteredAuditLogs" :key="item.id" class="admin-audit-item">
-              <div class="admin-audit-item__head">
-                <div>
-                  <strong>{{ item.resource }}</strong>
-                  <p>{{ item.action }}</p>
-                </div>
-                <span
-                  class="admin-row__status"
-                  :class="item.result === 'success' ? 'is-active' : 'is-disabled'"
-                >
-                  <span class="admin-row__status-dot"></span>
-                  {{ formatAuditResultLabel(item.result) }}
-                </span>
-              </div>
-              <div class="admin-audit-item__meta">
-                <span>{{ formatAuditTime(item.createdAt) }}</span>
-                <span>{{ item.actorName || '未知操作人' }} / {{ item.actorWorkId || '-' }}</span>
-                <span>{{ item.method }} {{ item.path }}</span>
-                <span>状态码 {{ item.statusCode }}</span>
-              </div>
+              <SensitiveAssetImage :src="item.asset.url" alt="审计日志敏感图片" />
             </article>
           </div>
         </template>
@@ -1339,52 +1305,24 @@ function formatAuditTime(value: string) {
           </div>
         </div>
 
-        <p class="admin-filter-summary">当前筛选后 {{ filteredUsers.length }} 个用户。</p>
+        <p class="admin-filter-summary">当前展示 {{ protectedUsers.length }} 个用户。</p>
 
-        <div class="admin-user-table-wrap">
-          <table class="admin-user-table">
-            <thead>
-              <tr>
-                <th>工号</th>
-                <th>姓名</th>
-                <th>角色</th>
-                <th>状态</th>
-                <th class="is-actions">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="item in filteredUsers" :key="item.id">
-                <td>{{ item.workId }}</td>
-                <td>
-                  <strong class="admin-user-table__name">{{ item.name }}</strong>
-                </td>
-                <td>
-                  <span class="admin-row__pill">{{ formatUserRoleLabel(item.role) }}</span>
-                </td>
-                <td>
-                  <span
-                    class="admin-row__status"
-                    :class="item.status === 'active' ? 'is-active' : 'is-disabled'"
-                  >
-                    <span class="admin-row__status-dot"></span>
-                    {{ formatUserStatusLabel(item.status) }}
-                  </span>
-                </td>
-                <td class="is-actions">
-                  <div class="admin-user-table__actions">
-                    <button type="button" @click="editUser(item)">编辑</button>
-                    <button
-                      type="button"
-                      :class="item.status === 'active' ? 'danger' : ''"
-                      @click="toggleUserStatus(item)"
-                    >
-                      {{ item.status === 'active' ? '停用' : '启用' }}
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+        <div class="admin-table">
+          <article v-for="(item, index) in protectedUsers" :key="item.id" class="admin-row">
+            <div class="admin-row__profile-content">
+              <SensitiveAssetImage :src="item.asset.url" alt="用户敏感图片" />
+            </div>
+            <div class="admin-row__actions">
+              <button type="button" @click="editUser(filteredUsers[index] || users[index])">编辑</button>
+              <button
+                type="button"
+                :class="(filteredUsers[index] || users[index]).status === 'active' ? 'danger' : ''"
+                @click="toggleUserStatus(filteredUsers[index] || users[index])"
+              >
+                {{ (filteredUsers[index] || users[index]).status === 'active' ? '停用' : '启用' }}
+              </button>
+            </div>
+          </article>
         </div>
         </template>
       </section>

@@ -6,15 +6,26 @@ import { nextTick } from 'vue';
 import UserAskView from './UserAskView.vue';
 
 const aiServiceMocks = vi.hoisted(() => ({
-  requestFirstRoundStrategy: vi.fn(),
-  requestFollowupGuidance: vi.fn(),
   resolveAiServiceWebSocketUrl: vi.fn(
     (path: string) => `ws://ai-service.test${path}`,
   ),
-  uploadHumanOmniWindow: vi.fn(),
 }));
 
 vi.mock('../app/ai-service', () => aiServiceMocks);
+
+const inquiryProtectedMocks = vi.hoisted(() => ({
+  generateProtectedInquiryStrategy: vi.fn(),
+  uploadProtectedInquiryRoundWindow: vi.fn(),
+  requestProtectedInquiryFollowup: vi.fn(),
+  requestProtectedInquiryJudgement: vi.fn(),
+  refreshProtectedInquiryMemory: vi.fn(),
+}));
+
+vi.mock('../app/inquiry-protected-service', () => inquiryProtectedMocks);
+
+vi.mock('../app/audit-service', () => ({
+  recordAuditEvent: vi.fn().mockResolvedValue({ message: 'ok' }),
+}));
 
 vi.mock('../app/realtime-mediapipe', () => {
   const createIdleRealtimeDetectionState = (overrides = {}) => ({
@@ -208,6 +219,14 @@ function createMockStream() {
   } as unknown as MediaStream;
 }
 
+function createProtectedAsset(id: string, url = `/api/sensitive-assets/${id}`) {
+  return {
+    id,
+    url,
+    context: 'dialog',
+  };
+}
+
 function findButton(wrapper: VueWrapper, label: string) {
   const button = wrapper
     .findAll('button')
@@ -255,87 +274,95 @@ describe('UserAskView realtime speech sampling', () => {
     vi.stubGlobal('AudioContext', FakeAudioContext);
     vi.stubGlobal('WebSocket', FakeWebSocket);
 
-    aiServiceMocks.requestFirstRoundStrategy.mockResolvedValue({
+    inquiryProtectedMocks.generateProtectedInquiryStrategy.mockResolvedValue({
       sessionId: 'session-1',
-      llm: {
-        provider: 'mock',
-        model: 'test',
+      strategyAsset: createProtectedAsset('strategy-1'),
+      memoryAsset: createProtectedAsset('memory-1'),
+      currentRound: {
+        id: 'round-1',
+        roundNumber: 1,
+        title: '第 1 轮 · 首轮策略执行',
+        questionCount: 1,
+        status: 'pending',
+        promptAsset: createProtectedAsset('prompt-1'),
       },
-      riskAssessment: {
-        level: 'medium',
-        summary: '需要核验时间线。',
-        reasons: ['时间线缺口'],
-      },
-      strategy: {
-        goal: '核验首轮问题',
-        focusAreas: ['时间线'],
-      },
-      questions: [
-        {
-          questionId: 'q-1',
-          priority: 1,
-          question: '请说明 10:45 附近的具体动作。',
-          purpose: '核对时间线。',
-          expectedEvidence: [],
-        },
-      ],
-      operatorNote: '保持中性。',
+      historicalRounds: [],
+      completedRounds: 0,
+      totalSampleDuration: 0,
     });
 
-    aiServiceMocks.uploadHumanOmniWindow.mockResolvedValue({
-      ok: true,
+    inquiryProtectedMocks.uploadProtectedInquiryRoundWindow.mockResolvedValue({
       sessionId: 'session-1',
-      questionId: 'q-1',
-      windowId: 'window-1',
-      startSeconds: 0,
-      endSeconds: 1,
-      modal: 'video_audio',
-      uploadedFile: {
-        filename: 'round-1.mp4',
-        storedPath: '/tmp/round-1.mp4',
-        contentType: 'video/mp4',
-        sizeBytes: 4,
+      strategyAsset: createProtectedAsset('strategy-1'),
+      memoryAsset: createProtectedAsset('memory-1'),
+      currentRound: {
+        id: 'round-1',
+        roundNumber: 1,
+        title: '第 1 轮 · 首轮策略执行',
+        questionCount: 1,
+        status: 'uploaded',
+        promptAsset: createProtectedAsset('prompt-1'),
+        summaryAsset: createProtectedAsset('summary-1'),
       },
-      humanOmni: {
-        modelName: 'test',
-        rawSummary: '对象表述平稳。',
-        elapsedSeconds: 1,
-      },
-      humanOmniWindow: {
-        windowId: 'window-1',
-        questionId: 'q-1',
-        startSeconds: 0,
-        endSeconds: 1,
-        modal: 'video_audio',
-        rawSummary: '对象表述平稳。',
-        modelName: 'test',
-      },
+      historicalRounds: [],
+      completedRounds: 1,
+      totalSampleDuration: 1,
     });
 
-    aiServiceMocks.requestFollowupGuidance.mockResolvedValue({
+    inquiryProtectedMocks.requestProtectedInquiryFollowup.mockResolvedValue({
       sessionId: 'session-1',
-      roundNo: 1,
-      llm: {
-        provider: 'mock',
-        model: 'test',
+      strategyAsset: createProtectedAsset('strategy-1'),
+      memoryAsset: createProtectedAsset('memory-2'),
+      currentRound: {
+        id: 'round-2',
+        roundNumber: 2,
+        title: '第 2 轮 · AI 追问引导',
+        questionCount: 1,
+        status: 'pending',
+        promptAsset: createProtectedAsset('prompt-2'),
       },
-      multimodalAssessment: {
-        summary: '继续追问。',
-        riskHints: ['回答需要补充'],
-        evidence: [],
-        limitations: [],
-      },
-      followupGuidance: [
+      historicalRounds: [
         {
-          priority: 1,
-          question: '请补充说明刚才回答中的时间点。',
-          reason: '需要补充细节。',
-          operatorTip: '保持中性。',
-          focusArea: '时间点',
+          id: 'round-1',
+          roundNumber: 1,
+          title: '第 1 轮 · 首轮策略执行',
+          questionCount: 1,
+          status: 'uploaded',
+          promptAsset: createProtectedAsset('prompt-1'),
+          summaryAsset: createProtectedAsset('summary-1'),
         },
       ],
-      operatorNote: '继续问询。',
-      warnings: [],
+      completedRounds: 1,
+      totalSampleDuration: 1,
+    });
+
+    inquiryProtectedMocks.requestProtectedInquiryJudgement.mockResolvedValue({
+      sessionId: 'session-1',
+      strategyAsset: createProtectedAsset('strategy-1'),
+      memoryAsset: createProtectedAsset('memory-2'),
+      judgementAsset: createProtectedAsset('judgement-1'),
+      currentRound: {
+        id: 'round-2',
+        roundNumber: 2,
+        title: '第 2 轮 · AI 追问引导',
+        questionCount: 1,
+        status: 'uploaded',
+        promptAsset: createProtectedAsset('prompt-2'),
+        summaryAsset: createProtectedAsset('summary-2'),
+      },
+      historicalRounds: [
+        {
+          id: 'round-1',
+          roundNumber: 1,
+          title: '第 1 轮 · 首轮策略执行',
+          questionCount: 1,
+          status: 'uploaded',
+          promptAsset: createProtectedAsset('prompt-1'),
+          summaryAsset: createProtectedAsset('summary-1'),
+        },
+      ],
+      completedRounds: 2,
+      totalSampleDuration: 2,
     });
   });
 
@@ -389,9 +416,9 @@ describe('UserAskView realtime speech sampling', () => {
     await findButton(wrapper, '进入下一轮').trigger('click');
     await flushPromises();
 
-    expect(aiServiceMocks.requestFollowupGuidance).toHaveBeenCalledTimes(1);
+    expect(inquiryProtectedMocks.requestProtectedInquiryFollowup).toHaveBeenCalledTimes(1);
     expect(
-      aiServiceMocks.requestFollowupGuidance.mock.calls[0][0].asr,
+      inquiryProtectedMocks.requestProtectedInquiryFollowup.mock.calls[0][1].asr,
     ).toMatchObject({
       status: 'provided',
       provider: 'iflytek-rtasr-llm',
@@ -493,14 +520,14 @@ describe('UserAskView realtime speech sampling', () => {
     expect(wrapper.text()).toContain('当前浏览器不支持 WebSocket 音频转写');
 
     await finishSampling(wrapper);
-    expect(aiServiceMocks.uploadHumanOmniWindow).toHaveBeenCalledTimes(1);
+    expect(inquiryProtectedMocks.uploadProtectedInquiryRoundWindow).toHaveBeenCalledTimes(1);
 
     await findButton(wrapper, '进入下一轮').trigger('click');
     await flushPromises();
 
-    expect(aiServiceMocks.requestFollowupGuidance).toHaveBeenCalledTimes(1);
+    expect(inquiryProtectedMocks.requestProtectedInquiryFollowup).toHaveBeenCalledTimes(1);
     expect(
-      aiServiceMocks.requestFollowupGuidance.mock.calls[0][0].asr,
+      inquiryProtectedMocks.requestProtectedInquiryFollowup.mock.calls[0][1].asr,
     ).toMatchObject({
       status: 'not_connected',
       provider: 'iflytek-rtasr-llm',

@@ -1,6 +1,8 @@
 import { loadAuthSession } from '../auth';
 import type { AuditLogListResult } from './audit-service';
 import type { PassengerProfileRecord } from './profile-service';
+import type { ProtectedListResponse } from './protected-service';
+import { protectedJson } from './protected-service';
 
 export interface AdminListResult<T> {
   items: T[];
@@ -80,6 +82,18 @@ export async function listAdminProfiles(query: string) {
   return parsePayload<AdminListResult<PassengerProfileRecord>>(response, '查询基础画像失败。');
 }
 
+export async function listAdminProfilesProtected(query: string) {
+  const params = new URLSearchParams();
+  if (query.trim()) {
+    params.set('query', query.trim());
+  }
+  params.set('limit', '500');
+  return protectedJson<ProtectedListResponse>(
+    `/api/admin/profiles/protected?${params.toString()}`,
+    '查询基础画像失败。'
+  );
+}
+
 export async function createAdminProfile(payload: Partial<PassengerProfileRecord>) {
   const response = await authorizedFetch('/api/admin/profiles', {
     method: 'POST',
@@ -113,6 +127,18 @@ export async function listAdminWatchlist(query: string) {
   return parsePayload<AdminListResult<AdminWatchlistItem>>(response, '查询高风险名单失败。');
 }
 
+export async function listAdminWatchlistProtected(query: string) {
+  const params = new URLSearchParams();
+  if (query.trim()) {
+    params.set('query', query.trim());
+  }
+  params.set('limit', '500');
+  return protectedJson<ProtectedListResponse>(
+    `/api/admin/watchlist/protected?${params.toString()}`,
+    '查询高风险名单失败。'
+  );
+}
+
 export async function createAdminWatchlist(payload: Partial<AdminWatchlistItem>) {
   const response = await authorizedFetch('/api/admin/watchlist', {
     method: 'POST',
@@ -144,6 +170,18 @@ export async function listAdminUsers(query: string) {
   params.set('limit', '500');
   const response = await authorizedFetch(`/api/admin/users?${params.toString()}`);
   return parsePayload<AdminListResult<AdminUserItem>>(response, '查询用户失败。');
+}
+
+export async function listAdminUsersProtected(query: string) {
+  const params = new URLSearchParams();
+  if (query.trim()) {
+    params.set('query', query.trim());
+  }
+  params.set('limit', '500');
+  return protectedJson<ProtectedListResponse>(
+    `/api/admin/users/protected?${params.toString()}`,
+    '查询用户失败。'
+  );
 }
 
 export async function createAdminUser(payload: AdminUserPayload) {
@@ -190,4 +228,28 @@ export async function listAdminAuditLogs(query: {
 
   const response = await authorizedFetch(`/api/audit-logs?${params.toString()}`);
   return parsePayload<AuditLogListResult>(response, '查询审计日志失败。');
+}
+
+export async function listAdminAuditLogsProtected(query: {
+  query?: string;
+  actorWorkId?: string;
+  result?: string;
+  limit?: number;
+}) {
+  const params = new URLSearchParams();
+  if (query.query?.trim()) {
+    params.set('query', query.query.trim());
+  }
+  if (query.actorWorkId?.trim()) {
+    params.set('actorWorkId', query.actorWorkId.trim());
+  }
+  if (query.result?.trim()) {
+    params.set('result', query.result.trim());
+  }
+  params.set('limit', String(query.limit && query.limit > 0 ? query.limit : 500));
+
+  return protectedJson<ProtectedListResponse>(
+    `/api/audit-logs/protected?${params.toString()}`,
+    '查询审计日志失败。'
+  );
 }

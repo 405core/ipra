@@ -15,6 +15,7 @@ import (
 	"ipra/backend/internal/inquiry"
 	"ipra/backend/internal/memory"
 	"ipra/backend/internal/profile"
+	"ipra/backend/internal/sensitive"
 )
 
 func main() {
@@ -37,10 +38,26 @@ func main() {
 	authHandler := auth.NewHandler(db, tokenManager, auditRecorder)
 	profileHandler := profile.NewHandler(db, cfg.OCR)
 	inquiryHandler := inquiry.NewHandler()
-	memoryHandler := memory.NewHandler(memory.NewGormStore(db))
+	memoryStore := memory.NewGormStore(db)
+	memoryHandler := memory.NewHandler(memoryStore)
 	auditHandler := audit.NewHandler(auditRecorder, authHandler.AuthMiddleware(), authHandler.ResolveAuditIdentity)
+	var sensitiveManager *sensitive.Manager
+	if cfg.Sensitive.Enabled {
+		manager, sensitiveErr := sensitive.NewManager(cfg.Sensitive.FontCandidates)
+		if sensitiveErr != nil {
+			log.Printf("sensitive image renderer disabled: %v", sensitiveErr)
+		} else {
+			sensitiveManager = manager
+			profileHandler.SetSensitiveManager(manager)
+			auditHandler.SetSensitiveManager(manager)
+			authHandler.SetSensitiveManager(manager)
+			inquiryHandler.SetSensitiveManager(manager)
+		}
+	}
+	inquiryHandler.SetMemoryStore(memoryStore)
+	inquiryHandler.SetAIServiceBaseURL(cfg.AIService.BaseURL)
 
-	r := newRouter(authHandler, profileHandler, inquiryHandler, memoryHandler, auditHandler, auditRecorder)
+	r := newRouter(authHandler, profileHandler, inquiryHandler, memoryHandler, auditHandler, auditRecorder, sensitiveManager)
 
 	addr := ":" + cfg.Port
 	log.Printf("backend listening on %s (%s)", addr, cfg.AppEnv)
@@ -56,6 +73,7 @@ func newRouter(
 	memoryHandler *memory.Handler,
 	auditHandler *audit.Handler,
 	auditRecorder *audit.Recorder,
+	sensitiveManager *sensitive.Manager,
 ) *gin.Engine {
 	r := gin.Default()
 
@@ -81,12 +99,29 @@ func newRouter(
 			memoryHandler.Register(r, authHandler.AuthMiddleware())
 			memoryHandler.RegisterAdminRoutes(r, authHandler.AuthMiddleware())
 		}
+		if inquiryHandler != nil {
+			inquiryHandler.RegisterProtected(r, authHandler.AuthMiddleware())
+		}
 		if profileHandler != nil {
 			profileHandler.Register(r, authHandler.AuthMiddleware())
 		}
 	}
 	if auditHandler != nil {
 		auditHandler.Register(r)
+	}
+	if sensitiveManager != nil && authHandler != nil {
+		assetGroup := r.Group("/api/sensitive-assets")
+		assetGroup.Use(authHandler.AuthMiddleware())
+		assetGroup.Use(func(c *gin.Context) {
+			claims, ok := auth.ClaimsFromContext(c)
+			if !ok {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"message": "未授权"})
+				return
+			}
+			c.Set("sensitiveAssetUserID", claims.UserID)
+			c.Next()
+		})
+		assetGroup.GET("/:assetId", sensitiveManager.HandleAsset)
 	}
 
 	return r

@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import SensitiveAssetImage from '../app/SensitiveAssetImage.vue';
 import {
-  requestFirstRoundStrategy,
-  requestFollowupGuidance,
   resolveAiServiceWebSocketUrl,
-  uploadHumanOmniWindow,
   type AgentMemoryContextPayload,
   type AgentMemoryReferencePayload,
   type AgentMemoryUpdatePayload,
@@ -21,9 +19,15 @@ import {
 } from '../app/ai-service';
 import { recordAuditEvent } from '../app/audit-service';
 import {
-  fetchMemoryContext,
-  persistMemoryUpdates,
-} from '../app/memory-service';
+  generateProtectedInquiryStrategy,
+  refreshProtectedInquiryMemory,
+  requestProtectedInquiryFollowup,
+  requestProtectedInquiryJudgement,
+  uploadProtectedInquiryRoundWindow,
+  type ProtectedInquiryRoundSnapshot,
+  type ProtectedInquirySessionSnapshot,
+} from '../app/inquiry-protected-service';
+import type { ProtectedAssetRef } from '../app/protected-service';
 import {
   createIdleRealtimeDetectionState,
   createRealtimeDetectionController,
@@ -31,6 +35,7 @@ import {
   type RealtimeEvent,
   type RealtimeDetectionState,
 } from '../app/realtime-mediapipe';
+import { useProtectedPage } from '../app/use-protected-page';
 import { loadAuthSession } from '../auth';
 
 type WorkflowStage = 'strategy' | 'interview' | 'judgement';
@@ -88,6 +93,9 @@ interface InterviewRound {
   id: string;
   roundNumber: number;
   title: string;
+  questionCount: number;
+  promptAsset: ProtectedAssetRef | null;
+  summaryAsset: ProtectedAssetRef | null;
   focus: string;
   strategyNote: string;
   signal: string;
@@ -149,32 +157,6 @@ interface MockTripSupplement {
   companions: string[];
   accommodation: string;
   fundingSource: string;
-}
-
-interface JudgementBriefing {
-  multimodalAssessment: MultimodalAssessmentPayload;
-  operatorNote: string;
-  warnings: string[];
-  generatedAt: string;
-}
-
-interface MemoryPanelItem {
-  key: string;
-  title: string;
-  content: string;
-  scopeLabel: string;
-  typeLabel: string;
-  source: string;
-  confidence?: number | null;
-  updatedAt?: string | null;
-}
-
-interface MemoryReferenceViewItem {
-  key: string;
-  title: string;
-  scopeLabel: string;
-  typeLabel: string;
-  count: number;
 }
 
 const session = loadAuthSession();
@@ -352,11 +334,7 @@ const strategyBlueprints = [
 
 const currentStage = ref<WorkflowStage>('strategy');
 const sessionId = ref(createSessionId());
-const strategySummary = ref('');
-const generatedQuestions = ref<StrategyQuestion[]>([]);
-const strategyFocusAreas = ref<string[]>([]);
-const strategyOperatorNote = ref('');
-const strategyRiskAssessment = ref<RiskAssessmentPayload | null>(null);
+const protectedSession = ref<ProtectedInquirySessionSnapshot | null>(null);
 const strategyGenerationCount = ref(0);
 const isGeneratingStrategy = ref(false);
 const isEndingSampling = ref(false);
@@ -367,12 +345,10 @@ const memoryContext = ref<AgentMemoryContextPayload | null>(null);
 const memoryLoadState = ref<MemoryLoadState>('idle');
 const memoryErrorMessage = ref('');
 const memoryLastSyncedAt = ref('');
-const latestMemoryReferences = ref<AgentMemoryReferencePayload[]>([]);
 const rounds = ref<InterviewRound[]>([]);
 const currentRoundId = ref<string | null>(null);
 const selectedJudgement = ref<FinalJudgement | null>(null);
 const judgementReason = ref('');
-const judgementBriefing = ref<JudgementBriefing | null>(null);
 const isArchived = ref(false);
 const archivedAt = ref('');
 const archiveCode = ref('IPRA-ASK-20260503-014');
@@ -460,10 +436,11 @@ const totalTranscriptCount = computed(() =>
 );
 
 const totalSampleDuration = computed(() =>
-  completedRounds.value.reduce((sum, round) => sum + round.durationSeconds, 0),
+  protectedSession.value?.totalSampleDuration ??
+    completedRounds.value.reduce((sum, round) => sum + round.durationSeconds, 0),
 );
 
-const strategyGenerated = computed(() => generatedQuestions.value.length > 0);
+const strategyGenerated = computed(() => Boolean(protectedSession.value?.strategyAsset));
 const canEnterInterview = computed(
   () => strategyGenerated.value && !isGeneratingStrategy.value,
 );
@@ -485,7 +462,7 @@ const canAdvanceRound = computed(
 );
 const canEnterJudgement = computed(
   () =>
-    rounds.value.length > 1 &&
+    (protectedSession.value?.completedRounds ?? 0) > 0 &&
     Boolean(currentRound.value?.completed) &&
     currentRound.value?.uploadState === 'uploaded' &&
     samplingState.value.phase !== 'active' &&
@@ -534,6 +511,18 @@ const samplingPhaseLabel = computed(() => {
 const selectedJudgementLabel = computed(() =>
   selectedJudgement.value ? judgementLabel(selectedJudgement.value) : '待判定',
 );
+const protectedStrategyAsset = computed(
+  () => protectedSession.value?.strategyAsset ?? null,
+);
+const protectedMemoryAsset = computed(
+  () => protectedSession.value?.memoryAsset ?? null,
+);
+const protectedJudgementAsset = computed(
+  () => protectedSession.value?.judgementAsset ?? null,
+);
+const completedRoundCount = computed(
+  () => protectedSession.value?.completedRounds ?? completedRounds.value.length,
+);
 
 const realtimeModelStatuses = computed(() =>
   Object.values(realtimeDetection.value.models),
@@ -573,67 +562,8 @@ const faceCueItems = computed(() => [
 ]);
 
 const keyEvidenceTags = computed(() => {
-  const riskHints =
-    judgementBriefing.value?.multimodalAssessment.riskHints || [];
-  if (riskHints.length) {
-    return riskHints.slice(0, 4);
-  }
-
-  const tags = completedRounds.value.flatMap((round) => [
-    round.focus,
-    round.signal,
-  ]);
-  return tags.slice(0, 4);
-});
-
-const memoryPanelItems = computed<MemoryPanelItem[]>(() => {
-  const context = memoryContext.value;
-  if (!context) {
-    return [];
-  }
-
-  return [
-    ...context.sessionMemories.map((item) =>
-      toMemoryPanelItem(item, '会话记忆'),
-    ),
-    ...context.passengerMemories.map((item) =>
-      toMemoryPanelItem(item, '旅客记忆'),
-    ),
-    ...context.ruleMemories.map((item) => toMemoryPanelItem(item, '规则记忆')),
-  ].slice(0, 10);
-});
-
-const groupedMemoryReferences = computed<MemoryReferenceViewItem[]>(() => {
-  const referencesByKey = new Map<string, MemoryReferenceViewItem>();
-
-  latestMemoryReferences.value.forEach((reference) => {
-    const normalizedTitle = normalizeMemoryReferenceTitle(reference.title);
-    if (!normalizedTitle) {
-      return;
-    }
-
-    const key = [
-      reference.scopeType || 'unknown',
-      reference.memoryType || 'unknown',
-      normalizedTitle,
-    ].join('::');
-    const existing = referencesByKey.get(key);
-
-    if (existing) {
-      existing.count += 1;
-      return;
-    }
-
-    referencesByKey.set(key, {
-      key,
-      title: normalizedTitle,
-      scopeLabel: memoryScopeLabel(reference.scopeType),
-      typeLabel: memoryTypeLabel(reference.memoryType),
-      count: 1,
-    });
-  });
-
-  return [...referencesByKey.values()].slice(0, 6);
+  const tags = completedRounds.value.map((round) => round.title);
+  return [...passengerProfile.tags, ...tags].slice(0, 4);
 });
 
 const memoryStatusLabel = computed(() => {
@@ -797,81 +727,75 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
-function toMemoryPanelItem(
-  item: AgentMemoryContextPayload['sessionMemories'][number],
-  scopeLabel: string,
-): MemoryPanelItem {
+function syncMemoryStatus(hasAsset: boolean) {
+  memoryLoadState.value = hasAsset ? 'ready' : 'idle';
+  if (hasAsset) {
+    memoryLastSyncedAt.value = new Date().toLocaleTimeString('zh-CN', {
+      hour12: false,
+    });
+  }
+}
+
+function mapProtectedRoundStatus(
+  status: string,
+  existing?: InterviewRound | null,
+): RoundUploadState {
+  if (status === 'uploaded') {
+    return 'uploaded';
+  }
+  if (existing?.uploadState === 'error') {
+    return 'error';
+  }
+  if (existing?.uploadState === 'uploading') {
+    return 'uploading';
+  }
+  return 'idle';
+}
+
+function createProtectedInterviewRound(
+  snapshot: ProtectedInquiryRoundSnapshot,
+  existing?: InterviewRound | null,
+): InterviewRound {
   return {
-    key: `${item.scopeType}-${item.scopeId}-${item.memoryType}-${item.id ?? item.title}`,
-    title: item.title,
-    content: item.content,
-    scopeLabel,
-    typeLabel: memoryTypeLabel(item.memoryType),
-    source: item.source || 'system',
-    confidence: item.confidence,
-    updatedAt: item.updatedAt || item.createdAt,
+    id: snapshot.id,
+    roundNumber: snapshot.roundNumber,
+    title: snapshot.title,
+    questionCount: snapshot.questionCount,
+    promptAsset: snapshot.promptAsset ?? existing?.promptAsset ?? null,
+    summaryAsset: snapshot.summaryAsset ?? existing?.summaryAsset ?? null,
+    focus: existing?.focus || snapshot.title,
+    strategyNote:
+      existing?.strategyNote || '服务端返回的问题与提示已转为带水印图片展示',
+    signal: existing?.signal || '受保护问询轮次',
+    questions: existing?.questions ?? [],
+    transcripts: existing?.transcripts ?? [],
+    completed: snapshot.status === 'uploaded' || existing?.completed || false,
+    durationSeconds: existing?.durationSeconds ?? 0,
+    summary: existing?.summary ?? '',
+    uploadState: mapProtectedRoundStatus(snapshot.status, existing),
+    uploadErrorMessage: existing?.uploadErrorMessage ?? '',
+    humanOmniWindow: existing?.humanOmniWindow ?? null,
+    actionObservations: existing?.actionObservations ?? [],
+    recordedFileName: existing?.recordedFileName ?? '',
+    asrText: existing?.asrText ?? '',
   };
 }
 
-function normalizeMemoryReferenceTitle(title?: string | null) {
-  return (title || '').replace(/\s+/g, ' ').trim();
-}
+function syncProtectedSessionState(snapshot: ProtectedInquirySessionSnapshot) {
+  protectedSession.value = snapshot;
+  sessionId.value = snapshot.sessionId;
+  syncMemoryStatus(Boolean(snapshot.memoryAsset));
 
-function memoryScopeLabel(scopeType: string) {
-  switch (scopeType) {
-    case 'session':
-      return '会话';
-    case 'passenger':
-      return '旅客';
-    case 'rule':
-      return '规则';
-    default:
-      return '记忆';
-  }
-}
+  const nextSnapshots = [
+    ...snapshot.historicalRounds,
+    ...(snapshot.currentRound ? [snapshot.currentRound] : []),
+  ].sort((left, right) => left.roundNumber - right.roundNumber);
+  const existingById = new Map(rounds.value.map((round) => [round.id, round]));
 
-function memoryTypeLabel(type: string) {
-  switch (type) {
-    case 'fact':
-      return '事实';
-    case 'gap':
-      return '缺口';
-    case 'inconsistency':
-      return '不一致';
-    case 'evidence':
-      return '证据';
-    case 'procedure':
-      return '规则';
-    default:
-      return '记忆';
-  }
-}
-
-function formatMemoryConfidence(value?: number | null) {
-  if (typeof value !== 'number') {
-    return '未标注';
-  }
-
-  return `${Math.round(value * 100)}%`;
-}
-
-function formatMemoryTime(value?: string | null) {
-  if (!value) {
-    return '刚刚';
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return date.toLocaleString('zh-CN', {
-    hour12: false,
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  rounds.value = nextSnapshots.map((item) =>
+    createProtectedInterviewRound(item, existingById.get(item.id)),
+  );
+  currentRoundId.value = snapshot.currentRound?.id ?? null;
 }
 
 async function refreshMemoryContext() {
@@ -879,16 +803,18 @@ async function refreshMemoryContext() {
   memoryErrorMessage.value = '';
 
   try {
-    const context = await fetchMemoryContext(
-      sessionId.value,
-      mockedPassengerSupplement.passengerId,
-    );
-    memoryContext.value = context;
-    memoryLoadState.value = 'ready';
-    memoryLastSyncedAt.value = new Date().toLocaleTimeString('zh-CN', {
-      hour12: false,
-    });
-    return context;
+    if (!sessionId.value || !protectedSession.value) {
+      memoryLoadState.value = 'idle';
+      return memoryContext.value;
+    }
+
+    const { asset } = await refreshProtectedInquiryMemory(sessionId.value);
+    protectedSession.value = {
+      ...protectedSession.value,
+      memoryAsset: asset,
+    };
+    syncMemoryStatus(true);
+    return memoryContext.value;
   } catch (error) {
     memoryLoadState.value = 'error';
     memoryErrorMessage.value = normalizeErrorMessage(
@@ -903,13 +829,10 @@ async function saveMemoryUpdates(
   updates: AgentMemoryUpdatePayload[] = [],
   references: AgentMemoryReferencePayload[] = [],
 ) {
-  latestMemoryReferences.value = references;
-  if (!updates.length) {
-    return;
-  }
-
   try {
-    await persistMemoryUpdates(updates);
+    if (!updates.length && !references.length) {
+      return;
+    }
     await refreshMemoryContext();
   } catch (error) {
     memoryLoadState.value = 'error';
@@ -1013,17 +936,13 @@ function buildOpeningRound() {
     id: 'round-1',
     roundNumber: 1,
     title: '第 1 轮 · 首轮策略执行',
-    focus: strategyFocusAreas.value.length
-      ? strategyFocusAreas.value.join(' / ')
-      : '首轮关注：时间线与终端空窗',
-    strategyNote:
-      strategyOperatorNote.value ||
-      strategySummary.value ||
-      '系统默认围绕时间线断点、设备空窗与照明波动启动首轮问询。',
-    signal:
-      strategyRiskAssessment.value?.summary ||
-      '对象需先对 10:45 至 10:50 的时间线和设备空窗给出稳定说明。',
-    questions: generatedQuestions.value.map((question) => ({ ...question })),
+    questionCount: 0,
+    promptAsset: null,
+    summaryAsset: null,
+    focus: '首轮关注：时间线与终端空窗',
+    strategyNote: '系统默认围绕时间线断点、设备空窗与照明波动启动首轮问询。',
+    signal: '对象需先对 10:45 至 10:50 的时间线和设备空窗给出稳定说明。',
+    questions: [],
     transcripts: [],
     completed: false,
     durationSeconds: 0,
@@ -1081,6 +1000,9 @@ function buildFollowUpRoundFromResponse(
     id: `round-${roundNumber}`,
     roundNumber,
     title: `第 ${roundNumber} 轮 · AI 追问引导`,
+    questionCount: questions.length,
+    promptAsset: null,
+    summaryAsset: null,
     focus,
     strategyNote:
       response.operatorNote ||
@@ -1111,13 +1033,6 @@ function enterInterviewStage() {
 
   currentStage.value = 'interview';
   roundServiceError.value = '';
-  judgementBriefing.value = null;
-
-  if (!rounds.value.length) {
-    const openingRound = buildOpeningRound();
-    rounds.value = [openingRound];
-    currentRoundId.value = openingRound.id;
-  }
 }
 
 function updateCurrentRoundSummary(round: InterviewRound) {
@@ -1254,31 +1169,6 @@ function buildActionObservations(
   });
 }
 
-function buildHumanOmniWindows() {
-  return rounds.value.flatMap((round) =>
-    round.humanOmniWindow ? [round.humanOmniWindow] : [],
-  );
-}
-
-function buildActionObservationHistory() {
-  return rounds.value.flatMap((round) => round.actionObservations);
-}
-
-function buildFollowupPayload(roundNumber: number, round: InterviewRound) {
-  return {
-    sessionId: sessionId.value,
-    roundNo: roundNumber,
-    passengerProfile: buildPassengerPayload(),
-    tripProfile: buildTripPayload(),
-    qaHistory: buildQaHistory(),
-    humanOmniWindows: buildHumanOmniWindows(),
-    actionObservations: buildActionObservationHistory(),
-    asr: buildRoundAsrPayload(round),
-    memoryContext: memoryContext.value,
-    constraints: buildOutputConstraints(3),
-  };
-}
-
 function buildSummarizeWindowFormData(round: InterviewRound, file: File) {
   const windowId = createWindowId(round);
   const formData = new FormData();
@@ -1289,6 +1179,14 @@ function buildSummarizeWindowFormData(round: InterviewRound, file: File) {
   formData.append('modal', 'video_audio');
   formData.append('startSeconds', '0');
   formData.append('endSeconds', String(Math.max(1, round.durationSeconds)));
+  formData.append('durationSeconds', String(Math.max(1, round.durationSeconds)));
+  formData.append('recordedFileName', file.name);
+  formData.append('answerText', collectSubjectTranscript(round));
+  formData.append(
+    'actionObservations',
+    JSON.stringify(round.actionObservations),
+  );
+  formData.append('asr', JSON.stringify(buildRoundAsrPayload(round)));
   return formData;
 }
 
@@ -1672,30 +1570,16 @@ async function generateStrategy() {
         sessionId: sessionId.value,
       },
     });
-    const context = await refreshMemoryContext();
-    const response = await requestFirstRoundStrategy({
+    const response = await generateProtectedInquiryStrategy({
       sessionId: sessionId.value,
-      passengerProfile: buildPassengerPayload(),
-      tripProfile: buildTripPayload(),
+      passengerId: mockedPassengerSupplement.passengerId,
+      passengerProfile: buildPassengerPayload() as unknown as Record<string, unknown>,
+      tripProfile: buildTripPayload() as unknown as Record<string, unknown>,
       knownFacts: buildKnownFacts(),
-      memoryContext: context,
       constraints: buildOutputConstraints(6),
     });
-
-    if (!response.questions.length) {
-      throw new Error('AI-Service 未返回首轮问题。');
-    }
-
-    strategySummary.value =
-      response.strategy.goal || response.riskAssessment.summary;
-    strategyFocusAreas.value = [...response.strategy.focusAreas];
-    strategyOperatorNote.value = response.operatorNote;
-    strategyRiskAssessment.value = response.riskAssessment;
-    generatedQuestions.value = response.questions.map((question, index) =>
-      createStrategyQuestionFromApi(question, index),
-    );
+    syncProtectedSessionState(response);
     strategyGenerationCount.value += 1;
-    await saveMemoryUpdates(response.memoryUpdates, response.memoryReferences);
   } catch (error) {
     strategyRequestError.value = normalizeErrorMessage(
       error,
@@ -1864,14 +1748,12 @@ async function endSampling() {
   round.uploadErrorMessage = '';
 
   try {
-    const response = await uploadHumanOmniWindow(
+    const response = await uploadProtectedInquiryRoundWindow(
+      sessionId.value,
+      round.id,
       buildSummarizeWindowFormData(round, recordedFile),
     );
-    round.humanOmniWindow = response.humanOmniWindow;
-    round.recordedFileName = response.uploadedFile.filename;
-    round.uploadState = 'uploaded';
-    round.uploadErrorMessage = '';
-    updateCurrentRoundSummary(round);
+    syncProtectedSessionState(response);
     void recordAuditEvent({
       action: 'end_sampling',
       resource: '辅助问询',
@@ -1880,7 +1762,7 @@ async function endSampling() {
       detail: {
         roundId: round.id,
         roundNumber: round.roundNumber,
-        recordedFileName: round.recordedFileName,
+        recordedFileName: recordedFile.name,
       },
     });
   } catch (error) {
@@ -1908,21 +1790,21 @@ async function enterNextRound() {
 
   try {
     const nextRoundNumber = round.roundNumber + 1;
-    await refreshMemoryContext();
-    const response = await requestFollowupGuidance(
-      buildFollowupPayload(nextRoundNumber, round),
+    const response = await requestProtectedInquiryFollowup(
+      sessionId.value,
+      {
+        roundNumber: nextRoundNumber,
+        recordedFileName: round.recordedFileName,
+        durationSeconds: round.durationSeconds,
+        answerText: collectSubjectTranscript(round),
+        humanOmniWindow: round.humanOmniWindow ?? {},
+        actionObservations: round.actionObservations,
+        asr: buildRoundAsrPayload(round),
+      },
     );
-
-    if (!response.followupGuidance.length) {
-      throw new Error('AI-Service 未返回下一轮追问建议。');
-    }
-
-    const nextRound = buildFollowUpRoundFromResponse(response, nextRoundNumber);
-    rounds.value.push(nextRound);
-    currentRoundId.value = nextRound.id;
+    syncProtectedSessionState(response);
     resetSamplingIndicators();
     resetRealtimeDetectionViewState();
-    await saveMemoryUpdates(response.memoryUpdates, response.memoryReferences);
     void recordAuditEvent({
       action: 'enter_next_round',
       resource: '辅助问询',
@@ -1972,19 +1854,8 @@ async function enterJudgementStage() {
   openStageLoading('judgementBriefing');
 
   try {
-    await refreshMemoryContext();
-    const response = await requestFollowupGuidance(
-      buildFollowupPayload(round.roundNumber + 1, round),
-    );
-    judgementBriefing.value = {
-      multimodalAssessment: response.multimodalAssessment,
-      operatorNote: response.operatorNote,
-      warnings: [...response.warnings],
-      generatedAt: new Date().toLocaleTimeString('zh-CN', {
-        hour12: false,
-      }),
-    };
-    await saveMemoryUpdates(response.memoryUpdates, response.memoryReferences);
+    const response = await requestProtectedInquiryJudgement(sessionId.value);
+    syncProtectedSessionState(response);
     currentStage.value = 'judgement';
     void recordAuditEvent({
       action: 'enter_judgement_stage',
@@ -2456,6 +2327,8 @@ onMounted(() => {
   setupInterviewPanelSizing();
 });
 
+useProtectedPage('/home/ask');
+
 watch(
   () => [currentStage.value, currentRoundId.value, samplingState.value.phase],
   () => {
@@ -2614,33 +2487,11 @@ onBeforeUnmount(() => {
                   </span>
                 </div>
 
-                <div v-if="memoryPanelItems.length" class="memory-list">
-                  <article
-                    v-for="item in memoryPanelItems"
-                    :key="item.key"
-                    class="memory-item"
-                  >
-                    <div class="memory-item__meta">
-                      <strong>{{ item.title }}</strong>
-                      <span>{{ item.scopeLabel }} · {{ item.typeLabel }}</span>
-                    </div>
-                    <p>{{ item.content }}</p>
-                    <div class="tag-row">
-                      <span class="tag-chip tag-chip--passive">
-                        {{ item.source }}
-                      </span>
-                      <span
-                        v-if="typeof item.confidence === 'number'"
-                        class="tag-chip tag-chip--passive"
-                      >
-                        置信度 {{ formatMemoryConfidence(item.confidence) }}
-                      </span>
-                      <span class="tag-chip tag-chip--passive">
-                        {{ formatMemoryTime(item.updatedAt) }}
-                      </span>
-                    </div>
-                  </article>
-                </div>
+                <SensitiveAssetImage
+                  v-if="protectedMemoryAsset"
+                  :src="protectedMemoryAsset.url"
+                  alt="智能体记忆敏感图片"
+                />
 
                 <div v-else class="empty-panel empty-panel--compact">
                   <strong>尚无可用记忆</strong>
@@ -2665,7 +2516,7 @@ onBeforeUnmount(() => {
                     isGeneratingStrategy
                       ? '系统生成中'
                       : strategyGenerated
-                        ? `${generatedQuestions.length} 个问题已生成`
+                        ? '策略已生成'
                         : '等待生成'
                   }}
                 </span>
@@ -2673,77 +2524,17 @@ onBeforeUnmount(() => {
 
               <p class="workspace-summary">
                 {{
-                  strategySummary ||
-                  '系统将根据用户画像与风险标签生成首轮策略与问题包。'
+                  protectedStrategyAsset
+                    ? '首轮策略、风险预评估和问题包已转为服务端带水印图片'
+                    : '系统将根据用户画像与风险标签生成首轮策略与问题包'
                 }}
               </p>
 
-              <div
-                v-if="strategyRiskAssessment || strategyOperatorNote"
-                class="summary-stack summary-stack--dense"
-              >
-                <div v-if="strategyRiskAssessment" class="summary-item">
-                  <span class="meta-label">风险预评估</span>
-                  <div class="summary-item__inline">
-                    <strong>{{ strategyRiskAssessment.summary }}</strong>
-                    <span
-                      class="risk-chip"
-                      :class="
-                        strategyRiskToneClass(strategyRiskAssessment.level)
-                      "
-                    >
-                      {{ strategyRiskLabel(strategyRiskAssessment.level) }}
-                    </span>
-                  </div>
-                  <div
-                    v-if="strategyRiskAssessment.reasons.length"
-                    class="tag-row"
-                  >
-                    <span
-                      v-for="reason in strategyRiskAssessment.reasons"
-                      :key="reason"
-                      class="tag-chip tag-chip--passive"
-                    >
-                      {{ reason }}
-                    </span>
-                  </div>
-                </div>
-
-                <div v-if="strategyFocusAreas.length" class="summary-item">
-                  <span class="meta-label">关注方向</span>
-                  <div class="tag-row">
-                    <span
-                      v-for="area in strategyFocusAreas"
-                      :key="area"
-                      class="tag-chip tag-chip--passive"
-                    >
-                      {{ area }}
-                    </span>
-                  </div>
-                </div>
-
-                <div v-if="strategyOperatorNote" class="summary-item">
-                  <span class="meta-label">工作人员提示</span>
-                  <p>{{ strategyOperatorNote }}</p>
-                </div>
-              </div>
-
-              <div
-                v-if="strategyGenerated"
-                class="question-list question-list--scroll"
-              >
-                <article
-                  v-for="question in generatedQuestions"
-                  :key="question.id"
-                  class="question-item"
-                >
-                  <div class="question-item__meta">
-                    <strong>{{ question.title }}</strong>
-                    <span>{{ question.objective }}</span>
-                  </div>
-                  <p>{{ question.prompt }}</p>
-                </article>
-              </div>
+              <SensitiveAssetImage
+                v-if="protectedStrategyAsset"
+                :src="protectedStrategyAsset.url"
+                alt="首轮策略敏感图片"
+              />
 
               <div v-else class="empty-panel">
                 <strong>尚未生成首轮问题</strong>
@@ -3103,11 +2894,13 @@ onBeforeUnmount(() => {
                   <p class="section-eyebrow">本轮重点</p>
                   <h4>{{ currentRound.title }}</h4>
                 </div>
-                <span class="soft-chip">{{ currentRound.focus }}</span>
+                <span class="soft-chip">{{ currentRound.questionCount }} 条问题</span>
               </div>
 
               <div class="transcript-panel__scroll">
-                <p class="workspace-summary">{{ currentRound.strategyNote }}</p>
+                <p class="workspace-summary">
+                  服务端返回的问题包、工作人员提示和本轮摘要已转为带水印图片
+                </p>
 
                 <div class="round-actions round-actions--compact">
                 <div class="round-actions__copy">
@@ -3147,20 +2940,14 @@ onBeforeUnmount(() => {
 
               <div class="panel-subhead">
                 <strong>当前问题</strong>
-                <span>{{ currentRound.questions.length }} 条</span>
+                <span>{{ currentRound.questionCount }} 条</span>
               </div>
 
-              <div class="current-questions current-questions--scroll">
-                <article
-                  v-for="question in currentRound.questions"
-                  :key="question.id"
-                  class="question-brief"
-                >
-                  <strong>{{ question.title }}</strong>
-                  <p>{{ question.prompt }}</p>
-                  <span>{{ question.objective }}</span>
-                </article>
-              </div>
+              <SensitiveAssetImage
+                v-if="currentRound.promptAsset"
+                :src="currentRound.promptAsset.url"
+                alt="当前轮问题包敏感图片"
+              />
 
               <div class="panel-subhead">
                 <strong>实时转写</strong>
@@ -3220,12 +3007,16 @@ onBeforeUnmount(() => {
 
                 <div class="summary-item">
                   <span class="meta-label">窗口摘要</span>
-                  <p>
+                  <SensitiveAssetImage
+                    v-if="currentRound.summaryAsset"
+                    :src="currentRound.summaryAsset.url"
+                    alt="当前轮摘要敏感图片"
+                  />
+                  <p v-else>
                     {{
-                      currentRound.humanOmniWindow?.rawSummary ||
-                      (currentRound.uploadState === 'uploading'
-                        ? '正在等待系统返回窗口摘要。'
-                        : '尚未生成窗口摘要。')
+                      currentRound.uploadState === 'uploading'
+                        ? '正在等待系统返回窗口摘要'
+                        : '尚未生成窗口摘要'
                     }}
                   </p>
                 </div>
@@ -3253,35 +3044,11 @@ onBeforeUnmount(() => {
                   </span>
                 </div>
 
-                <div
-                  v-if="groupedMemoryReferences.length"
-                  class="memory-reference-row"
-                >
-                  <span
-                    v-for="reference in groupedMemoryReferences"
-                    :key="reference.key"
-                    class="memory-reference-chip"
-                    :title="`引用：${reference.title}`"
-                  >
-                    <span>引用：{{ reference.title }}</span>
-                    <small>{{ reference.scopeLabel }} · {{ reference.typeLabel }}</small>
-                    <b>×{{ reference.count }}</b>
-                  </span>
-                </div>
-
-                <div v-if="memoryPanelItems.length" class="memory-list">
-                  <article
-                    v-for="item in memoryPanelItems"
-                    :key="item.key"
-                    class="memory-item"
-                  >
-                    <div class="memory-item__meta">
-                      <strong>{{ item.title }}</strong>
-                      <span>{{ item.scopeLabel }} · {{ item.typeLabel }}</span>
-                    </div>
-                    <p>{{ item.content }}</p>
-                  </article>
-                </div>
+                <SensitiveAssetImage
+                  v-if="protectedMemoryAsset"
+                  :src="protectedMemoryAsset.url"
+                  alt="问询记忆敏感图片"
+                />
 
                 <div v-else class="empty-panel empty-panel--compact">
                   <strong>尚无可用记忆</strong>
@@ -3315,27 +3082,13 @@ onBeforeUnmount(() => {
               >
                 <div class="history-item__meta">
                   <strong>{{ round.title }}</strong>
-                  <span>{{
-                    round.uploadState === 'uploaded'
-                      ? formatDuration(round.durationSeconds)
-                      : roundUploadStateLabel(round.uploadState)
-                  }}</span>
+                  <span>{{ round.questionCount }} 条问题</span>
                 </div>
-                <p>
-                  {{
-                    round.humanOmniWindow?.rawSummary ||
-                    round.summary ||
-                    round.strategyNote
-                  }}
-                </p>
-                <div class="history-item__tags">
-                  <span class="tag-chip tag-chip--passive">
-                    {{ round.focus }}
-                  </span>
-                  <span class="tag-chip tag-chip--passive">
-                    {{ round.signal }}
-                  </span>
-                </div>
+                <SensitiveAssetImage
+                  v-if="round.summaryAsset || round.promptAsset"
+                  :src="round.summaryAsset?.url || round.promptAsset?.url"
+                  alt="历史轮次敏感图片"
+                />
               </article>
             </div>
 
@@ -3425,12 +3178,10 @@ onBeforeUnmount(() => {
                   <p class="section-eyebrow">系统摘要</p>
                   <h4>归档前摘要</h4>
                 </div>
-                <span class="soft-chip">{{
-                  judgementBriefing?.generatedAt || passengerProfile.alias
-                }}</span>
+                <span class="soft-chip">{{ passengerProfile.alias }}</span>
               </div>
 
-              <div v-if="judgementBriefing" class="summary-stack digest-stack">
+              <div v-if="protectedJudgementAsset" class="summary-stack digest-stack">
                 <div class="digest-kpis">
                   <div class="summary-item">
                     <span class="meta-label">对象</span>
@@ -3442,60 +3193,15 @@ onBeforeUnmount(() => {
                   <div class="summary-item">
                     <span class="meta-label">已完成轮次</span>
                     <strong
-                      >{{ completedRounds.length }} 轮 ·
+                      >{{ completedRoundCount }} 轮 ·
                       {{ formatDuration(totalSampleDuration) }}</strong
                     >
                   </div>
                 </div>
-                <div class="summary-item">
-                  <span class="meta-label">综合摘要</span>
-                  <p>{{ judgementBriefing.multimodalAssessment.summary }}</p>
-                </div>
-                <div class="summary-item">
-                  <span class="meta-label">风险提示</span>
-                  <div class="tag-row">
-                    <span
-                      v-for="hint in judgementBriefing.multimodalAssessment
-                        .riskHints"
-                      :key="hint"
-                      class="tag-chip tag-chip--passive"
-                    >
-                      {{ hint }}
-                    </span>
-                  </div>
-                </div>
-                <div class="summary-item">
-                  <span class="meta-label">证据摘要</span>
-                  <div class="evidence-list">
-                    <article
-                      v-for="evidence in judgementBriefing.multimodalAssessment
-                        .evidence"
-                      :key="evidence"
-                      class="evidence-item"
-                    >
-                      {{ evidence }}
-                    </article>
-                  </div>
-                </div>
-                <div class="summary-item">
-                  <span class="meta-label">工作人员提示</span>
-                  <p>{{ judgementBriefing.operatorNote }}</p>
-                </div>
-                <div
-                  v-if="judgementBriefing.warnings.length"
-                  class="summary-item summary-item--warning"
-                >
-                  <span class="meta-label">注意事项</span>
-                  <div class="warning-list">
-                    <article
-                      v-for="warning in judgementBriefing.warnings"
-                      :key="warning"
-                      class="warning-item"
-                    >
-                      {{ warning }}
-                    </article>
-                  </div>
-                </div>
+                <SensitiveAssetImage
+                  :src="protectedJudgementAsset.url"
+                  alt="人工辅助判断摘要敏感图片"
+                />
               </div>
 
               <div v-else class="empty-panel empty-panel--compact">
@@ -3524,9 +3230,9 @@ onBeforeUnmount(() => {
             <div>
               <p class="section-eyebrow">已归档</p>
               <h3>流程已完成归档</h3>
-              <p class="section-copy">
-                页面已进入锁定完成态，以下展示最终判定、理由摘要与本次问询的关键依据，当前内容不再允许修改。
-              </p>
+                <p class="section-copy">
+                  页面已进入锁定完成态，以下展示最终判定、理由摘要与本次问询的关键依据，当前内容不再允许修改。
+                </p>
             </div>
 
             <div class="stage-chip-group">
@@ -3548,7 +3254,7 @@ onBeforeUnmount(() => {
                 <p class="section-eyebrow">归档编号</p>
                 <h4>{{ archiveCode }}</h4>
                 <p>
-                  本次问询共完成 {{ completedRounds.length }} 轮采样，累计转写
+                  本次问询共完成 {{ completedRoundCount }} 轮采样，累计转写
                   {{ totalTranscriptCount }} 条，最终由
                   {{ inspectorName }} 完成人工定性。
                 </p>
