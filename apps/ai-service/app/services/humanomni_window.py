@@ -18,6 +18,7 @@ from schemas.humanomni import (
     UploadedWindowFile,
 )
 from schemas.inquiry import HumanOmniWindowSummary
+from storage import is_minio_enabled, store_file
 
 
 HUMANOMNI_MARKER = "=== HumanOmni Output ==="
@@ -56,6 +57,14 @@ async def summarize_uploaded_window(
         num_frames=num_frames,
         instruct=instruct or DEFAULT_INSTRUCT,
     )
+    stored_path = str(saved_path)
+    if is_minio_enabled():
+        stored_path = store_file(
+            saved_path,
+            _build_object_name(session_id, resolved_window_id, saved_path.suffix.lower()),
+            file.content_type,
+        )
+        _delete_if_exists(saved_path)
 
     summary = result.raw_summary
     return HumanOmniSummarizeWindowResponse(
@@ -68,7 +77,7 @@ async def summarize_uploaded_window(
         modal=modal,
         uploadedFile=UploadedWindowFile(
             filename=file.filename or saved_path.name,
-            storedPath=str(saved_path),
+            storedPath=stored_path,
             contentType=file.content_type,
             sizeBytes=size_bytes,
         ),
@@ -262,6 +271,13 @@ def _infer_timeout_seconds() -> int:
 def _safe_name(value: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip())
     return cleaned[:80] or uuid4().hex[:12]
+
+
+def _build_object_name(session_id: str, window_id: str, extension: str) -> str:
+    day_path = datetime.now().strftime("%Y/%m/%d")
+    safe_session = _safe_name(session_id)
+    safe_window = _safe_name(window_id)
+    return f"humanomni-windows/{day_path}/{safe_session}-{safe_window}{extension}"
 
 
 def _delete_if_exists(path: Path) -> None:

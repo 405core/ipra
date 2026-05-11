@@ -1,0 +1,17 @@
+.git
+.gitignore
+.nx
+node_modules
+dist
+coverage
+postgres_data
+models
+tmp
+*.log
+
+**/.env
+**/.env.*
+
+apps/ai-service/samples
+apps/ai-service/test-runs
+apps/ai-service/window-runs
