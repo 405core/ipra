@@ -26,6 +26,7 @@ PROMPT_DIR = Path(__file__).resolve().parents[1] / "prompts"
 DEFAULT_LOCAL_MODEL_PATH = REPO_ROOT / "models" / "business-llm" / "modelscope" / "Qwen2.5-3B-Instruct"
 DEFAULT_LOCAL_CACHE_DIR = REPO_ROOT / "models" / "business-llm" / "huggingface"
 DEFAULT_LOCAL_MODEL_NAME = "Qwen2.5-3B-Instruct"
+DEFAULT_OPENAI_COMPATIBLE_MODEL_NAME = "deepseek-ai/DeepSeek-V3.2"
 _LOCAL_RUNNERS: dict[tuple[str, str, str], "_TransformersLocalRunner"] = {}
 
 
@@ -38,6 +39,10 @@ class BusinessLlmSettings:
     max_new_tokens: int
     torch_dtype: str
     device_map: str
+    base_url: str = ""
+    api_key: str = ""
+    temperature: float = 1.0
+    top_p: float = 0.95
 
 
 def load_business_llm_settings() -> BusinessLlmSettings:
@@ -45,7 +50,12 @@ def load_business_llm_settings() -> BusinessLlmSettings:
     model_path = resolve_path(os.getenv("BUSINESS_LLM_MODEL_PATH"), DEFAULT_LOCAL_MODEL_PATH)
     model_name = os.getenv("BUSINESS_LLM_MODEL", "").strip()
     if not model_name:
-        model_name = "mock-business-llm" if provider == "mock" else DEFAULT_LOCAL_MODEL_NAME
+        if provider == "mock":
+            model_name = "mock-business-llm"
+        elif provider == "openai_compatible":
+            model_name = DEFAULT_OPENAI_COMPATIBLE_MODEL_NAME
+        else:
+            model_name = DEFAULT_LOCAL_MODEL_NAME
 
     return BusinessLlmSettings(
         provider=provider,
@@ -55,6 +65,10 @@ def load_business_llm_settings() -> BusinessLlmSettings:
         max_new_tokens=_read_positive_int("BUSINESS_LLM_MAX_NEW_TOKENS", 768),
         torch_dtype=os.getenv("BUSINESS_LLM_TORCH_DTYPE", "auto").strip() or "auto",
         device_map=os.getenv("BUSINESS_LLM_DEVICE_MAP", "auto").strip() or "auto",
+        base_url=os.getenv("BUSINESS_LLM_BASE_URL", "").strip().rstrip("/"),
+        api_key=os.getenv("BUSINESS_LLM_API_KEY", "").strip(),
+        temperature=_read_non_negative_float("BUSINESS_LLM_TEMPERATURE", 1.0),
+        top_p=_read_top_p("BUSINESS_LLM_TOP_P", 0.95),
     )
 
 
@@ -84,7 +98,9 @@ class BusinessLlmClient:
             return build_mock_first_round_strategy(request, self.runtime, prompt)
         if self.settings.provider == "transformers_local":
             return self._generate_first_round_strategy_with_local_model(request, prompt)
-        raise NotImplementedError("Supported BUSINESS_LLM_PROVIDER values: mock, transformers_local.")
+        if self.settings.provider == "openai_compatible":
+            return self._generate_first_round_strategy_with_openai_compatible(request, prompt)
+        raise NotImplementedError("Supported BUSINESS_LLM_PROVIDER values: mock, transformers_local, openai_compatible.")
 
     def generate_followup_guidance(
         self,
@@ -98,7 +114,9 @@ class BusinessLlmClient:
             )
         if self.settings.provider == "transformers_local":
             return self._generate_followup_guidance_with_local_model(request, prompt)
-        raise NotImplementedError("Supported followup BUSINESS_LLM_PROVIDER value: transformers_local.")
+        if self.settings.provider == "openai_compatible":
+            return self._generate_followup_guidance_with_openai_compatible(request, prompt)
+        raise NotImplementedError("Supported followup BUSINESS_LLM_PROVIDER values: transformers_local, openai_compatible.")
 
     def _generate_first_round_strategy_with_local_model(
         self,
@@ -110,6 +128,26 @@ class BusinessLlmClient:
             user_prompt=_first_round_user_prompt(prompt, request),
             max_new_tokens=self.settings.max_new_tokens,
         )
+        return self._build_first_round_strategy_response(request, content, "transformers_local")
+
+    def _generate_first_round_strategy_with_openai_compatible(
+        self,
+        request: FirstRoundStrategyRequest,
+        prompt: str,
+    ) -> FirstRoundStrategyResponse:
+        content = self._openai_runner().generate_json_text(
+            system_prompt=_system_prompt(),
+            user_prompt=_first_round_user_prompt(prompt, request),
+            max_new_tokens=self.settings.max_new_tokens,
+        )
+        return self._build_first_round_strategy_response(request, content, "openai_compatible")
+
+    def _build_first_round_strategy_response(
+        self,
+        request: FirstRoundStrategyRequest,
+        content: str,
+        error_prefix: str,
+    ) -> FirstRoundStrategyResponse:
         data = _parse_json_object(content)
         data["sessionId"] = request.session_id
         data["llm"] = self.runtime
@@ -130,7 +168,7 @@ class BusinessLlmClient:
             return FirstRoundStrategyResponse.model_validate(data)
         except Exception as exc:
             raise BusinessLlmError(
-                f"transformers_local first-round response does not match schema: {exc}; raw={content}"
+                f"{error_prefix} first-round response does not match schema: {exc}; raw={content}"
             ) from exc
 
     def _generate_followup_guidance_with_local_model(
@@ -143,6 +181,26 @@ class BusinessLlmClient:
             user_prompt=_followup_user_prompt(prompt, request),
             max_new_tokens=self.settings.max_new_tokens,
         )
+        return self._build_followup_guidance_response(request, content, "transformers_local")
+
+    def _generate_followup_guidance_with_openai_compatible(
+        self,
+        request: FollowupGuidanceRequest,
+        prompt: str,
+    ) -> FollowupGuidanceResponse:
+        content = self._openai_runner().generate_json_text(
+            system_prompt=_system_prompt(),
+            user_prompt=_followup_user_prompt(prompt, request),
+            max_new_tokens=self.settings.max_new_tokens,
+        )
+        return self._build_followup_guidance_response(request, content, "openai_compatible")
+
+    def _build_followup_guidance_response(
+        self,
+        request: FollowupGuidanceRequest,
+        content: str,
+        error_prefix: str,
+    ) -> FollowupGuidanceResponse:
         data = _parse_json_object(content)
         data["sessionId"] = request.session_id
         data["roundNo"] = request.round_no
@@ -179,7 +237,7 @@ class BusinessLlmClient:
             return FollowupGuidanceResponse.model_validate(data)
         except Exception as exc:
             raise BusinessLlmError(
-                f"transformers_local followup response does not match schema: {exc}; raw={content}"
+                f"{error_prefix} followup response does not match schema: {exc}; raw={content}"
             ) from exc
 
     def _runner(self) -> "_TransformersLocalRunner":
@@ -198,6 +256,18 @@ class BusinessLlmClient:
                 device_map=self.settings.device_map,
             )
         return _LOCAL_RUNNERS[key]
+
+    def _openai_runner(self) -> "_OpenAICompatibleRunner":
+        if not self.settings.base_url:
+            raise BusinessLlmError("BUSINESS_LLM_BASE_URL is required when BUSINESS_LLM_PROVIDER=openai_compatible.")
+        return _OpenAICompatibleRunner(
+            base_url=self.settings.base_url,
+            api_key=self.settings.api_key,
+            model=self.settings.model,
+            timeout_seconds=self.settings.timeout_seconds,
+            temperature=self.settings.temperature,
+            top_p=self.settings.top_p,
+        )
 
 
 class _TransformersLocalRunner:
@@ -279,6 +349,80 @@ class _TransformersLocalRunner:
         raise BusinessLlmError("BUSINESS_LLM_TORCH_DTYPE must be one of: auto, float16, bfloat16, float32")
 
 
+class _OpenAICompatibleRunner:
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        api_key: str,
+        model: str,
+        timeout_seconds: int,
+        temperature: float,
+        top_p: float,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self.model = model
+        self.timeout_seconds = timeout_seconds
+        self.temperature = temperature
+        self.top_p = top_p
+
+    def generate_json_text(self, *, system_prompt: str, user_prompt: str, max_new_tokens: int) -> str:
+        try:
+            import httpx
+        except ImportError as exc:
+            raise BusinessLlmError("httpx is required for BUSINESS_LLM_PROVIDER=openai_compatible.") from exc
+
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "max_tokens": max_new_tokens,
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "stream": False,
+        }
+
+        try:
+            response = httpx.post(
+                self._chat_completions_url(),
+                headers=headers,
+                json=payload,
+                timeout=self.timeout_seconds,
+            )
+        except httpx.TimeoutException as exc:
+            raise BusinessLlmError(
+                f"OpenAI-compatible business LLM timed out after {self.timeout_seconds}s."
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise BusinessLlmError(f"OpenAI-compatible business LLM request failed: {exc}") from exc
+
+        if response.status_code < 200 or response.status_code >= 300:
+            raise BusinessLlmError(
+                f"OpenAI-compatible business LLM HTTP {response.status_code}: {_truncate_text(response.text, 500)}"
+            )
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise BusinessLlmError(
+                f"OpenAI-compatible business LLM returned non-JSON response: {_truncate_text(response.text, 500)}"
+            ) from exc
+
+        return _extract_openai_chat_content(data)
+
+    def _chat_completions_url(self) -> str:
+        if self.base_url.endswith("/chat/completions"):
+            return self.base_url
+        return f"{self.base_url}/chat/completions"
+
+
 def load_prompt(name: str) -> str:
     path = PROMPT_DIR / name
     return path.read_text(encoding="utf-8")
@@ -300,6 +444,53 @@ def _read_positive_int(name: str, fallback: int) -> int:
     if value <= 0:
         raise ValueError(f"{name} must be greater than 0")
     return value
+
+
+def _read_non_negative_float(name: str, fallback: float) -> float:
+    raw_value = os.getenv(name, str(fallback)).strip() or str(fallback)
+    try:
+        value = float(raw_value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a number") from exc
+    if value < 0:
+        raise ValueError(f"{name} must be greater than or equal to 0")
+    return value
+
+
+def _read_top_p(name: str, fallback: float) -> float:
+    value = _read_non_negative_float(name, fallback)
+    if value <= 0 or value > 1:
+        raise ValueError(f"{name} must be greater than 0 and less than or equal to 1")
+    return value
+
+
+def _extract_openai_chat_content(data: Any) -> str:
+    if not isinstance(data, dict):
+        raise BusinessLlmError("OpenAI-compatible business LLM response root must be a JSON object.")
+
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise BusinessLlmError("OpenAI-compatible business LLM response missing choices.")
+
+    first_choice = choices[0]
+    if not isinstance(first_choice, dict):
+        raise BusinessLlmError("OpenAI-compatible business LLM response choice must be a JSON object.")
+
+    message = first_choice.get("message")
+    content = ""
+    if isinstance(message, dict):
+        content = str(message.get("content") or "")
+    if not content:
+        content = str(first_choice.get("text") or "")
+    if not content.strip():
+        raise BusinessLlmError("OpenAI-compatible business LLM response content is empty.")
+    return content.strip()
+
+
+def _truncate_text(value: str, max_length: int) -> str:
+    if len(value) <= max_length:
+        return value
+    return f"{value[:max_length]}..."
 
 
 def _system_prompt() -> str:
