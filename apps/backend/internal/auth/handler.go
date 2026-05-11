@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"ipra/backend/internal/audit"
 	dbschema "ipra/backend/internal/database"
 )
 
@@ -14,6 +15,7 @@ const authClaimsContextKey = "authClaims"
 
 type Handler struct {
 	db           *gorm.DB
+	audit        *audit.Recorder
 	tokenManager *TokenManager
 }
 
@@ -30,9 +32,10 @@ type userResponse struct {
 	Status string `json:"status"`
 }
 
-func NewHandler(db *gorm.DB, tokenManager *TokenManager) *Handler {
+func NewHandler(db *gorm.DB, tokenManager *TokenManager, auditRecorder *audit.Recorder) *Handler {
 	return &Handler{
 		db:           db,
+		audit:        auditRecorder,
 		tokenManager: tokenManager,
 	}
 }
@@ -59,6 +62,17 @@ func (h *Handler) handleLogin(c *gin.Context) {
 	workID := NormalizeWorkID(req.WorkID)
 	password := strings.TrimSpace(req.Password)
 	if workID == "" || password == "" {
+		h.logLoginAttempt(c, dbschema.AuditLog{
+			ActorWorkID: workID,
+			Action:      "login",
+			Resource:    "登录",
+			Result:      "failure",
+			StatusCode:  http.StatusBadRequest,
+			Method:      c.Request.Method,
+			Path:        c.FullPath(),
+			ClientIP:    strings.TrimSpace(c.ClientIP()),
+			UserAgent:   strings.TrimSpace(c.Request.UserAgent()),
+		})
 		c.JSON(http.StatusBadRequest, gin.H{"message": "工号和密码不能为空"})
 		return
 	}
@@ -66,29 +80,105 @@ func (h *Handler) handleLogin(c *gin.Context) {
 	var user dbschema.SystemUser
 	if err := h.db.Where("LOWER(work_id) = ?", workID).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			h.logLoginAttempt(c, dbschema.AuditLog{
+				ActorWorkID: workID,
+				Action:      "login",
+				Resource:    "登录",
+				Result:      "failure",
+				StatusCode:  http.StatusUnauthorized,
+				Method:      c.Request.Method,
+				Path:        c.FullPath(),
+				ClientIP:    strings.TrimSpace(c.ClientIP()),
+				UserAgent:   strings.TrimSpace(c.Request.UserAgent()),
+			})
 			c.JSON(http.StatusUnauthorized, gin.H{"message": "工号或密码错误"})
 			return
 		}
 
+		h.logLoginAttempt(c, dbschema.AuditLog{
+			ActorWorkID: workID,
+			Action:      "login",
+			Resource:    "登录",
+			Result:      "failure",
+			StatusCode:  http.StatusInternalServerError,
+			Method:      c.Request.Method,
+			Path:        c.FullPath(),
+			ClientIP:    strings.TrimSpace(c.ClientIP()),
+			UserAgent:   strings.TrimSpace(c.Request.UserAgent()),
+		})
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "查询用户失败"})
 		return
 	}
 
 	if err := VerifyPassword(user.PasswordHash, password); err != nil {
+		h.logLoginAttempt(c, dbschema.AuditLog{
+			ActorWorkID: workID,
+			Action:      "login",
+			Resource:    "登录",
+			Result:      "failure",
+			StatusCode:  http.StatusUnauthorized,
+			Method:      c.Request.Method,
+			Path:        c.FullPath(),
+			ClientIP:    strings.TrimSpace(c.ClientIP()),
+			UserAgent:   strings.TrimSpace(c.Request.UserAgent()),
+		})
 		c.JSON(http.StatusUnauthorized, gin.H{"message": "工号或密码错误"})
 		return
 	}
 
 	if NormalizeStatus(user.Status) != StatusActive {
+		h.logLoginAttempt(c, dbschema.AuditLog{
+			ActorUserID: func() *uint64 { id := user.ID; return &id }(),
+			ActorWorkID: user.WorkID,
+			ActorName:   user.Name,
+			ActorRole:   NormalizeRole(user.Role),
+			Action:      "login",
+			Resource:    "登录",
+			Result:      "denied",
+			StatusCode:  http.StatusForbidden,
+			Method:      c.Request.Method,
+			Path:        c.FullPath(),
+			ClientIP:    strings.TrimSpace(c.ClientIP()),
+			UserAgent:   strings.TrimSpace(c.Request.UserAgent()),
+		})
 		c.JSON(http.StatusForbidden, gin.H{"message": "账号已停用"})
 		return
 	}
 
 	token, err := h.tokenManager.Sign(user)
 	if err != nil {
+		h.logLoginAttempt(c, dbschema.AuditLog{
+			ActorUserID: func() *uint64 { id := user.ID; return &id }(),
+			ActorWorkID: user.WorkID,
+			ActorName:   user.Name,
+			ActorRole:   NormalizeRole(user.Role),
+			Action:      "login",
+			Resource:    "登录",
+			Result:      "failure",
+			StatusCode:  http.StatusInternalServerError,
+			Method:      c.Request.Method,
+			Path:        c.FullPath(),
+			ClientIP:    strings.TrimSpace(c.ClientIP()),
+			UserAgent:   strings.TrimSpace(c.Request.UserAgent()),
+		})
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "生成 token 失败"})
 		return
 	}
+
+	h.logLoginAttempt(c, dbschema.AuditLog{
+		ActorUserID: func() *uint64 { id := user.ID; return &id }(),
+		ActorWorkID: user.WorkID,
+		ActorName:   user.Name,
+		ActorRole:   NormalizeRole(user.Role),
+		Action:      "login",
+		Resource:    "登录",
+		Result:      "success",
+		StatusCode:  http.StatusOK,
+		Method:      c.Request.Method,
+		Path:        c.FullPath(),
+		ClientIP:    strings.TrimSpace(c.ClientIP()),
+		UserAgent:   strings.TrimSpace(c.Request.UserAgent()),
+	})
 
 	c.JSON(http.StatusOK, gin.H{
 		"token": token,
@@ -172,6 +262,27 @@ func parseBearerToken(header string) (string, bool) {
 	}
 
 	return token, true
+}
+
+func (h *Handler) ResolveAuditIdentity(c *gin.Context) (audit.Identity, bool) {
+	claims, ok := claimsFromContext(c)
+	if !ok {
+		return audit.Identity{}, false
+	}
+
+	return audit.Identity{
+		UserID: claims.UserID,
+		WorkID: claims.WorkID,
+		Name:   claims.Name,
+		Role:   NormalizeRole(claims.Role),
+	}, true
+}
+
+func (h *Handler) logLoginAttempt(c *gin.Context, entry dbschema.AuditLog) {
+	if h == nil || h.audit == nil {
+		return
+	}
+	h.audit.LogBestEffort(c.Request.Context(), entry)
 }
 
 func toUserResponse(user dbschema.SystemUser) userResponse {

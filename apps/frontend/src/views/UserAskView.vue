@@ -16,6 +16,7 @@ import {
   type RiskAssessmentPayload,
   type TripProfilePayload,
 } from '../app/ai-service';
+import { recordAuditEvent } from '../app/audit-service';
 import {
   createIdleRealtimeDetectionState,
   createRealtimeDetectionController,
@@ -1424,11 +1425,29 @@ async function generateStrategy() {
       createStrategyQuestionFromApi(question, index),
     );
     strategyGenerationCount.value += 1;
+    void recordAuditEvent({
+      action: 'generate_first_round_strategy',
+      resource: '辅助问询',
+      result: 'success',
+      path: '/home/ask',
+      detail: {
+        questionCount: response.questions.length,
+      },
+    });
   } catch (error) {
     strategyRequestError.value = normalizeErrorMessage(
       error,
       '首轮策略生成失败，请检查 AI-Service 后重试。',
     );
+    void recordAuditEvent({
+      action: 'generate_first_round_strategy',
+      resource: '辅助问询',
+      result: 'failure',
+      path: '/home/ask',
+      detail: {
+        message: strategyRequestError.value,
+      },
+    });
   } finally {
     isGeneratingStrategy.value = false;
     closeStageLoading('strategy');
@@ -1482,6 +1501,16 @@ async function startSampling() {
     samplingState.value.phase = 'active';
     samplingState.value.permissionGranted = true;
     samplingState.value.errorMessage = '';
+    void recordAuditEvent({
+      action: 'start_sampling',
+      resource: '辅助问询',
+      result: 'success',
+      path: '/home/ask',
+      detail: {
+        roundId: round.id,
+        roundNumber: round.roundNumber,
+      },
+    });
 
     await nextTick();
 
@@ -1517,6 +1546,17 @@ async function startSampling() {
       phase: 'error',
       errorMessage: resolveMediaError(error),
     };
+    void recordAuditEvent({
+      action: 'start_sampling',
+      resource: '辅助问询',
+      result: 'failure',
+      path: '/home/ask',
+      detail: {
+        roundId: round.id,
+        roundNumber: round.roundNumber,
+        message: samplingState.value.errorMessage,
+      },
+    });
   }
 }
 
@@ -1590,6 +1630,17 @@ async function endSampling() {
     round.uploadState = 'uploaded';
     round.uploadErrorMessage = '';
     updateCurrentRoundSummary(round);
+    void recordAuditEvent({
+      action: 'end_sampling',
+      resource: '辅助问询',
+      result: 'success',
+      path: '/home/ask',
+      detail: {
+        roundId: round.id,
+        roundNumber: round.roundNumber,
+        fileName: response.uploadedFile.filename,
+      },
+    });
   } catch (error) {
     round.uploadState = 'error';
     round.uploadErrorMessage = normalizeErrorMessage(
@@ -1597,6 +1648,17 @@ async function endSampling() {
       'HumanOmni 窗口摘要上传失败，请检查 AI-Service 后重试。',
     );
     roundServiceError.value = round.uploadErrorMessage;
+    void recordAuditEvent({
+      action: 'end_sampling',
+      resource: '辅助问询',
+      result: 'failure',
+      path: '/home/ask',
+      detail: {
+        roundId: round.id,
+        roundNumber: round.roundNumber,
+        message: round.uploadErrorMessage,
+      },
+    });
   } finally {
     isEndingSampling.value = false;
     closeStageLoading('samplingUpload');
@@ -1628,11 +1690,31 @@ async function enterNextRound() {
     currentRoundId.value = nextRound.id;
     resetSamplingIndicators();
     resetRealtimeDetectionViewState();
+    void recordAuditEvent({
+      action: 'enter_next_round',
+      resource: '辅助问询',
+      result: 'success',
+      path: '/home/ask',
+      detail: {
+        fromRound: round.roundNumber,
+        toRound: nextRoundNumber,
+      },
+    });
   } catch (error) {
     roundServiceError.value = normalizeErrorMessage(
       error,
       '下一轮追问生成失败，请检查 AI-Service 后重试。',
     );
+    void recordAuditEvent({
+      action: 'enter_next_round',
+      resource: '辅助问询',
+      result: 'failure',
+      path: '/home/ask',
+      detail: {
+        fromRound: round.roundNumber,
+        message: roundServiceError.value,
+      },
+    });
   } finally {
     isRequestingGuidance.value = false;
     closeStageLoading('nextRound');
@@ -1670,11 +1752,30 @@ async function enterJudgementStage() {
       }),
     };
     currentStage.value = 'judgement';
+    void recordAuditEvent({
+      action: 'enter_judgement_stage',
+      resource: '辅助问询',
+      result: 'success',
+      path: '/home/ask',
+      detail: {
+        roundNumber: round.roundNumber,
+      },
+    });
   } catch (error) {
     roundServiceError.value = normalizeErrorMessage(
       error,
       '人工判断前摘要生成失败，请检查 AI-Service 后重试。',
     );
+    void recordAuditEvent({
+      action: 'enter_judgement_stage',
+      resource: '辅助问询',
+      result: 'failure',
+      path: '/home/ask',
+      detail: {
+        roundNumber: round.roundNumber,
+        message: roundServiceError.value,
+      },
+    });
   } finally {
     isRequestingGuidance.value = false;
     closeStageLoading('judgementBriefing');
@@ -1690,6 +1791,16 @@ function archiveCase() {
     hour12: false,
   });
   isArchived.value = true;
+  void recordAuditEvent({
+    action: 'archive_case',
+    resource: '辅助问询',
+    result: 'success',
+    path: '/home/ask',
+    detail: {
+      judgement: selectedJudgement.value,
+      archivedAt: archivedAt.value,
+    },
+  });
 }
 
 function strategyRiskToneClass(level: RiskAssessmentPayload['level']) {

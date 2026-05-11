@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"ipra/backend/internal/audit"
 	"ipra/backend/internal/auth"
 	"ipra/backend/internal/config"
 	"ipra/backend/internal/inquiry"
@@ -25,12 +27,18 @@ func main() {
 		log.Fatalf("connect database: %v", err)
 	}
 
+	auditRecorder := audit.NewRecorder(db)
+	if err := auditRecorder.EnsureSchema(context.Background()); err != nil {
+		log.Fatalf("ensure audit schema: %v", err)
+	}
+
 	tokenManager := auth.NewTokenManager(cfg.Auth.JWTSecret, 24*time.Hour)
-	authHandler := auth.NewHandler(db, tokenManager)
+	authHandler := auth.NewHandler(db, tokenManager, auditRecorder)
 	profileHandler := profile.NewHandler(db, cfg.OCR)
 	inquiryHandler := inquiry.NewHandler()
+	auditHandler := audit.NewHandler(auditRecorder, authHandler.AuthMiddleware(), authHandler.ResolveAuditIdentity)
 
-	r := newRouter(authHandler, profileHandler, inquiryHandler)
+	r := newRouter(authHandler, profileHandler, inquiryHandler, auditHandler, auditRecorder)
 
 	addr := ":" + cfg.Port
 	log.Printf("backend listening on %s (%s)", addr, cfg.AppEnv)
@@ -43,6 +51,8 @@ func newRouter(
 	authHandler *auth.Handler,
 	profileHandler *profile.Handler,
 	inquiryHandler *inquiry.Handler,
+	auditHandler *audit.Handler,
+	auditRecorder *audit.Recorder,
 ) *gin.Engine {
 	r := gin.Default()
 
@@ -52,6 +62,10 @@ func newRouter(
 			"status":  "Go 后端已就绪",
 		})
 	})
+
+	if auditRecorder != nil && authHandler != nil {
+		r.Use(auditRecorder.RequestMiddleware(authHandler.ResolveAuditIdentity))
+	}
 
 	if inquiryHandler != nil {
 		inquiryHandler.Register(r)
@@ -63,6 +77,9 @@ func newRouter(
 		if profileHandler != nil {
 			profileHandler.Register(r, authHandler.AuthMiddleware())
 		}
+	}
+	if auditHandler != nil {
+		auditHandler.Register(r)
 	}
 
 	return r

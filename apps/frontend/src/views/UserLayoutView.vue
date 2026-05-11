@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
 import { clearAuthSession, loadAuthSession } from '../auth';
+import { recordAuditEvent } from '../app/audit-service';
 import { ElMessage } from '../app/el-message';
 import {
   downloadImportTemplate,
@@ -35,7 +36,7 @@ const navigationItems: NavigationItem[] = [
   },
   {
     routeName: 'home-log',
-    label: '日志审计',
+    label: '历史记录',
     description: '',
   },
 ];
@@ -206,6 +207,16 @@ async function handleImportDrop(event: DragEvent) {
 }
 
 async function logout() {
+  try {
+    await recordAuditEvent({
+      action: 'logout',
+      resource: '退出登录',
+      result: 'success',
+      path: route.fullPath,
+    });
+  } catch {
+    // noop
+  }
   clearAuthSession();
   await router.push('/login');
 }

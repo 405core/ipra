@@ -65,3 +65,25 @@ type HighRiskWatchlist struct {
 func (HighRiskWatchlist) TableName() string {
 	return "high_risk_watchlist"
 }
+
+type AuditLog struct {
+	ID          uint64          `json:"id" gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键"`
+	ActorUserID *uint64         `json:"actorUserId,omitempty" gorm:"column:actor_user_id;type:bigint;index:idx_audit_log_actor_user_id;comment:操作人 system_user.id，为空表示匿名或失败前未识别账号"`
+	ActorWorkID string          `json:"actorWorkId" gorm:"column:actor_work_id;type:varchar(64);index:idx_audit_log_actor_work_id;not null;default:'';comment:操作人工号"`
+	ActorName   string          `json:"actorName" gorm:"column:actor_name;type:varchar(64);not null;default:'';comment:操作人姓名"`
+	ActorRole   string          `json:"actorRole" gorm:"column:actor_role;type:varchar(32);not null;default:'';comment:操作人角色"`
+	Action      string          `json:"action" gorm:"column:action;type:varchar(128);index:idx_audit_log_action;not null;comment:操作代码"`
+	Resource    string          `json:"resource" gorm:"column:resource;type:varchar(128);index:idx_audit_log_resource;not null;default:'';comment:操作对象"`
+	Result      string          `json:"result" gorm:"column:result;type:varchar(32);index:idx_audit_log_result;not null;comment:操作结果（success、failure、denied）"`
+	StatusCode  int             `json:"statusCode" gorm:"column:status_code;type:int;not null;default:0;comment:HTTP 状态码或业务状态码"`
+	Method      string          `json:"method" gorm:"column:method;type:varchar(16);not null;default:'';comment:请求方法或事件类型"`
+	Path        string          `json:"path" gorm:"column:path;type:varchar(255);not null;default:'';comment:请求路径或前端事件路径"`
+	ClientIP    string          `json:"clientIp" gorm:"column:client_ip;type:varchar(64);not null;default:'';comment:客户端地址"`
+	UserAgent   string          `json:"userAgent" gorm:"column:user_agent;type:varchar(255);not null;default:'';comment:客户端 User-Agent"`
+	Detail      json.RawMessage `json:"detail,omitempty" gorm:"column:detail;type:jsonb;comment:补充审计明细 JSON"`
+	CreatedAt   time.Time       `json:"createdAt" gorm:"column:created_at;type:timestamptz;not null;default:CURRENT_TIMESTAMP;index:idx_audit_log_created_at;autoCreateTime;comment:审计记录创建时间"`
+}
+
+func (AuditLog) TableName() string {
+	return "audit_log"
+}

@@ -59,7 +59,7 @@ const router = createRouter({
           name: 'home-log',
           component: UserAuditView,
           meta: {
-            title: '日志审计',
+            title: '历史记录',
           },
         },
       ],
