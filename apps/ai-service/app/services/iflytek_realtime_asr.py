@@ -155,6 +155,12 @@ def extract_iflytek_transcript_event(payload: dict[str, Any]) -> dict[str, Any] 
         return None
 
     segment_id = int(st.get("bg", 0) or 0)
+    replace_range = st.get("rg")
+    if isinstance(replace_range, list):
+        replace_range_value = replace_range
+    else:
+        replace_range_value = None
+
     return {
         "type": "transcript",
         "provider": "iflytek-rtasr-llm",
@@ -165,6 +171,10 @@ def extract_iflytek_transcript_event(payload: dict[str, Any]) -> dict[str, Any] 
         "endMs": int(st.get("ed", 0) or 0),
         "isFinal": str(st.get("type", "")) == "0" or bool(data.get("ls")),
         "rawType": st.get("type"),
+        "correctionMode": st.get("pgs"),
+        "replaceRange": replace_range_value,
+        "replaceStartMs": int(st.get("rbg", st.get("bg", 0)) or 0),
+        "replaceEndMs": int(st.get("red", st.get("ed", 0)) or 0),
     }
 
 

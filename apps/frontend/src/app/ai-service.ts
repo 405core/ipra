@@ -213,6 +213,10 @@ export interface RealtimeAsrEvent {
   endMs?: number;
   isFinal?: boolean;
   rawType?: string | number | null;
+  correctionMode?: string | null;
+  replaceRange?: number[] | null;
+  replaceStartMs?: number;
+  replaceEndMs?: number;
 }
 
 export interface FollowupGuidanceRequest {

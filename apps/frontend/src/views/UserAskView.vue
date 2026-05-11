@@ -31,6 +31,8 @@ import {
   type RealtimeEvent,
   type RealtimeDetectionState,
 } from '../app/realtime-mediapipe';
+import { getInquirySettings } from '../app/admin-service';
+import { ElMessage } from '../app/el-message';
 import { loadAuthSession } from '../auth';
 
 type WorkflowStage = 'strategy' | 'interview' | 'judgement';
@@ -352,6 +354,10 @@ const strategyBlueprints = [
 
 const currentStage = ref<WorkflowStage>('strategy');
 const sessionId = ref(createSessionId());
+const maxInteractionRounds = ref(3);
+const inquirySettingsMessage = ref('');
+const hasLoadedInquirySettings = ref(false);
+const roundLimitDialogVisible = ref(false);
 const strategySummary = ref('');
 const generatedQuestions = ref<StrategyQuestion[]>([]);
 const strategyFocusAreas = ref<string[]>([]);
@@ -474,6 +480,11 @@ const canStartSampling = computed(
     !isRequestingGuidance.value &&
     !isArchived.value,
 );
+const hasReachedInteractionLimit = computed(
+  () =>
+    Boolean(currentRound.value?.completed) &&
+    (currentRound.value?.roundNumber ?? 0) >= maxInteractionRounds.value,
+);
 const canAdvanceRound = computed(
   () =>
     Boolean(currentRound.value?.completed) &&
@@ -485,7 +496,7 @@ const canAdvanceRound = computed(
 );
 const canEnterJudgement = computed(
   () =>
-    rounds.value.length > 1 &&
+    (rounds.value.length > 1 || hasReachedInteractionLimit.value) &&
     Boolean(currentRound.value?.completed) &&
     currentRound.value?.uploadState === 'uploaded' &&
     samplingState.value.phase !== 'active' &&
@@ -1104,11 +1115,35 @@ function buildFollowUpRoundFromResponse(
   } satisfies InterviewRound;
 }
 
-function enterInterviewStage() {
+async function loadInquirySettingsForSession() {
+  if (hasLoadedInquirySettings.value) {
+    return;
+  }
+
+  try {
+    const settings = await getInquirySettings();
+    if (
+      Number.isFinite(settings.maxRounds) &&
+      settings.maxRounds >= settings.minRounds &&
+      settings.maxRounds <= settings.maxAllowedRounds
+    ) {
+      maxInteractionRounds.value = settings.maxRounds;
+    }
+    inquirySettingsMessage.value = '';
+  } catch (error) {
+    maxInteractionRounds.value = 3;
+    inquirySettingsMessage.value = '未能读取管理员轮次设置，已按默认 3 轮执行。';
+  } finally {
+    hasLoadedInquirySettings.value = true;
+  }
+}
+
+async function enterInterviewStage() {
   if (!canEnterInterview.value) {
     return;
   }
 
+  await loadInquirySettingsForSession();
   currentStage.value = 'interview';
   roundServiceError.value = '';
   judgementBriefing.value = null;
@@ -1902,6 +1937,14 @@ async function enterNextRound() {
     return;
   }
 
+  if (hasReachedInteractionLimit.value) {
+    roundLimitDialogVisible.value = true;
+    ElMessage.warning(
+      `最多只能进行 ${maxInteractionRounds.value} 轮问询，请进入人工辅助判断。`,
+    );
+    return;
+  }
+
   isRequestingGuidance.value = true;
   roundServiceError.value = '';
   openStageLoading('nextRound');
@@ -1962,6 +2005,23 @@ async function enterJudgementStage() {
       path: '/home/ask',
       detail: {
         mode: 'direct',
+      },
+    });
+    return;
+  }
+
+  if (hasReachedInteractionLimit.value) {
+    currentStage.value = 'judgement';
+    judgementBriefing.value = null;
+    void recordAuditEvent({
+      action: 'enter_judgement_stage',
+      resource: '辅助问询',
+      result: 'success',
+      path: '/home/ask',
+      detail: {
+        mode: 'round_limit',
+        roundNumber: round.roundNumber,
+        maxInteractionRounds: maxInteractionRounds.value,
       },
     });
     return;
@@ -2138,11 +2198,10 @@ function resetSpeechRecognitionState(message = '等待开始采样。') {
 }
 
 function upsertSpeechTranscript(round: InterviewRound) {
-  const transcript = [speechFinalTranscript, speechInterimTranscript]
-    .map((value) => value.trim())
-    .filter(Boolean)
-    .join(' ')
-    .trim();
+  const transcript = mergeTranscriptParts([
+    speechFinalTranscript,
+    speechInterimTranscript,
+  ]);
 
   round.asrText = transcript;
   if (!transcript) {
@@ -2179,23 +2238,223 @@ function promoteSpeechInterimTranscript(round: InterviewRound) {
     return;
   }
 
-  speechFinalTranscript =
-    `${speechFinalTranscript} ${interimTranscript}`.trim();
+  speechFinalTranscript = mergeTranscriptParts([
+    speechFinalTranscript,
+    interimTranscript,
+  ]);
   speechInterimTranscript = '';
   upsertSpeechTranscript(round);
 }
 
+const MIN_TRANSCRIPT_OVERLAP = 4;
+const TRANSCRIPT_COMPARISON_IGNORED_CHARS = /[\s\p{P}\p{S}]/u;
+const TRANSCRIPT_TRAILING_SEPARATOR = /[\s\p{P}\p{S}]+$/u;
+const TRANSCRIPT_LEADING_SEPARATOR = /^[\s\p{P}\p{S}]+/u;
+
+interface TranscriptComparison {
+  normalized: string;
+  starts: number[];
+  ends: number[];
+}
+
+function buildTranscriptComparison(value: string): TranscriptComparison {
+  const starts: number[] = [];
+  const ends: number[] = [];
+  let normalized = '';
+  let sourceIndex = 0;
+
+  for (const character of value) {
+    const nextSourceIndex = sourceIndex + character.length;
+    if (!TRANSCRIPT_COMPARISON_IGNORED_CHARS.test(character)) {
+      normalized += character.toLowerCase();
+      starts.push(sourceIndex);
+      ends.push(nextSourceIndex);
+    }
+    sourceIndex = nextSourceIndex;
+  }
+
+  return { normalized, starts, ends };
+}
+
+function sourceIndexAfterNormalizedPrefix(
+  comparison: TranscriptComparison,
+  length: number,
+) {
+  if (length <= 0) {
+    return 0;
+  }
+  return comparison.ends[length - 1] ?? Number.MAX_SAFE_INTEGER;
+}
+
+function sourceIndexAtNormalizedPosition(
+  comparison: TranscriptComparison,
+  position: number,
+) {
+  return comparison.starts[position] ?? 0;
+}
+
+function findNormalizedSuffixPrefixOverlap(left: string, right: string) {
+  const maxOverlap = Math.min(left.length, right.length);
+  for (
+    let length = maxOverlap;
+    length >= MIN_TRANSCRIPT_OVERLAP;
+    length -= 1
+  ) {
+    if (left.endsWith(right.slice(0, length))) {
+      return length;
+    }
+  }
+  return 0;
+}
+
+function findNormalizedInternalOverlap(left: string, right: string) {
+  const maxOverlap = Math.min(left.length, right.length);
+  for (
+    let length = maxOverlap;
+    length >= MIN_TRANSCRIPT_OVERLAP;
+    length -= 1
+  ) {
+    const leftIndex = left.lastIndexOf(right.slice(0, length));
+    if (leftIndex >= 0) {
+      return leftIndex;
+    }
+  }
+  return -1;
+}
+
+function appendTranscriptRemainder(left: string, remainder: string) {
+  const nextRemainder = remainder.trimEnd();
+  if (!nextRemainder.trim()) {
+    return left.trim();
+  }
+
+  if (
+    TRANSCRIPT_TRAILING_SEPARATOR.test(left) &&
+    TRANSCRIPT_LEADING_SEPARATOR.test(nextRemainder)
+  ) {
+    return `${left.replace(TRANSCRIPT_TRAILING_SEPARATOR, '')}${nextRemainder}`.trim();
+  }
+
+  return `${left}${nextRemainder}`.trim();
+}
+
+function mergeTranscriptPart(merged: string, part: string) {
+  const next = part.trim();
+  if (!next) {
+    return merged;
+  }
+  if (!merged) {
+    return next;
+  }
+  if (next.includes(merged)) {
+    return next;
+  }
+  if (merged.includes(next)) {
+    return merged;
+  }
+
+  const mergedComparison = buildTranscriptComparison(merged);
+  const nextComparison = buildTranscriptComparison(next);
+  const mergedNormalized = mergedComparison.normalized;
+  const nextNormalized = nextComparison.normalized;
+
+  if (mergedNormalized && nextNormalized) {
+    if (
+      mergedNormalized.length >= MIN_TRANSCRIPT_OVERLAP &&
+      nextNormalized.includes(mergedNormalized)
+    ) {
+      return next;
+    }
+    if (
+      nextNormalized.length >= MIN_TRANSCRIPT_OVERLAP &&
+      mergedNormalized.includes(nextNormalized)
+    ) {
+      return merged;
+    }
+
+    const overlapLength = findNormalizedSuffixPrefixOverlap(
+      mergedNormalized,
+      nextNormalized,
+    );
+    if (overlapLength) {
+      const appendFrom = sourceIndexAfterNormalizedPrefix(
+        nextComparison,
+        overlapLength,
+      );
+      return appendTranscriptRemainder(merged, next.slice(appendFrom));
+    }
+
+    const replacementStart = findNormalizedInternalOverlap(
+      mergedNormalized,
+      nextNormalized,
+    );
+    if (replacementStart >= 0) {
+      const keepUntil = sourceIndexAtNormalizedPosition(
+        mergedComparison,
+        replacementStart,
+      );
+      return `${merged.slice(0, keepUntil)}${next}`.trim();
+    }
+  }
+
+  const maxOverlap = Math.min(merged.length, next.length);
+  for (let length = maxOverlap; length > 0; length -= 1) {
+    if (merged.endsWith(next.slice(0, length))) {
+      return `${merged}${next.slice(length)}`.trim();
+    }
+  }
+
+  return `${merged} ${next}`.trim();
+}
+
+function mergeTranscriptParts(parts: string[]) {
+  return parts.reduce(mergeTranscriptPart, '');
+}
+
+function clearOverlappedAsrSegments(event: RealtimeAsrEvent) {
+  const startMs = event.replaceStartMs ?? event.startMs;
+  const endMs = event.replaceEndMs ?? event.endMs;
+  const correctionMode = String(
+    event.correctionMode ?? event.rawType ?? '',
+  ).toLowerCase();
+  const shouldReplace =
+    correctionMode === 'pgs' ||
+    correctionMode === 'rpl' ||
+    correctionMode === 'replace' ||
+    correctionMode === 'correction';
+
+  if (!shouldReplace || startMs == null) {
+    return;
+  }
+
+  const removeIfCovered = (segments: Map<number, string>) => {
+    for (const segmentId of [...segments.keys()]) {
+      if (
+        segmentId === event.segmentId ||
+        segmentId < startMs ||
+        (endMs != null && segmentId > endMs)
+      ) {
+        continue;
+      }
+      segments.delete(segmentId);
+    }
+  };
+
+  removeIfCovered(asrStableSegments);
+  removeIfCovered(asrInterimSegments);
+}
+
 function rebuildStreamingAsrTranscript(round: InterviewRound) {
-  speechFinalTranscript = [...asrStableSegments.entries()]
-    .sort(([left], [right]) => left - right)
-    .map(([, text]) => text)
-    .join(' ')
-    .trim();
-  speechInterimTranscript = [...asrInterimSegments.entries()]
-    .sort(([left], [right]) => left - right)
-    .map(([, text]) => text)
-    .join(' ')
-    .trim();
+  speechFinalTranscript = mergeTranscriptParts(
+    [...asrStableSegments.entries()]
+      .sort(([left], [right]) => left - right)
+      .map(([, text]) => text),
+  );
+  speechInterimTranscript = mergeTranscriptParts(
+    [...asrInterimSegments.entries()]
+      .sort(([left], [right]) => left - right)
+      .map(([, text]) => text),
+  );
   upsertSpeechTranscript(round);
 }
 
@@ -2232,6 +2491,7 @@ function handleStreamingAsrEvent(
   }
 
   const segmentId = event.segmentId ?? Date.now();
+  clearOverlappedAsrSegments(event);
   if (event.isFinal) {
     asrInterimSegments.delete(segmentId);
     asrStableSegments.set(segmentId, text);
@@ -3110,40 +3370,51 @@ onBeforeUnmount(() => {
                 <p class="workspace-summary">{{ currentRound.strategyNote }}</p>
 
                 <div class="round-actions round-actions--compact">
-                <div class="round-actions__copy">
-                  <strong>{{
-                    currentRound.completed ? '本轮已完成' : '本轮未完成'
-                  }}</strong>
+                  <div class="round-actions__copy">
+                    <strong>{{
+                      currentRound.completed ? '本轮已完成' : '本轮未完成'
+                    }}</strong>
                     <span>
                       {{
-                        currentRound.completed
-                          ? '本轮采样与摘要已完成，可继续进入下一轮追问或提交人工辅助判断。'
+                        hasReachedInteractionLimit
+                          ? '已达到管理员设置的总交互轮次上限，建议结束当前辅助问询流程。'
+                          : currentRound.completed
+                            ? '本轮采样与摘要已完成，可继续进入下一轮追问或提交人工辅助判断。'
                           : '完成采样并等待摘要上传后，可解锁下一轮或进入人工判断。'
                       }}
                     </span>
-                </div>
+                    <small
+                      v-if="inquirySettingsMessage"
+                      class="round-limit-badge round-limit-badge--warning"
+                    >
+                      {{ inquirySettingsMessage }}
+                    </small>
+                    <small v-else class="round-limit-badge">
+                      当前上限 <strong>{{ maxInteractionRounds }}</strong> 轮
+                    </small>
+                  </div>
 
-                <div class="action-row">
-                  <button
-                    class="secondary-action"
-                    type="button"
-                    :disabled="!canAdvanceRound || Boolean(activeStageLoading)"
-                    @click="enterNextRound"
-                  >
-                    进入下一轮
-                  </button>
-                  <button
-                    class="primary-action"
-                    type="button"
-                    :disabled="
-                      !canEnterJudgement || Boolean(activeStageLoading)
-                    "
-                    @click="enterJudgementStage"
-                  >
-                    进入人工辅助判断
-                  </button>
+                  <div class="action-row">
+                    <button
+                      class="secondary-action"
+                      type="button"
+                      :disabled="!canAdvanceRound || Boolean(activeStageLoading)"
+                      @click="enterNextRound"
+                    >
+                      进入下一轮
+                    </button>
+                    <button
+                      class="primary-action"
+                      type="button"
+                      :disabled="
+                        !canEnterJudgement || Boolean(activeStageLoading)
+                      "
+                      @click="enterJudgementStage"
+                    >
+                      进入人工辅助判断
+                    </button>
+                  </div>
                 </div>
-              </div>
 
               <div class="panel-subhead">
                 <strong>当前问题</strong>
@@ -3615,6 +3886,41 @@ onBeforeUnmount(() => {
             <i aria-hidden="true"></i>
             <i aria-hidden="true"></i>
             <i aria-hidden="true"></i>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <Transition name="round-limit-dialog">
+      <div
+        v-if="roundLimitDialogVisible"
+        class="round-limit-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="轮次上限提示"
+      >
+        <div class="round-limit-dialog__panel">
+          <p class="section-eyebrow">轮次上限</p>
+          <h4>最多只能进行 {{ maxInteractionRounds }} 轮问询</h4>
+          <p>已达到管理员设置的总交互轮次上限，请进入人工辅助判断。</p>
+          <div class="action-row">
+            <button
+              class="secondary-action"
+              type="button"
+              @click="roundLimitDialogVisible = false"
+            >
+              我知道了
+            </button>
+            <button
+              class="primary-action"
+              type="button"
+              @click="
+                roundLimitDialogVisible = false;
+                enterJudgementStage();
+              "
+            >
+              进入人工辅助判断
+            </button>
           </div>
         </div>
       </div>
@@ -4859,6 +5165,31 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
+.round-limit-badge {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(196, 93, 51, 0.28);
+  background: rgba(255, 239, 219, 0.94);
+  color: #9a3f24;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.round-limit-badge strong {
+  color: #c44f28;
+  font-size: 1.02rem;
+}
+
+.round-limit-badge--warning {
+  border-color: rgba(182, 78, 61, 0.3);
+  background: rgba(182, 78, 61, 0.1);
+  color: var(--alert);
+}
+
 .round-actions--compact .action-row {
   display: grid;
   grid-template-columns: 1fr;
@@ -5209,6 +5540,48 @@ onBeforeUnmount(() => {
   box-shadow:
     0 24px 60px rgba(14, 40, 48, 0.16),
     inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+
+.round-limit-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 1010;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(14, 32, 39, 0.34);
+  backdrop-filter: blur(10px);
+}
+
+.round-limit-dialog__panel {
+  display: grid;
+  gap: 14px;
+  width: min(420px, 100%);
+  padding: 24px;
+  border-radius: 20px;
+  border: 1px solid rgba(196, 93, 51, 0.2);
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 22px 52px rgba(38, 82, 96, 0.18);
+}
+
+.round-limit-dialog__panel h4,
+.round-limit-dialog__panel p {
+  margin: 0;
+}
+
+.round-limit-dialog__panel h4 {
+  color: #9a3f24;
+  font-size: 1.16rem;
+}
+
+.round-limit-dialog__panel p:last-of-type {
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.round-limit-dialog__panel .action-row {
+  justify-content: flex-end;
+  margin-top: 4px;
 }
 
 .stage-loading__visual {

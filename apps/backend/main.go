@@ -15,6 +15,7 @@ import (
 	"ipra/backend/internal/inquiry"
 	"ipra/backend/internal/memory"
 	"ipra/backend/internal/profile"
+	"ipra/backend/internal/settings"
 )
 
 func main() {
@@ -38,9 +39,14 @@ func main() {
 	profileHandler := profile.NewHandler(db, cfg.OCR)
 	inquiryHandler := inquiry.NewHandler()
 	memoryHandler := memory.NewHandler(memory.NewGormStore(db))
+	settingsStore := settings.NewGormStore(db)
+	if err := settingsStore.EnsureSchema(context.Background()); err != nil {
+		log.Fatalf("ensure settings schema: %v", err)
+	}
+	settingsHandler := settings.NewHandler(settingsStore)
 	auditHandler := audit.NewHandler(auditRecorder, authHandler.AuthMiddleware(), authHandler.ResolveAuditIdentity)
 
-	r := newRouter(authHandler, profileHandler, inquiryHandler, memoryHandler, auditHandler, auditRecorder)
+	r := newRouter(authHandler, profileHandler, inquiryHandler, memoryHandler, settingsHandler, auditHandler, auditRecorder)
 
 	addr := ":" + cfg.Port
 	log.Printf("backend listening on %s (%s)", addr, cfg.AppEnv)
@@ -54,6 +60,7 @@ func newRouter(
 	profileHandler *profile.Handler,
 	inquiryHandler *inquiry.Handler,
 	memoryHandler *memory.Handler,
+	settingsHandler *settings.Handler,
 	auditHandler *audit.Handler,
 	auditRecorder *audit.Recorder,
 ) *gin.Engine {
@@ -80,6 +87,9 @@ func newRouter(
 		if memoryHandler != nil {
 			memoryHandler.Register(r, authHandler.AuthMiddleware())
 			memoryHandler.RegisterAdminRoutes(r, authHandler.AuthMiddleware())
+		}
+		if settingsHandler != nil {
+			settingsHandler.Register(r, authHandler.AuthMiddleware())
 		}
 		if profileHandler != nil {
 			profileHandler.Register(r, authHandler.AuthMiddleware())
