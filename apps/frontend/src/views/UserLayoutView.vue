@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
 import { clearAuthSession, loadAuthSession } from '../auth';
+import { recordAuditEvent } from '../app/audit-service';
 import { ElMessage } from '../app/el-message';
 import {
   downloadImportTemplate,
@@ -10,7 +11,7 @@ import {
   type ImportType,
 } from '../app/profile-service';
 
-type UserRouteName = 'home-data' | 'home-ask';
+type UserRouteName = 'home-data' | 'home-ask' | 'home-log';
 
 interface NavigationItem {
   routeName: UserRouteName;
@@ -31,6 +32,11 @@ const navigationItems: NavigationItem[] = [
   {
     routeName: 'home-ask',
     label: '辅助问询',
+    description: '',
+  },
+  {
+    routeName: 'home-log',
+    label: '历史记录',
     description: '',
   },
 ];
@@ -201,6 +207,16 @@ async function handleImportDrop(event: DragEvent) {
 }
 
 async function logout() {
+  try {
+    await recordAuditEvent({
+      action: 'logout',
+      resource: '退出登录',
+      result: 'success',
+      path: route.fullPath,
+    });
+  } catch {
+    // noop
+  }
   clearAuthSession();
   await router.push('/login');
 }

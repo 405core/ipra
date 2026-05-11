@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"ipra/backend/internal/audit"
 	"ipra/backend/internal/auth"
 	"ipra/backend/internal/config"
 	dbschema "ipra/backend/internal/database"
@@ -13,7 +14,7 @@ import (
 )
 
 func TestPingRoute(t *testing.T) {
-	router := newRouter(nil, nil, nil, nil)
+	router := newRouter(nil, nil, nil, nil, nil, nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/ping", nil)
 	recorder := httptest.NewRecorder()
 
@@ -26,8 +27,8 @@ func TestPingRoute(t *testing.T) {
 
 func TestImportTemplateRouteRequiresAuth(t *testing.T) {
 	tokenManager := auth.NewTokenManager("test-secret", time.Hour)
-	authHandler := auth.NewHandler(nil, tokenManager)
-	router := newRouter(authHandler, profile.NewHandler(nil, config.OCRConfig{}), nil, nil)
+	authHandler := auth.NewHandler(nil, tokenManager, audit.NewRecorder(nil))
+	router := newRouter(authHandler, profile.NewHandler(nil, config.OCRConfig{}), nil, nil, nil, nil)
 	req := httptest.NewRequest(
 		http.MethodGet,
 		"/api/import-templates/passenger-profile.xlsx",
@@ -56,8 +57,8 @@ func TestImportTemplateRouteAuthorized(t *testing.T) {
 		t.Fatalf("sign token: %v", err)
 	}
 
-	authHandler := auth.NewHandler(nil, tokenManager)
-	router := newRouter(authHandler, profile.NewHandler(nil, config.OCRConfig{}), nil, nil)
+	authHandler := auth.NewHandler(nil, tokenManager, audit.NewRecorder(nil))
+	router := newRouter(authHandler, profile.NewHandler(nil, config.OCRConfig{}), nil, nil, nil, nil)
 	req := httptest.NewRequest(
 		http.MethodGet,
 		"/api/import-templates/passenger-profile.xlsx",
@@ -100,8 +101,8 @@ func TestHighRiskTemplateRouteAuthorized(t *testing.T) {
 		t.Fatalf("sign token: %v", err)
 	}
 
-	authHandler := auth.NewHandler(nil, tokenManager)
-	router := newRouter(authHandler, profile.NewHandler(nil, config.OCRConfig{}), nil, nil)
+	authHandler := auth.NewHandler(nil, tokenManager, audit.NewRecorder(nil))
+	router := newRouter(authHandler, profile.NewHandler(nil, config.OCRConfig{}), nil, nil, nil, nil)
 	req := httptest.NewRequest(
 		http.MethodGet,
 		"/api/import-templates/high-risk-watchlist.xlsx",

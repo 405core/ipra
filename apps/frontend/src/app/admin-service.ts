@@ -1,4 +1,5 @@
 import { loadAuthSession } from '../auth';
+import type { AuditLogListResult } from './audit-service';
 import type { PassengerProfileRecord } from './profile-service';
 
 export interface AdminListResult<T> {
@@ -167,4 +168,26 @@ export async function updateAdminUserStatus(id: number, status: string) {
     body: JSON.stringify({ status }),
   });
   return parsePayload<{ message: string }>(response, '更新用户状态失败。');
+}
+
+export async function listAdminAuditLogs(query: {
+  query?: string;
+  actorWorkId?: string;
+  result?: string;
+  limit?: number;
+}) {
+  const params = new URLSearchParams();
+  if (query.query?.trim()) {
+    params.set('query', query.query.trim());
+  }
+  if (query.actorWorkId?.trim()) {
+    params.set('actorWorkId', query.actorWorkId.trim());
+  }
+  if (query.result?.trim()) {
+    params.set('result', query.result.trim());
+  }
+  params.set('limit', String(query.limit && query.limit > 0 ? query.limit : 500));
+
+  const response = await authorizedFetch(`/api/audit-logs?${params.toString()}`);
+  return parsePayload<AuditLogListResult>(response, '查询审计日志失败。');
 }

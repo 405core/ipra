@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"ipra/backend/internal/audit"
 	"ipra/backend/internal/auth"
 	dbschema "ipra/backend/internal/database"
 )
@@ -152,7 +153,7 @@ func newMemoryRouterWithStore(role string, store Store) (*gin.Engine, string) {
 	router := gin.New()
 	tokenManager := auth.NewTokenManager("test-secret", time.Hour)
 	handler := NewHandler(store)
-	authHandler := auth.NewHandler(nil, tokenManager)
+	authHandler := auth.NewHandler(nil, tokenManager, audit.NewRecorder(nil))
 	handler.Register(router, authHandler.AuthMiddleware())
 	handler.RegisterAdminRoutes(router, authHandler.AuthMiddleware())
 

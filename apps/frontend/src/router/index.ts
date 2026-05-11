@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router';
 import LoginView from '../views/LoginView.vue';
 import ManagementView from '../views/ManagementView.vue';
 import UserAskView from '../views/UserAskView.vue';
+import UserAuditView from '../views/UserAuditView.vue';
 import UserHomeView from '../views/UserHomeView.vue';
 import UserLayoutView from '../views/UserLayoutView.vue';
 import {
@@ -51,6 +52,14 @@ const router = createRouter({
           component: UserAskView,
           meta: {
             title: '辅助问询',
+          },
+        },
+        {
+          path: 'log',
+          name: 'home-log',
+          component: UserAuditView,
+          meta: {
+            title: '历史记录',
           },
         },
       ],
