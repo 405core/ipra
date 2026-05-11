@@ -1,18 +1,15 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
+import SensitiveAssetImage from '../app/SensitiveAssetImage.vue';
 import { openTouchInput } from '../app/touch-input';
+import { useProtectedPage } from '../app/use-protected-page';
 import {
   recognizeIDCard,
   type IDCardOCRResponse,
-  searchPassengerProfiles,
-  type PassengerProfileRecord,
+  searchPassengerProfilesProtected,
 } from '../app/profile-service';
-
-interface ProfileDetailEntry {
-  label: string;
-  value: string;
-}
+import type { ProtectedListItem } from '../app/protected-service';
 
 const router = useRouter();
 const defaultCameraStatus = '等待开启摄像头。';
@@ -20,11 +17,12 @@ const defaultOCRStatus = '等待开启实时扫描。';
 
 const query = ref('');
 const touchInputHint = '单击正常输入，双击打开触控键盘';
-const results = ref<PassengerProfileRecord[]>([]);
+const results = ref<ProtectedListItem[]>([]);
 const recentSearches = ref<string[]>([]);
 const searchStatus = ref('');
 const isSearching = ref(false);
 const lastSearchedQuery = ref('');
+const protectedResultError = ref('');
 const cameraVideo = ref<HTMLVideoElement | null>(null);
 const captureCanvas = ref<HTMLCanvasElement | null>(null);
 const isCameraActive = ref(false);
@@ -111,6 +109,8 @@ onMounted(() => {
   window.addEventListener('ipra:profiles-imported', handleProfilesImported);
 });
 
+useProtectedPage('/home/data');
+
 onBeforeUnmount(() => {
   window.removeEventListener('ipra:profiles-imported', handleProfilesImported);
   stopCameraStream(false);
@@ -123,6 +123,7 @@ async function loadProfiles(rawValue = query.value) {
   if (!trimmed) {
     results.value = [];
     searchStatus.value = '请输入证件号进行检索。';
+    protectedResultError.value = '';
     isSearching.value = false;
     return;
   }
@@ -131,8 +132,9 @@ async function loadProfiles(rawValue = query.value) {
   searchStatus.value = '正在检索旅客画像...';
 
   try {
-    const profiles = await searchPassengerProfiles(trimmed);
-    results.value = profiles;
+    const response = await searchPassengerProfilesProtected(trimmed);
+    results.value = response.items;
+    protectedResultError.value = '';
 
     if (trimmed) {
       recentSearches.value = [
@@ -146,6 +148,8 @@ async function loadProfiles(rawValue = query.value) {
       : `未找到证件号为 "${trimmed}" 的旅客记录。`;
   } catch (error) {
     results.value = [];
+    protectedResultError.value = normalizeErrorMessage(error, '查询旅客画像失败，请稍后重试。');
+    searchStatus.value = protectedResultError.value;
     searchStatus.value = normalizeErrorMessage(
       error,
       '查询旅客画像失败，请稍后重试。',
@@ -797,9 +801,9 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
                 v-for="record in results"
                 :key="record.id"
                 class="result-strip"
-                :class="{ 'is-high-risk': record.isHighRisk }"
               >
                 <div class="result-strip__content">
+                  <SensitiveAssetImage :src="record.asset.url" alt="检索结果敏感图片" />
                   <div class="result-strip__headline">
                     <strong>{{ record.fullName }}</strong>
                     <span

@@ -1,4 +1,6 @@
 import { loadAuthSession } from '../auth';
+import type { ProtectedDetailResponse, ProtectedListResponse } from './protected-service';
+import { protectedJson } from './protected-service';
 
 export interface AuditLogItem {
   id: number;
@@ -101,6 +103,32 @@ export async function listAuditLogs(query: AuditLogQuery = {}) {
 
   const response = await authorizedFetch(`/api/audit-logs?${params.toString()}`);
   return parsePayload<AuditLogListResult>(response, '查询审计日志失败。');
+}
+
+export async function listProtectedAuditLogs(query: AuditLogQuery = {}) {
+  const params = new URLSearchParams();
+  if (query.query?.trim()) {
+    params.set('query', query.query.trim());
+  }
+  if (query.result?.trim()) {
+    params.set('result', query.result.trim());
+  }
+  if (query.actorWorkId?.trim()) {
+    params.set('actorWorkId', query.actorWorkId.trim());
+  }
+  params.set('limit', String(query.limit && query.limit > 0 ? query.limit : 200));
+
+  return protectedJson<ProtectedListResponse>(
+    `/api/audit-logs/protected?${params.toString()}`,
+    '查询审计日志失败。'
+  );
+}
+
+export async function getProtectedAuditLogDetail(id: string) {
+  return protectedJson<ProtectedDetailResponse>(
+    `/api/audit-logs/${id}/protected`,
+    '查询审计日志详情失败。'
+  );
 }
 
 export async function recordAuditEvent(payload: AuditEventPayload) {

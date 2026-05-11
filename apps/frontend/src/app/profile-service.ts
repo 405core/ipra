@@ -1,4 +1,6 @@
 import { loadAuthSession } from '../auth';
+import type { ProtectedListResponse } from './protected-service';
+import { protectedJson } from './protected-service';
 
 export type ImportType = 'BASE_PROFILE' | 'HIGH_RISK';
 
@@ -83,6 +85,18 @@ export async function searchPassengerProfiles(query: string) {
   }
 
   return payload.profiles;
+}
+
+export async function searchPassengerProfilesProtected(query: string) {
+  const params = new URLSearchParams();
+  const trimmed = query.trim();
+  if (trimmed) {
+    params.set('query', trimmed);
+  }
+  return protectedJson<ProtectedListResponse>(
+    `/api/passenger-profiles/protected?${params.toString()}`,
+    '查询旅客画像失败。'
+  );
 }
 
 export async function importPassengerProfiles(file: File) {

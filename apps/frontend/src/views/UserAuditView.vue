@@ -1,16 +1,24 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { listAuditLogs, type AuditLogItem } from '../app/audit-service';
+import SensitiveAssetImage from '../app/SensitiveAssetImage.vue';
+import {
+  getProtectedAuditLogDetail,
+  listProtectedAuditLogs,
+} from '../app/audit-service';
+import { useProtectedPage } from '../app/use-protected-page';
+import type { ProtectedDetailResponse, ProtectedListItem } from '../app/protected-service';
 
 type HistoryTabKey = 'scan' | 'log';
 
 const activeTab = ref<HistoryTabKey>('log');
 const query = ref('');
-const logs = ref<AuditLogItem[]>([]);
+const logs = ref<ProtectedListItem[]>([]);
 const total = ref(0);
 const statusMessage = ref('正在加载审计日志...');
 const isLoading = ref(false);
-const selectedLog = ref<AuditLogItem | null>(null);
+const selectedLog = ref<ProtectedDetailResponse | null>(null);
+const detailLoading = ref(false);
+const detailError = ref('');
 
 const filteredLogs = computed(() => {
   const keyword = query.value.trim().toLowerCase();
@@ -18,30 +26,19 @@ const filteredLogs = computed(() => {
     return logs.value;
   }
 
-  return logs.value.filter((item) =>
-    [
-      item.actorWorkId,
-      item.actorName,
-      item.action,
-      item.resource,
-      item.result,
-      item.path,
-      item.method,
-    ]
-      .join(' ')
-      .toLowerCase()
-      .includes(keyword),
-  );
+  return logs.value.filter((item) => item.id.toLowerCase().includes(keyword));
 });
 
 onMounted(() => {
   void loadLogs();
 });
 
+useProtectedPage('/home/log');
+
 async function loadLogs() {
   isLoading.value = true;
   try {
-    const result = await listAuditLogs({ limit: 200 });
+    const result = await listProtectedAuditLogs({ limit: 200 });
     logs.value = result.items;
     total.value = result.total;
     statusMessage.value = `已加载审计日志 ${result.total} 条`;
@@ -54,78 +51,22 @@ async function loadLogs() {
     isLoading.value = false;
   }
 }
-
-function formatDateTime(value: string) {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
+async function openLogDetail(item: ProtectedListItem) {
+  detailLoading.value = true;
+  detailError.value = '';
+  selectedLog.value = null;
+  try {
+    selectedLog.value = await getProtectedAuditLogDetail(item.id);
+  } catch (error) {
+    detailError.value = error instanceof Error ? error.message : '查询审计日志详情失败';
+  } finally {
+    detailLoading.value = false;
   }
-
-  return parsed.toLocaleString('zh-CN', {
-    hour12: false,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
-}
-
-function formatResultLabel(value: string) {
-  if (value === 'success') {
-    return '成功';
-  }
-  if (value === 'denied') {
-    return '拒绝';
-  }
-  if (value === 'failure') {
-    return '失败';
-  }
-  return value || '未知';
-}
-
-function formatRoleLabel(value: string) {
-  if (value === 'admin') {
-    return '管理员';
-  }
-  if (value === 'user') {
-    return '员工';
-  }
-  return value || '未知';
-}
-
-function openLogDetail(item: AuditLogItem) {
-  selectedLog.value = item;
 }
 
 function closeLogDetail() {
   selectedLog.value = null;
-}
-
-function formatText(value: string | number | null | undefined) {
-  if (value == null) {
-    return '-';
-  }
-
-  const normalized = String(value).trim();
-  return normalized || '-';
-}
-
-function formatDetail(detail: AuditLogItem['detail']) {
-  if (detail == null) {
-    return '无';
-  }
-
-  if (typeof detail === 'object' && !Array.isArray(detail) && Object.keys(detail).length === 0) {
-    return '无';
-  }
-
-  try {
-    return JSON.stringify(detail, null, 2);
-  } catch {
-    return String(detail);
-  }
+  detailError.value = '';
 }
 </script>
 
@@ -179,22 +120,13 @@ function formatDetail(detail: AuditLogItem['detail']) {
       <section v-else class="audit-card">
         <div class="audit-list">
           <article v-for="item in filteredLogs" :key="item.id" class="audit-item">
-            <div class="audit-item__head">
-              <strong>{{ item.resource }}</strong>
-              <div class="audit-item__actions">
-                <span class="audit-item__pill" :class="`is-${item.result}`">
-                  {{ formatResultLabel(item.result) }}
-                </span>
-                <button type="button" class="audit-item__detail" @click="openLogDetail(item)">
-                  详情
-                </button>
-              </div>
+            <div class="audit-item__image">
+              <SensitiveAssetImage :src="item.asset.url" alt="审计日志敏感图片" />
             </div>
-            <div class="audit-item__meta">
-              <span>{{ formatDateTime(item.createdAt) }}</span>
-              <span>{{ item.actorName || item.actorWorkId || '未知操作人' }}</span>
-              <span>{{ item.action }}</span>
-              <span>{{ item.method }} {{ item.path }}</span>
+            <div class="audit-item__actions">
+              <button type="button" class="audit-item__detail" @click="openLogDetail(item)">
+                详情
+              </button>
             </div>
           </article>
 
@@ -212,55 +144,13 @@ function formatDetail(detail: AuditLogItem['detail']) {
       <div class="audit-dialog__card">
         <div class="audit-dialog__head">
           <div>
-            <h3>{{ selectedLog.resource }}</h3>
-            <p>{{ selectedLog.action }} · {{ formatDateTime(selectedLog.createdAt) }}</p>
+            <h3>日志详情</h3>
+            <p>受保护审计日志图片</p>
           </div>
           <button type="button" class="audit-dialog__close" @click="closeLogDetail">关闭</button>
         </div>
 
-        <div class="audit-detail-grid">
-          <div class="audit-detail-item">
-            <span>操作人</span>
-            <strong>{{ formatText(selectedLog.actorName) }}</strong>
-          </div>
-          <div class="audit-detail-item">
-            <span>工号</span>
-            <strong>{{ formatText(selectedLog.actorWorkId) }}</strong>
-          </div>
-          <div class="audit-detail-item">
-            <span>角色</span>
-            <strong>{{ formatRoleLabel(selectedLog.actorRole) }}</strong>
-          </div>
-          <div class="audit-detail-item">
-            <span>结果</span>
-            <strong>{{ formatResultLabel(selectedLog.result) }}</strong>
-          </div>
-          <div class="audit-detail-item">
-            <span>状态码</span>
-            <strong>{{ formatText(selectedLog.statusCode) }}</strong>
-          </div>
-          <div class="audit-detail-item">
-            <span>方法</span>
-            <strong>{{ formatText(selectedLog.method) }}</strong>
-          </div>
-          <div class="audit-detail-item audit-detail-item--full">
-            <span>路径</span>
-            <strong>{{ formatText(selectedLog.path) }}</strong>
-          </div>
-          <div class="audit-detail-item">
-            <span>客户端 IP</span>
-            <strong>{{ formatText(selectedLog.clientIp) }}</strong>
-          </div>
-          <div class="audit-detail-item audit-detail-item--full">
-            <span>User-Agent</span>
-            <strong>{{ formatText(selectedLog.userAgent) }}</strong>
-          </div>
-        </div>
-
-        <div class="audit-detail-block">
-          <span>详细日志</span>
-          <pre>{{ formatDetail(selectedLog.detail) }}</pre>
-        </div>
+        <SensitiveAssetImage :src="selectedLog.asset.url" alt="审计日志详情敏感图片" />
       </div>
     </section>
   </Teleport>
