@@ -25,7 +25,6 @@ import {
   deleteAdminWatchlist,
   listAdminAuditLogsProtected,
   getAdminInquirySettings,
-  listAdminAuditLogs,
   listAdminProfiles,
   listAdminProfilesProtected,
   listAdminUsers,
@@ -50,7 +49,6 @@ import {
   type InquiryArchiveListItem,
   type InquiryArchiveVideoPayload,
 } from '../app/archive-service';
-import type { AuditLogItem } from '../app/audit-service';
 import type { PassengerProfileRecord } from '../app/profile-service';
 
 type TabKey =
@@ -142,7 +140,6 @@ const users = ref<AdminUserItem[]>([]);
 const protectedUsers = ref<ProtectedListItem[]>([]);
 const protectedAuditLogs = ref<ProtectedListItem[]>([]);
 const archives = ref<InquiryArchiveListItem[]>([]);
-const auditLogs = ref<AuditLogItem[]>([]);
 const inquirySettings = ref<InquirySettings | null>(null);
 const inquiryMaxRoundsInput = ref(3);
 const isSavingInquirySettings = ref(false);
@@ -308,34 +305,6 @@ const filteredArchives = computed(() =>
     ),
   ),
 );
-const filteredAuditLogs = computed(() =>
-  auditLogs.value.filter((item) => {
-    if (
-      auditFilters.value.result &&
-      item.result !== auditFilters.value.result
-    ) {
-      return false;
-    }
-    if (
-      auditActorWorkId.value.trim() &&
-      item.actorWorkId !== auditActorWorkId.value.trim()
-    ) {
-      return false;
-    }
-    return matchesSearch(
-      [
-        item.actorWorkId,
-        item.actorName,
-        item.action,
-        item.resource,
-        item.result,
-        item.path,
-        item.method,
-      ],
-      auditQuery.value,
-    );
-  }),
-);
 const selectedProfileDocumentTypeLabel = computed(() =>
   describeFilterLabel(
     '证件类型',
@@ -450,7 +419,9 @@ async function loadProfiles() {
 }
 
 async function loadWatchlist() {
-  const protectedResult = await listAdminWatchlistProtected(watchlistQuery.value);
+  const protectedResult = await listAdminWatchlistProtected(
+    watchlistQuery.value,
+  );
   protectedWatchlist.value = protectedResult.items;
   const result = await listAdminWatchlist('');
   watchlist.value = result.items;
@@ -1502,7 +1473,9 @@ function stringifyDetail(value: unknown) {
           </div>
         </div>
 
-        <p class="admin-filter-summary">当前展示 {{ protectedProfiles.length }} 条基础画像。</p>
+        <p class="admin-filter-summary">
+          当前展示 {{ protectedProfiles.length }} 条基础画像。
+        </p>
 
         <div class="admin-table">
           <article
@@ -1511,14 +1484,24 @@ function stringifyDetail(value: unknown) {
             class="admin-row admin-row--profile"
           >
             <div class="admin-row__profile-content">
-              <SensitiveAssetImage :src="item.asset.url" alt="基础画像敏感图片" />
+              <SensitiveAssetImage
+                :src="item.asset.url"
+                alt="基础画像敏感图片"
+              />
             </div>
             <div class="admin-row__actions">
-              <button type="button" @click="editProfile(filteredProfiles[index] || profiles[index])">编辑</button>
+              <button
+                type="button"
+                @click="editProfile(filteredProfiles[index] || profiles[index])"
+              >
+                编辑
+              </button>
               <button
                 type="button"
                 class="danger"
-                @click="removeProfile((filteredProfiles[index] || profiles[index]).id)"
+                @click="
+                  removeProfile((filteredProfiles[index] || profiles[index]).id)
+                "
               >
                 删除
               </button>
@@ -1552,19 +1535,39 @@ function stringifyDetail(value: unknown) {
           </div>
         </div>
 
-        <p class="admin-filter-summary">当前展示 {{ protectedWatchlist.length }} 条高风险名单。</p>
+        <p class="admin-filter-summary">
+          当前展示 {{ protectedWatchlist.length }} 条高风险名单。
+        </p>
 
         <div class="admin-table">
-          <article v-for="(item, index) in protectedWatchlist" :key="item.id" class="admin-row">
+          <article
+            v-for="(item, index) in protectedWatchlist"
+            :key="item.id"
+            class="admin-row"
+          >
             <div class="admin-row__profile-content">
-              <SensitiveAssetImage :src="item.asset.url" alt="高风险名单敏感图片" />
+              <SensitiveAssetImage
+                :src="item.asset.url"
+                alt="高风险名单敏感图片"
+              />
             </div>
             <div class="admin-row__actions">
-              <button type="button" @click="editWatchlist(filteredWatchlist[index] || watchlist[index])">编辑</button>
+              <button
+                type="button"
+                @click="
+                  editWatchlist(filteredWatchlist[index] || watchlist[index])
+                "
+              >
+                编辑
+              </button>
               <button
                 type="button"
                 class="danger"
-                @click="removeWatchlist((filteredWatchlist[index] || watchlist[index]).id)"
+                @click="
+                  removeWatchlist(
+                    (filteredWatchlist[index] || watchlist[index]).id,
+                  )
+                "
               >
                 删除
               </button>
@@ -1764,11 +1767,20 @@ function stringifyDetail(value: unknown) {
             </div>
           </div>
 
-          <p class="admin-filter-summary">当前展示 {{ filteredAuditLogs.length }} 条审计日志。</p>
+          <p class="admin-filter-summary">
+            当前展示 {{ filteredAuditLogs.length }} 条审计日志。
+          </p>
 
           <div class="admin-audit-list">
-            <article v-for="item in filteredAuditLogs" :key="item.id" class="admin-audit-item">
-              <SensitiveAssetImage :src="item.asset.url" alt="审计日志敏感图片" />
+            <article
+              v-for="item in filteredAuditLogs"
+              :key="item.id"
+              class="admin-audit-item"
+            >
+              <SensitiveAssetImage
+                :src="item.asset.url"
+                alt="审计日志敏感图片"
+              />
             </article>
           </div>
         </template>
@@ -1881,25 +1893,46 @@ function stringifyDetail(value: unknown) {
             </div>
           </div>
 
-        <p class="admin-filter-summary">当前展示 {{ protectedUsers.length }} 个用户。</p>
+          <p class="admin-filter-summary">
+            当前展示 {{ protectedUsers.length }} 个用户。
+          </p>
 
-        <div class="admin-table">
-          <article v-for="(item, index) in protectedUsers" :key="item.id" class="admin-row">
-            <div class="admin-row__profile-content">
-              <SensitiveAssetImage :src="item.asset.url" alt="用户敏感图片" />
-            </div>
-            <div class="admin-row__actions">
-              <button type="button" @click="editUser(filteredUsers[index] || users[index])">编辑</button>
-              <button
-                type="button"
-                :class="(filteredUsers[index] || users[index]).status === 'active' ? 'danger' : ''"
-                @click="toggleUserStatus(filteredUsers[index] || users[index])"
-              >
-                {{ (filteredUsers[index] || users[index]).status === 'active' ? '停用' : '启用' }}
-              </button>
-            </div>
-          </article>
-        </div>
+          <div class="admin-table">
+            <article
+              v-for="(item, index) in protectedUsers"
+              :key="item.id"
+              class="admin-row"
+            >
+              <div class="admin-row__profile-content">
+                <SensitiveAssetImage :src="item.asset.url" alt="用户敏感图片" />
+              </div>
+              <div class="admin-row__actions">
+                <button
+                  type="button"
+                  @click="editUser(filteredUsers[index] || users[index])"
+                >
+                  编辑
+                </button>
+                <button
+                  type="button"
+                  :class="
+                    (filteredUsers[index] || users[index]).status === 'active'
+                      ? 'danger'
+                      : ''
+                  "
+                  @click="
+                    toggleUserStatus(filteredUsers[index] || users[index])
+                  "
+                >
+                  {{
+                    (filteredUsers[index] || users[index]).status === 'active'
+                      ? '停用'
+                      : '启用'
+                  }}
+                </button>
+              </div>
+            </article>
+          </div>
         </template>
       </section>
     </section>
