@@ -1,14 +1,6 @@
 import { loadAuthSession } from '../auth';
-import type { PassengerProfileRecord } from './profile-service';
 import type { ProtectedListResponse } from './protected-service';
 import { protectedJson } from './protected-service';
-
-export interface AdminWatchlistItem {
-  id: number;
-  documentNum: string;
-  riskReason: string;
-  updatedAt: string;
-}
 
 export interface AdminUserItem {
   id: number;
@@ -73,11 +65,6 @@ async function parsePayload<T>(response: Response, fallbackMessage: string): Pro
   return payload as T;
 }
 
-export async function getAdminProfile(id: number) {
-  const response = await authorizedFetch(`/api/admin/profiles/${id}`);
-  return parsePayload<PassengerProfileRecord>(response, '查询基础画像失败。');
-}
-
 export async function listAdminProfilesProtected(query: string) {
   const params = new URLSearchParams();
   if (query.trim()) {
@@ -90,34 +77,6 @@ export async function listAdminProfilesProtected(query: string) {
   );
 }
 
-export async function createAdminProfile(payload: Partial<PassengerProfileRecord>) {
-  const response = await authorizedFetch('/api/admin/profiles', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-  return parsePayload<{ message: string }>(response, '新增基础画像失败。');
-}
-
-export async function updateAdminProfile(id: number, payload: Partial<PassengerProfileRecord>) {
-  const response = await authorizedFetch(`/api/admin/profiles/${id}`, {
-    method: 'PUT',
-    body: JSON.stringify(payload),
-  });
-  return parsePayload<{ message: string }>(response, '更新基础画像失败。');
-}
-
-export async function deleteAdminProfile(id: number) {
-  const response = await authorizedFetch(`/api/admin/profiles/${id}`, {
-    method: 'DELETE',
-  });
-  return parsePayload<{ message: string }>(response, '删除基础画像失败。');
-}
-
-export async function getAdminWatchlist(id: number) {
-  const response = await authorizedFetch(`/api/admin/watchlist/${id}`);
-  return parsePayload<AdminWatchlistItem>(response, '查询高风险名单失败。');
-}
-
 export async function listAdminWatchlistProtected(query: string) {
   const params = new URLSearchParams();
   if (query.trim()) {
@@ -128,29 +87,6 @@ export async function listAdminWatchlistProtected(query: string) {
     `/api/admin/watchlist/protected?${params.toString()}`,
     '查询高风险名单失败。'
   );
-}
-
-export async function createAdminWatchlist(payload: Partial<AdminWatchlistItem>) {
-  const response = await authorizedFetch('/api/admin/watchlist', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-  return parsePayload<{ message: string }>(response, '新增高风险名单失败。');
-}
-
-export async function updateAdminWatchlist(id: number, payload: Partial<AdminWatchlistItem>) {
-  const response = await authorizedFetch(`/api/admin/watchlist/${id}`, {
-    method: 'PUT',
-    body: JSON.stringify(payload),
-  });
-  return parsePayload<{ message: string }>(response, '更新高风险名单失败。');
-}
-
-export async function deleteAdminWatchlist(id: number) {
-  const response = await authorizedFetch(`/api/admin/watchlist/${id}`, {
-    method: 'DELETE',
-  });
-  return parsePayload<{ message: string }>(response, '删除高风险名单失败。');
 }
 
 export async function getAdminUser(id: number) {
