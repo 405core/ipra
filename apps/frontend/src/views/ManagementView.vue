@@ -2867,10 +2867,12 @@ function stringifyDetail(value: unknown) {
 
 <style scoped lang="scss">
 .admin-page {
-  min-height: 100vh;
-  height: 100vh;
+  --admin-page-pad: clamp(14px, 1.8vw, 28px);
+  --admin-sidebar-width: clamp(248px, 18vw, 280px);
+  min-height: 100dvh;
+  height: 100dvh;
   display: grid;
-  grid-template-columns: 280px 1fr;
+  grid-template-columns: var(--admin-sidebar-width) minmax(0, 1fr);
   background:
     linear-gradient(135deg, rgba(145, 48, 30, 0.07), transparent 36%),
     linear-gradient(180deg, #fff8f4, #f4efe9);
@@ -2880,12 +2882,12 @@ function stringifyDetail(value: unknown) {
 .admin-sidebar {
   position: sticky;
   top: 0;
-  height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 28px 22px;
+  padding: var(--admin-page-pad) clamp(16px, 1.4vw, 22px);
   background: #261613;
   color: #fff7f0;
 }
@@ -2910,7 +2912,7 @@ function stringifyDetail(value: unknown) {
 
 .admin-nav {
   display: grid;
-  gap: 14px;
+  gap: clamp(12px, 1.4vw, 14px);
 }
 
 .admin-nav__item,
@@ -2947,13 +2949,17 @@ function stringifyDetail(value: unknown) {
 
 .admin-content {
   min-height: 0;
-  height: 100vh;
-  padding: 28px;
+  height: 100dvh;
+  padding: var(--admin-page-pad);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   overflow-x: hidden;
   overflow-y: auto;
 }
 
 .admin-panel {
+  min-width: 0;
+  min-height: calc(100dvh - (var(--admin-page-pad) * 2));
   border-radius: 24px;
   background: rgba(255, 255, 255, 0.86);
   border: 1px solid rgba(204, 179, 164, 0.5);
@@ -2961,7 +2967,7 @@ function stringifyDetail(value: unknown) {
 }
 
 .admin-panel {
-  padding: 20px;
+  padding: clamp(16px, 1.8vw, 20px);
   overflow: visible;
 }
 
@@ -2970,7 +2976,7 @@ function stringifyDetail(value: unknown) {
 .admin-form-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: clamp(10px, 1.2vw, 12px);
 }
 
 .admin-toolbar,
@@ -2981,8 +2987,8 @@ function stringifyDetail(value: unknown) {
 .admin-toolbar {
   align-items: stretch;
   justify-content: space-between;
-  padding: 14px 16px;
-  border-radius: 20px;
+  padding: clamp(12px, 1.4vw, 16px);
+  border-radius: clamp(18px, 1.8vw, 20px);
   background: linear-gradient(
     180deg,
     rgba(255, 250, 246, 0.94),
@@ -2993,20 +2999,19 @@ function stringifyDetail(value: unknown) {
 
 .admin-toolbar__search-block {
   display: flex;
-  flex: 0 1 280px;
-  align-items: center;
-  min-width: min(100%, 280px);
+  flex: 1 1 280px;
+  align-items: stretch;
+  min-width: min(100%, 240px);
 }
 
 .admin-toolbar__actions {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(138px, 156px));
-  flex: 1 1 520px;
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(144px, 1fr));
+  flex: 999 1 680px;
+  gap: clamp(10px, 1.2vw, 12px);
   align-items: stretch;
   align-content: stretch;
   justify-content: end;
-  margin-left: auto;
   min-width: min(100%, 420px);
 }
 
@@ -3017,11 +3022,11 @@ function stringifyDetail(value: unknown) {
 .admin-toolbar__search-input {
   flex: 1 1 auto;
   min-width: 0;
-  min-height: 64px;
+  min-height: clamp(52px, 7vh, 64px);
 }
 
 .admin-toolbar__search-input--compact {
-  min-height: 64px;
+  min-height: clamp(52px, 7vh, 64px);
 }
 
 .admin-form-grid {
@@ -3126,22 +3131,22 @@ function stringifyDetail(value: unknown) {
 .settings-field input {
   width: 100%;
   min-height: 44px;
-  padding: 12px 14px;
+  padding: clamp(10px, 1.2vw, 14px);
   border: 1px solid #d7c1b4;
-  border-radius: 14px;
+  border-radius: clamp(12px, 1.2vw, 14px);
   font: inherit;
   background: #fffdfa;
 }
 
 .admin-toolbar .admin-toolbar__search-input {
-  min-height: 64px;
+  min-height: clamp(52px, 7vh, 64px);
 }
 
 .admin-toolbar__actions > button,
 .admin-toolbar__actions > .filter-picker {
   width: 100%;
   height: 100%;
-  min-height: 64px;
+  min-height: clamp(52px, 7vh, 64px);
 }
 
 .admin-toolbar button,
@@ -3193,7 +3198,7 @@ function stringifyDetail(value: unknown) {
 
 .admin-form-card--dialog {
   width: min(860px, 100%);
-  max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
   margin-bottom: 0;
   overflow: auto;
   box-shadow: 0 28px 56px rgba(34, 22, 18, 0.22);
@@ -3240,9 +3245,9 @@ function stringifyDetail(value: unknown) {
   align-items: center;
   justify-content: center;
   width: 100%;
-  min-height: 64px;
-  padding: 0 16px;
-  border-radius: 14px;
+  min-height: clamp(52px, 7vh, 64px);
+  padding: 0 clamp(12px, 1.4vw, 16px);
+  border-radius: clamp(12px, 1.2vw, 14px);
   background: #f6ebe4;
   color: #6f493c;
 }
@@ -3278,16 +3283,16 @@ function stringifyDetail(value: unknown) {
 
 .admin-table {
   display: grid;
-  gap: 12px;
+  gap: clamp(10px, 1.2vw, 12px);
 }
 
 .admin-row {
   display: flex;
   align-items: stretch;
   justify-content: space-between;
-  gap: 16px;
-  padding: 16px 18px;
-  border-radius: 18px;
+  gap: clamp(12px, 1.4vw, 16px);
+  padding: clamp(14px, 1.5vw, 18px);
+  border-radius: clamp(16px, 1.6vw, 18px);
   background: #fff9f6;
   border: 1px solid rgba(215, 193, 180, 0.5);
 }
@@ -3309,14 +3314,14 @@ function stringifyDetail(value: unknown) {
   margin-left: auto;
   justify-content: flex-start;
   align-items: stretch;
-  flex: 0 0 172px;
-  width: 172px;
+  flex: 0 0 clamp(148px, 12vw, 172px);
+  width: clamp(148px, 12vw, 172px);
 }
 
 .admin-row__actions button {
   width: 100%;
   flex: 1 1 0;
-  min-height: 64px;
+  min-height: clamp(52px, 7vh, 64px);
   font-weight: 700;
 }
 
@@ -3330,19 +3335,19 @@ function stringifyDetail(value: unknown) {
   justify-content: center;
   width: 100%;
   min-height: 0;
-  max-height: 132px;
+  max-height: clamp(96px, 12vh, 128px);
 }
 
 .admin-row--profile :deep(.sensitive-image img) {
   width: 100%;
   max-width: 100%;
-  max-height: 132px;
+  max-height: clamp(96px, 12vh, 128px);
   object-fit: fill;
   object-position: center center;
 }
 
 .admin-row--profile :deep(.sensitive-image__placeholder) {
-  min-height: 120px;
+  min-height: clamp(92px, 11vh, 120px);
 }
 
 .admin-row__profile-content {
@@ -3528,8 +3533,8 @@ function stringifyDetail(value: unknown) {
 .archive-detail__block,
 .archive-round,
 .archive-video {
-  padding: 14px;
-  border-radius: 16px;
+  padding: clamp(12px, 1.4vw, 14px);
+  border-radius: clamp(14px, 1.4vw, 16px);
   border: 1px solid rgba(215, 193, 180, 0.52);
   background: #fffdfa;
 }
@@ -3629,7 +3634,7 @@ function stringifyDetail(value: unknown) {
 
 .admin-user-table-wrap {
   overflow-x: auto;
-  border-radius: 18px;
+  border-radius: clamp(16px, 1.6vw, 18px);
   border: 1px solid rgba(215, 193, 180, 0.5);
   background: #fff9f6;
 }
@@ -3702,7 +3707,12 @@ function stringifyDetail(value: unknown) {
 
   .admin-content {
     height: auto;
+    min-height: auto;
     overflow: visible;
+  }
+
+  .admin-panel {
+    min-height: auto;
   }
 
   .admin-form-grid > * {
@@ -3757,7 +3767,7 @@ function stringifyDetail(value: unknown) {
 
   .admin-form-card--dialog {
     width: 100%;
-    max-height: calc(100vh - 24px);
+    max-height: calc(100dvh - 24px);
   }
 
   .admin-form-card__header {

@@ -243,21 +243,22 @@ function protectedNotes(item: ProtectedListItem) {
 
 <style scoped lang="scss">
 .audit-page {
-  min-height: calc(100vh - 146px);
+  min-height: 0;
+  height: 100%;
   display: grid;
-  align-content: center;
 }
 
 .audit-shell {
   box-sizing: border-box;
-  width: min(1180px, 100%);
-  height: calc(100vh - 146px);
-  margin: 0 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  height: min(100%, var(--content-height, 100%));
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  gap: 18px;
-  padding: 26px 28px;
-  border-radius: 28px;
+  gap: clamp(12px, 1.4vw, 18px);
+  padding: clamp(14px, 1.8vw, 26px);
+  border-radius: clamp(22px, 2vw, 28px);
   background: rgba(255, 255, 255, 0.92);
   border: 1px solid rgba(157, 189, 202, 0.36);
   box-shadow: 0 22px 46px rgba(14, 40, 48, 0.08);
@@ -267,9 +268,9 @@ function protectedNotes(item: ProtectedListItem) {
 .audit-topbar {
   display: flex;
   align-items: center;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: clamp(10px, 1.2vw, 12px);
   min-width: 0;
-  overflow-x: auto;
 }
 
 .history-tabs {
@@ -280,9 +281,9 @@ function protectedNotes(item: ProtectedListItem) {
 
 .history-tab,
 .audit-refresh {
-  min-height: 44px;
-  padding: 0 18px;
-  border-radius: 14px;
+  min-height: clamp(42px, 5vh, 48px);
+  padding: 0 clamp(14px, 1.6vw, 18px);
+  border-radius: clamp(12px, 1.2vw, 14px);
   font-weight: 700;
   flex: 0 0 auto;
 }
@@ -300,10 +301,11 @@ function protectedNotes(item: ProtectedListItem) {
 }
 
 .audit-topbar__input {
-  flex: 1 1 auto;
-  min-height: 48px;
-  padding: 0 16px;
-  border-radius: 16px;
+  flex: 1 1 min(340px, 100%);
+  min-width: min(100%, 260px);
+  min-height: clamp(44px, 5vh, 48px);
+  padding: 0 clamp(12px, 1.4vw, 16px);
+  border-radius: clamp(14px, 1.5vw, 16px);
   background: #fff;
   border: 1px solid rgba(157, 189, 202, 0.4);
   color: #15252b;
@@ -319,8 +321,8 @@ function protectedNotes(item: ProtectedListItem) {
 .audit-card {
   box-sizing: border-box;
   min-height: 0;
-  padding: 22px 24px;
-  border-radius: 24px;
+  padding: clamp(16px, 1.8vw, 24px);
+  border-radius: clamp(20px, 1.8vw, 24px);
   background: rgba(255, 255, 255, 0.94);
   border: 1px solid rgba(157, 189, 202, 0.36);
   overflow: hidden;
@@ -333,16 +335,17 @@ function protectedNotes(item: ProtectedListItem) {
 
 .audit-list {
   display: grid;
-  gap: 14px;
+  gap: clamp(12px, 1.2vw, 14px);
   height: 100%;
   min-height: 0;
   overflow: auto;
+  padding-right: 4px;
 }
 
 .audit-item,
 .audit-empty {
-  padding: 18px 20px;
-  border-radius: 22px;
+  padding: clamp(16px, 1.6vw, 20px);
+  border-radius: clamp(18px, 1.8vw, 22px);
   background: rgba(255, 255, 255, 0.94);
   border: 1px solid rgba(157, 189, 202, 0.36);
 }
@@ -495,7 +498,7 @@ function protectedNotes(item: ProtectedListItem) {
 
 .audit-dialog__card {
   width: min(920px, 100%);
-  max-height: min(82vh, 920px);
+  max-height: min(86dvh, 920px);
   overflow: auto;
   padding: 24px;
   border-radius: 24px;
@@ -568,14 +571,14 @@ function protectedNotes(item: ProtectedListItem) {
 
 @media (max-width: 719px) {
   .audit-page {
-    min-height: auto;
-    align-content: start;
+    height: auto;
   }
 
   .audit-shell {
     height: auto;
-    padding: 22px 20px;
-    border-radius: 24px;
+    min-height: auto;
+    padding: 14px;
+    border-radius: 22px;
     overflow: visible;
   }
 

@@ -4045,12 +4045,16 @@ onBeforeUnmount(() => {
   --warn: #c07b19;
   --safe: #237d4d;
   --shadow: 0 22px 46px rgba(14, 40, 48, 0.08);
+  min-height: 0;
+  height: 100%;
   display: grid;
-  gap: 22px;
+  gap: clamp(14px, 1.8vw, 22px);
 }
 
 .stage-card {
-  border-radius: 28px;
+  min-height: 0;
+  height: min(100%, var(--content-height, 100%));
+  border-radius: clamp(22px, 2vw, 28px);
   background: var(--surface-bg);
   border: 1px solid var(--surface-border);
   box-shadow: var(--shadow);
@@ -4162,18 +4166,18 @@ onBeforeUnmount(() => {
 }
 
 .stage-card {
-  --stage-card-padding: 20px;
+  --stage-card-padding: clamp(16px, 1.8vw, 24px);
   position: relative;
   padding: var(--stage-card-padding);
   display: grid;
-  gap: 16px;
+  gap: clamp(12px, 1.4vw, 16px);
   min-height: 0;
 }
 
 .stage-card__progress {
   margin: calc(var(--stage-card-padding) * -1)
     calc(var(--stage-card-padding) * -1) 0;
-  padding: 14px var(--stage-card-padding);
+  padding: clamp(12px, 1.4vw, 14px) var(--stage-card-padding);
   border-bottom: 1px solid rgba(157, 189, 202, 0.24);
   background:
     linear-gradient(
@@ -4318,7 +4322,8 @@ onBeforeUnmount(() => {
 .judgement-layout,
 .completion-layout {
   display: grid;
-  gap: 14px;
+  gap: clamp(12px, 1.4vw, 16px);
+  min-height: 0;
 }
 
 .profile-panel,
@@ -4345,8 +4350,9 @@ onBeforeUnmount(() => {
 .analysis-column {
   display: grid;
   align-content: start;
-  gap: 14px;
-  padding: 16px;
+  gap: clamp(12px, 1.4vw, 14px);
+  padding: clamp(14px, 1.5vw, 16px);
+  min-height: 0;
 }
 
 .video-panel,
@@ -4631,6 +4637,11 @@ onBeforeUnmount(() => {
   padding-right: 4px;
 }
 
+.history-panel {
+  min-height: 0;
+  overflow: hidden;
+}
+
 .current-questions--scroll {
   max-height: 260px;
 }
@@ -4821,8 +4832,8 @@ onBeforeUnmount(() => {
 
 .video-stage {
   position: relative;
-  min-height: 286px;
-  border-radius: 18px;
+  min-height: clamp(260px, 36vh, 420px);
+  border-radius: clamp(16px, 1.6vw, 18px);
   background:
     radial-gradient(
       circle at top left,
@@ -4836,7 +4847,7 @@ onBeforeUnmount(() => {
 .video-stage__feed {
   width: 100%;
   height: 100%;
-  min-height: 286px;
+  min-height: inherit;
   object-fit: cover;
   transform: scaleX(-1);
 }
@@ -4846,7 +4857,7 @@ onBeforeUnmount(() => {
   inset: 0;
   width: 100%;
   height: 100%;
-  min-height: 286px;
+  min-height: inherit;
   pointer-events: none;
   transform: scaleX(-1);
 }
@@ -5383,9 +5394,9 @@ onBeforeUnmount(() => {
 }
 
 .analysis-hero {
-  padding: 22px;
+  padding: clamp(16px, 1.8vw, 22px);
   align-items: center;
-  gap: 24px;
+  gap: clamp(16px, 1.8vw, 24px);
 }
 
 .analysis-score {
@@ -5563,8 +5574,8 @@ onBeforeUnmount(() => {
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   justify-content: start;
-  padding: 22px;
-  border-radius: 24px;
+  padding: clamp(16px, 1.8vw, 22px);
+  border-radius: clamp(20px, 1.8vw, 24px);
   background:
     linear-gradient(135deg, rgba(11, 114, 136, 0.1), rgba(255, 255, 255, 0.96)),
     var(--surface-subtle);
@@ -5605,7 +5616,7 @@ onBeforeUnmount(() => {
 
 .completion-panel {
   min-width: 0;
-  padding: 18px;
+  padding: clamp(14px, 1.5vw, 18px);
 }
 
 .completion-panel p,
@@ -5937,11 +5948,12 @@ onBeforeUnmount(() => {
   .strategy-layout,
   .judgement-layout {
     grid-template-columns: minmax(300px, 0.82fr) minmax(420px, 1.18fr);
+    align-items: stretch;
   }
 
   .interview-layout {
     grid-template-columns: minmax(420px, 0.92fr) minmax(430px, 1.08fr);
-    align-items: start;
+    align-items: stretch;
   }
 
   .transcript-panel--round {
@@ -6024,10 +6036,6 @@ onBeforeUnmount(() => {
 @media (max-width: 719px) {
   .stage-card {
     --stage-card-padding: 16px;
-  }
-
-  .stage-card {
-    padding: 16px;
   }
 
   .stage-card__progress {
