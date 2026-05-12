@@ -1,13 +1,7 @@
 import { loadAuthSession } from '../auth';
-import type { AuditLogListResult } from './audit-service';
 import type { PassengerProfileRecord } from './profile-service';
 import type { ProtectedListResponse } from './protected-service';
 import { protectedJson } from './protected-service';
-
-export interface AdminListResult<T> {
-  items: T[];
-  total: number;
-}
 
 export interface AdminWatchlistItem {
   id: number;
@@ -79,14 +73,9 @@ async function parsePayload<T>(response: Response, fallbackMessage: string): Pro
   return payload as T;
 }
 
-export async function listAdminProfiles(query: string) {
-  const params = new URLSearchParams();
-  if (query.trim()) {
-    params.set('query', query.trim());
-  }
-  params.set('limit', '500');
-  const response = await authorizedFetch(`/api/admin/profiles?${params.toString()}`);
-  return parsePayload<AdminListResult<PassengerProfileRecord>>(response, '查询基础画像失败。');
+export async function getAdminProfile(id: number) {
+  const response = await authorizedFetch(`/api/admin/profiles/${id}`);
+  return parsePayload<PassengerProfileRecord>(response, '查询基础画像失败。');
 }
 
 export async function listAdminProfilesProtected(query: string) {
@@ -124,14 +113,9 @@ export async function deleteAdminProfile(id: number) {
   return parsePayload<{ message: string }>(response, '删除基础画像失败。');
 }
 
-export async function listAdminWatchlist(query: string) {
-  const params = new URLSearchParams();
-  if (query.trim()) {
-    params.set('query', query.trim());
-  }
-  params.set('limit', '500');
-  const response = await authorizedFetch(`/api/admin/watchlist?${params.toString()}`);
-  return parsePayload<AdminListResult<AdminWatchlistItem>>(response, '查询高风险名单失败。');
+export async function getAdminWatchlist(id: number) {
+  const response = await authorizedFetch(`/api/admin/watchlist/${id}`);
+  return parsePayload<AdminWatchlistItem>(response, '查询高风险名单失败。');
 }
 
 export async function listAdminWatchlistProtected(query: string) {
@@ -169,14 +153,9 @@ export async function deleteAdminWatchlist(id: number) {
   return parsePayload<{ message: string }>(response, '删除高风险名单失败。');
 }
 
-export async function listAdminUsers(query: string) {
-  const params = new URLSearchParams();
-  if (query.trim()) {
-    params.set('query', query.trim());
-  }
-  params.set('limit', '500');
-  const response = await authorizedFetch(`/api/admin/users?${params.toString()}`);
-  return parsePayload<AdminListResult<AdminUserItem>>(response, '查询用户失败。');
+export async function getAdminUser(id: number) {
+  const response = await authorizedFetch(`/api/admin/users/${id}`);
+  return parsePayload<AdminUserItem>(response, '查询用户失败。');
 }
 
 export async function listAdminUsersProtected(query: string) {
@@ -213,28 +192,6 @@ export async function updateAdminUserStatus(id: number, status: string) {
     body: JSON.stringify({ status }),
   });
   return parsePayload<{ message: string }>(response, '更新用户状态失败。');
-}
-
-export async function listAdminAuditLogs(query: {
-  query?: string;
-  actorWorkId?: string;
-  result?: string;
-  limit?: number;
-}) {
-  const params = new URLSearchParams();
-  if (query.query?.trim()) {
-    params.set('query', query.query.trim());
-  }
-  if (query.actorWorkId?.trim()) {
-    params.set('actorWorkId', query.actorWorkId.trim());
-  }
-  if (query.result?.trim()) {
-    params.set('result', query.result.trim());
-  }
-  params.set('limit', String(query.limit && query.limit > 0 ? query.limit : 500));
-
-  const response = await authorizedFetch(`/api/audit-logs?${params.toString()}`);
-  return parsePayload<AuditLogListResult>(response, '查询审计日志失败。');
 }
 
 export async function listAdminAuditLogsProtected(query: {

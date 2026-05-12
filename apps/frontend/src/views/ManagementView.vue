@@ -26,13 +26,13 @@ import {
   createAdminWatchlist,
   deleteAdminProfile,
   deleteAdminWatchlist,
+  getAdminProfile,
+  getAdminUser,
+  getAdminWatchlist,
   listAdminAuditLogsProtected,
   getAdminInquirySettings,
-  listAdminProfiles,
   listAdminProfilesProtected,
-  listAdminUsers,
   listAdminUsersProtected,
-  listAdminWatchlist,
   listAdminWatchlistProtected,
   updateAdminInquirySettings,
   updateAdminProfile,
@@ -140,11 +140,8 @@ const auditQuery = ref('');
 const auditActorWorkId = ref('');
 const touchInputHint = '单击正常输入，双击打开触控键盘';
 
-const profiles = ref<PassengerProfileRecord[]>([]);
 const protectedProfiles = ref<ProtectedListItem[]>([]);
-const watchlist = ref<AdminWatchlistItem[]>([]);
 const protectedWatchlist = ref<ProtectedListItem[]>([]);
-const users = ref<AdminUserItem[]>([]);
 const protectedUsers = ref<ProtectedListItem[]>([]);
 const protectedAuditLogs = ref<ProtectedListItem[]>([]);
 const archives = ref<InquiryArchiveListItem[]>([]);
@@ -215,27 +212,15 @@ const isEditingCurrentUser = computed(
 );
 const adminName = computed(() => session.value?.user.name || '系统管理员');
 const adminWorkId = computed(() => session.value?.user.workId || 'admin');
-const profileDocumentTypeOptions = computed(() =>
-  buildDistinctOptions(
-    profiles.value.map((item) =>
-      readProfileField(item, 'basicInfo', 'documentType'),
-    ),
-    formatDocumentTypeLabel,
-  ),
-);
-const profileGenderOptions = computed(() =>
-  buildDistinctOptions(
-    profiles.value.map((item) => readProfileField(item, 'basicInfo', 'gender')),
-    formatGenderLabel,
-  ),
-);
-const profileNationalityOptions = computed(() =>
-  buildDistinctOptions(
-    profiles.value.map((item) =>
-      readProfileField(item, 'basicInfo', 'nationality'),
-    ),
-  ),
-);
+const profileDocumentTypeOptions = computed<FilterOption[]>(() => [
+  { value: '', label: '全部证件类型' },
+]);
+const profileGenderOptions = computed<FilterOption[]>(() => [
+  { value: '', label: '全部性别' },
+]);
+const profileNationalityOptions = computed<FilterOption[]>(() => [
+  { value: '', label: '全部国籍' },
+]);
 const userRoleOptions: FilterOption[] = [
   { value: '', label: '全部角色' },
   { value: 'user', label: '员工' },
@@ -258,75 +243,16 @@ const archiveJudgementOptions: FilterOption[] = [
   { value: 'falseStatement', label: '虚假陈述' },
   { value: 'clear', label: '无异常' },
 ];
-const filteredProfiles = computed(() =>
-  profiles.value.filter((item) => {
-    const documentType = readProfileField(item, 'basicInfo', 'documentType');
-    const nationality = readProfileField(item, 'basicInfo', 'nationality');
-    const gender = readProfileField(item, 'basicInfo', 'gender');
-
-    if (
-      profileFilters.value.documentType &&
-      documentType !== profileFilters.value.documentType
-    ) {
-      return false;
-    }
-    if (
-      profileFilters.value.nationality &&
-      nationality !== profileFilters.value.nationality
-    ) {
-      return false;
-    }
-    if (profileFilters.value.gender && gender !== profileFilters.value.gender) {
-      return false;
-    }
-    return matchesSearch(buildProfileSearchText(item), profileQuery.value);
-  }),
-);
-const filteredWatchlist = computed(() =>
-  watchlist.value.filter((item) =>
-    matchesSearch(
-      [item.documentNum, item.riskReason || '高风险名单命中'],
-      watchlistQuery.value,
-    ),
-  ),
-);
-const filteredUsers = computed(() =>
-  users.value.filter((item) => {
-    if (userFilters.value.role && item.role !== userFilters.value.role) {
-      return false;
-    }
-    if (userFilters.value.status && item.status !== userFilters.value.status) {
-      return false;
-    }
-    return matchesSearch(buildUserSearchText(item), userQuery.value);
-  }),
-);
 const filteredAuditLogs = computed(() => protectedAuditLogs.value);
-const filteredProtectedProfiles = computed(() =>
-  protectedProfiles.value.filter((item) =>
-    filteredProfiles.value.some((profile) => String(profile.id) === item.id),
-  ),
-);
-const filteredProtectedWatchlist = computed(() =>
-  protectedWatchlist.value.filter((item) =>
-    filteredWatchlist.value.some((entry) => String(entry.id) === item.id),
-  ),
-);
-const filteredProtectedUsers = computed(() =>
-  protectedUsers.value.filter((item) =>
-    filteredUsers.value.some((entry) => String(entry.id) === item.id),
-  ),
-);
+const filteredProtectedProfiles = computed(() => protectedProfiles.value);
+const filteredProtectedWatchlist = computed(() => protectedWatchlist.value);
+const filteredProtectedUsers = computed(() => protectedUsers.value);
 const filteredArchives = computed(() =>
   archives.value.filter((item) =>
     matchesSearch(
       [
         item.archiveCode,
         item.sessionId,
-        item.passengerName,
-        item.passengerDocumentNum,
-        item.operatorName,
-        item.operatorWorkId,
         formatArchiveJudgementLabel(item.finalJudgement),
       ],
       archiveQuery.value,
@@ -441,9 +367,7 @@ async function refreshAll() {
 async function loadProfiles() {
   const protectedResult = await listAdminProfilesProtected(profileQuery.value);
   protectedProfiles.value = protectedResult.items;
-  const result = await listAdminProfiles('');
-  profiles.value = result.items;
-  statusMessages.value.profiles = `已加载基础画像 ${result.total} 条。`;
+  statusMessages.value.profiles = `已加载基础画像 ${protectedResult.total} 条。`;
 }
 
 async function loadWatchlist() {
@@ -451,17 +375,13 @@ async function loadWatchlist() {
     watchlistQuery.value,
   );
   protectedWatchlist.value = protectedResult.items;
-  const result = await listAdminWatchlist('');
-  watchlist.value = result.items;
-  statusMessages.value.watchlist = `已加载高风险名单 ${result.total} 条。`;
+  statusMessages.value.watchlist = `已加载高风险名单 ${protectedResult.total} 条。`;
 }
 
 async function loadUsers() {
   const protectedResult = await listAdminUsersProtected(userQuery.value);
   protectedUsers.value = protectedResult.items;
-  const result = await listAdminUsers('');
-  users.value = result.items;
-  statusMessages.value.users = `已加载用户 ${result.total} 条。`;
+  statusMessages.value.users = `已加载用户 ${protectedResult.total} 条。`;
 }
 
 async function loadArchives() {
@@ -533,14 +453,16 @@ function resetUserForm() {
   };
 }
 
-function editProfile(item: PassengerProfileRecord) {
+async function editProfileById(id: number) {
+  const item = await getAdminProfile(id);
   openFilterPicker.value = null;
   editingProfileId.value = item.id;
   profileForm.value = mapProfileToForm(item);
   isProfileFormVisible.value = true;
 }
 
-function editWatchlist(item: AdminWatchlistItem) {
+async function editWatchlistById(id: number) {
+  const item = await getAdminWatchlist(id);
   openFilterPicker.value = null;
   editingWatchlistId.value = item.id;
   watchlistForm.value = {
@@ -550,7 +472,8 @@ function editWatchlist(item: AdminWatchlistItem) {
   isWatchlistFormVisible.value = true;
 }
 
-function editUser(item: AdminUserItem) {
+async function editUserById(id: number) {
+  const item = await getAdminUser(id);
   openFilterPicker.value = null;
   userForm.value = {
     id: item.id,
@@ -892,7 +815,7 @@ async function openArchiveDetail(item: InquiryArchiveListItem) {
   revokeArchiveVideoUrls();
 
   try {
-    const detail = await getInquiryArchive(item.id);
+    const detail = await getInquiryArchive(Number(item.id));
     selectedArchive.value = detail;
     await loadArchiveVideos(detail.videos);
   } catch (error) {
@@ -1426,22 +1349,6 @@ function protectedChipToneClass(tone?: string) {
   }
 }
 
-function findWatchlistRecord(item: ProtectedListItem) {
-  return (
-    filteredWatchlist.value.find((entry) => String(entry.id) === item.id) ??
-    watchlist.value.find((entry) => String(entry.id) === item.id) ??
-    null
-  );
-}
-
-function findUserRecord(item: ProtectedListItem) {
-  return (
-    filteredUsers.value.find((entry) => String(entry.id) === item.id) ??
-    users.value.find((entry) => String(entry.id) === item.id) ??
-    null
-  );
-}
-
 function asArray(value: unknown) {
   return Array.isArray(value) ? value : [];
 }
@@ -1705,22 +1612,14 @@ function stringifyDetail(value: unknown) {
             <div class="admin-row__actions">
               <button
                 type="button"
-                @click="
-                  editProfile(
-                    filteredProfiles.find((profile) => String(profile.id) === item.id)!,
-                  )
-                "
+                @click="editProfileById(Number(item.id))"
               >
                 编辑
               </button>
               <button
                 type="button"
                 class="danger"
-                @click="
-                  removeProfile(
-                    filteredProfiles.find((profile) => String(profile.id) === item.id)!.id,
-                  )
-                "
+                @click="removeProfile(Number(item.id))"
               >
                 删除
               </button>
@@ -1822,16 +1721,14 @@ function stringifyDetail(value: unknown) {
             <div class="admin-row__actions">
               <button
                 type="button"
-                :disabled="!findWatchlistRecord(item)"
-                @click="findWatchlistRecord(item) && editWatchlist(findWatchlistRecord(item)!)"
+                @click="editWatchlistById(Number(item.id))"
               >
                 编辑
               </button>
               <button
                 type="button"
                 class="danger"
-                :disabled="!findWatchlistRecord(item)"
-                @click="findWatchlistRecord(item) && removeWatchlist(findWatchlistRecord(item)!.id)"
+                @click="removeWatchlist(Number(item.id))"
               >
                 删除
               </button>
@@ -1934,13 +1831,13 @@ function stringifyDetail(value: unknown) {
                 <span class="admin-row__fact">
                   <span class="admin-row__fact-label">旅客</span>
                   <strong class="admin-row__fact-value">
-                    {{ item.passengerName || '未记录' }}
+                    已受保护
                   </strong>
                 </span>
                 <span class="admin-row__fact">
                   <span class="admin-row__fact-label">证件号</span>
                   <strong class="admin-row__fact-value">
-                    {{ item.passengerDocumentNum || '-' }}
+                    已受保护
                   </strong>
                 </span>
                 <span class="admin-row__fact">
@@ -1953,8 +1850,7 @@ function stringifyDetail(value: unknown) {
                 <span class="admin-row__fact">
                   <span class="admin-row__fact-label">操作人</span>
                   <strong class="admin-row__fact-value">
-                    {{ item.operatorName || '-' }} /
-                    {{ item.operatorWorkId || '-' }}
+                    已受保护
                   </strong>
                 </span>
                 <span class="admin-row__fact">
@@ -2301,19 +2197,17 @@ function stringifyDetail(value: unknown) {
               <div class="admin-row__actions">
                 <button
                   type="button"
-                  :disabled="!findUserRecord(item)"
-                  @click="findUserRecord(item) && editUser(findUserRecord(item)!)"
+                  @click="editUserById(Number(item.id))"
                 >
                   编辑
                 </button>
                 <button
                   type="button"
-                  :disabled="!findUserRecord(item)"
-                  :class="findUserRecord(item)?.status === 'active' ? 'danger' : ''"
-                  @click="findUserRecord(item) && toggleUserStatus(findUserRecord(item)!)"
+                  :class="{ danger: item.flags?.isActive }"
+                  @click="toggleUserStatus({ id: Number(item.id), workId: '', name: '', role: 'user', status: item.flags?.isActive ? 'active' : 'disabled' })"
                 >
                   {{
-                    findUserRecord(item)?.status === 'active'
+                    item.flags?.isActive
                       ? '停用'
                       : '启用'
                   }}
@@ -2758,10 +2652,8 @@ function stringifyDetail(value: unknown) {
             <p>
               {{
                 selectedArchive
-                  ? `${selectedArchive.passengerName || '未记录旅客'} / ${
-                      selectedArchive.passengerDocumentNum || '-'
-                    }`
-                  : '正在读取归档主表、轮次、视频与系统摘要。'
+                  ? `会话 ${selectedArchive.sessionId}`
+                  : '正在读取归档主表、轮次与视频。'
               }}
             </p>
           </div>
@@ -2793,30 +2685,23 @@ function stringifyDetail(value: unknown) {
             </div>
             <div>
               <span class="meta-label">归档人</span>
-              <strong>
-                {{ selectedArchive.operatorName || '-' }} /
-                {{ selectedArchive.operatorWorkId || '-' }}
-              </strong>
+              <strong>已受保护</strong>
             </div>
           </section>
 
           <section class="archive-detail__block">
             <span class="meta-label">详细理由</span>
-            <p>{{ selectedArchive.judgementReason }}</p>
+            <p>已通过受保护资产交付</p>
           </section>
 
           <section class="archive-detail__grid">
             <div class="archive-detail__block">
               <span class="meta-label">系统摘要</span>
-              <pre>{{
-                stringifyDetail(selectedArchive.judgementBriefing)
-              }}</pre>
+              <pre>已通过受保护资产交付</pre>
             </div>
             <div class="archive-detail__block">
               <span class="meta-label">旅客快照</span>
-              <pre>{{
-                stringifyDetail(selectedArchive.passengerSnapshot)
-              }}</pre>
+              <pre>已通过受保护资产交付</pre>
             </div>
           </section>
 
@@ -2829,7 +2714,7 @@ function stringifyDetail(value: unknown) {
               <header>
                 <div>
                   <span class="meta-label">第 {{ round.roundNo }} 轮</span>
-                  <h4>{{ round.title || round.focus || '问询轮次' }}</h4>
+                  <h4>问询轮次</h4>
                 </div>
                 <span class="admin-row__pill">{{
                   formatDuration(round.durationSeconds)
@@ -2838,35 +2723,12 @@ function stringifyDetail(value: unknown) {
 
               <div class="archive-detail__block">
                 <span class="meta-label">本轮摘要</span>
-                <p>
-                  {{
-                    round.roundSummary || round.humanOmniSummary || '未记录摘要'
-                  }}
-                </p>
-              </div>
-
-              <div class="archive-detail__grid">
-                <div class="archive-detail__block">
-                  <span class="meta-label">问题</span>
-                  <pre>{{ stringifyDetail(round.questions) }}</pre>
-                </div>
-                <div class="archive-detail__block">
-                  <span class="meta-label">转写</span>
-                  <pre>{{ stringifyDetail(round.transcripts) }}</pre>
-                </div>
-              </div>
-
-              <div
-                v-if="asArray(round.riskHints).length"
-                class="admin-row__tags"
-              >
-                <span
-                  v-for="hint in asArray(round.riskHints)"
-                  :key="String(hint)"
-                  class="admin-row__tag"
-                >
-                  {{ hint }}
-                </span>
+                <SensitiveAssetImage
+                  v-if="round.detailAsset"
+                  :src="round.detailAsset.url"
+                  alt="归档轮次详情"
+                />
+                <p v-else>已通过受保护资产交付</p>
               </div>
 
               <div v-if="round.videos.length" class="archive-video-list">
@@ -2876,9 +2738,7 @@ function stringifyDetail(value: unknown) {
                   class="archive-video"
                 >
                   <div class="archive-video__meta">
-                    <strong>{{
-                      video.fileName || video.windowId || '归档视频'
-                    }}</strong>
+                    <strong>{{ video.fileName || '归档视频' }}</strong>
                     <span
                       >{{ video.contentType || video.modal }} ·
                       {{ video.sizeBytes }} bytes</span

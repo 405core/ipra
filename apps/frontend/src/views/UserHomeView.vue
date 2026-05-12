@@ -189,16 +189,16 @@ async function applyRecentSearch(item: string) {
   await loadProfiles(item);
 }
 
-async function openAskWorkspace(_profile: ProtectedListItem) {
-  const documentNum = (query.value || lastSearchedQuery.value).trim();
-  if (!documentNum) {
+async function openAskWorkspace(profile: ProtectedListItem) {
+  const profileId = String(profile.id || '').trim();
+  if (!profileId) {
     return;
   }
 
   await router.push({
     name: 'home-ask',
     query: {
-      documentNum,
+      profileId,
     },
   });
 }
@@ -389,22 +389,16 @@ function handleOCRResult(
   }
 
   ocrSide.value = payload.side || '';
-  const info = payload.info ?? {};
-  const validity = payload.validity ?? {};
-
-  ocrName.value = info.name ?? '';
-  ocrNumber.value = info.number ?? '';
-  ocrAddress.value = info.address ?? '';
-  ocrAuthority.value = info.authority ?? '';
-  ocrTimeLimit.value = info.timelimit ?? '';
 
   if (
     payload.side === 'front' &&
-    ocrNumber.value &&
-    validity.number !== false
+    payload.documentNumberRecognized
   ) {
     ocrStatus.value = '扫描成功';
-    syncOCRNumberToSearch(ocrNumber.value, options?.forceSearch === true);
+    const recognizedNumber = query.value.trim();
+    if (recognizedNumber) {
+      syncOCRNumberToSearch(recognizedNumber, options?.forceSearch === true);
+    }
     return;
   }
 

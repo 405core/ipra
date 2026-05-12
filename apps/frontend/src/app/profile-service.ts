@@ -1,5 +1,10 @@
 import { loadAuthSession } from '../auth';
-import type { ProtectedListResponse } from './protected-service';
+import type {
+  ProtectedAssetRef,
+  ProtectedDetailResponse,
+  ProtectedListItem,
+  ProtectedListResponse,
+} from './protected-service';
 import { protectedJson } from './protected-service';
 
 export type ImportType = 'BASE_PROFILE' | 'HIGH_RISK';
@@ -14,13 +19,6 @@ export interface PassengerProfileRecord {
   updatedAt: string;
 }
 
-export interface ImportErrorDetail {
-  rowNo: number;
-  errorCode: string;
-  message: string;
-  rawData?: Record<string, string>;
-}
-
 export interface ImportBatchResult {
   batchId: number;
   batchNo: string;
@@ -28,11 +26,7 @@ export interface ImportBatchResult {
   totalRows: number;
   successCount: number;
   failedCount: number;
-  errorDetails?: ImportErrorDetail[];
-}
-
-interface SearchProfilesResponse {
-  profiles: PassengerProfileRecord[];
+  detailAsset?: ProtectedAssetRef;
 }
 
 export interface IDCardOCRResponse {
@@ -41,10 +35,10 @@ export interface IDCardOCRResponse {
   taskNo?: string;
   data?: {
     result: number;
-    side: 'front' | 'back' | string;
-    info?: Record<string, string>;
-    validity?: Record<string, boolean>;
+    side?: 'front' | 'back' | string;
+    documentNumberRecognized?: boolean;
   };
+  detailAsset?: ProtectedAssetRef;
 }
 
 async function authorizedFetch(input: RequestInfo | URL, init?: RequestInit) {
@@ -62,31 +56,6 @@ async function authorizedFetch(input: RequestInfo | URL, init?: RequestInit) {
   });
 }
 
-export async function searchPassengerProfiles(query: string) {
-  const params = new URLSearchParams();
-  const trimmed = query.trim();
-  if (trimmed) {
-    params.set('query', trimmed);
-  }
-  params.set('limit', '20');
-
-  const response = await authorizedFetch(`/api/passenger-profiles?${params.toString()}`);
-  const payload = (await response.json().catch(() => null)) as
-    | SearchProfilesResponse
-    | { message?: string }
-    | null;
-
-  if (!response.ok || !payload || !('profiles' in payload)) {
-    const message =
-      payload && 'message' in payload && typeof payload.message === 'string'
-        ? payload.message
-        : '查询旅客画像失败。';
-    throw new Error(message);
-  }
-
-  return payload.profiles;
-}
-
 export async function searchPassengerProfilesProtected(query: string) {
   const params = new URLSearchParams();
   const trimmed = query.trim();
@@ -95,6 +64,13 @@ export async function searchPassengerProfilesProtected(query: string) {
   }
   return protectedJson<ProtectedListResponse>(
     `/api/passenger-profiles/protected?${params.toString()}`,
+    '查询旅客画像失败。'
+  );
+}
+
+export async function getProtectedProfileById(id: string) {
+  return protectedJson<ProtectedListItem>(
+    `/api/passenger-profiles/${id}/protected`,
     '查询旅客画像失败。'
   );
 }
@@ -122,6 +98,13 @@ export async function importPassengerProfiles(file: File) {
   }
 
   return payload;
+}
+
+export async function getProtectedImportResult(batchId: number) {
+  return protectedJson<ProtectedDetailResponse>(
+    `/api/passenger-profiles/imports/${batchId}/protected`,
+    '读取导入明细失败。'
+  );
 }
 
 export async function downloadImportTemplate(templateType: ImportType) {

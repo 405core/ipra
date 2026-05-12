@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	dbschema "ipra/backend/internal/database"
 )
 
 const maxArchiveVideoUploadBytes = 200 << 20
@@ -38,11 +39,8 @@ type archiveVideoUploadResponse struct {
 
 type uploadedArchiveVideoFile struct {
 	Filename    string `json:"filename"`
-	StoredPath  string `json:"storedPath"`
 	ContentType string `json:"contentType"`
 	SizeBytes   int64  `json:"sizeBytes"`
-	Bucket      string `json:"bucket"`
-	ObjectKey   string `json:"objectKey"`
 }
 
 func (h *Handler) handleUploadVideo(c *gin.Context) {
@@ -100,14 +98,41 @@ func (h *Handler) handleUploadVideo(c *gin.Context) {
 		return
 	}
 
+	now := time.Now().UTC()
+	recordedFileName := firstNonEmpty(strings.TrimSpace(c.PostForm("recordedFileName")), fileHeader.Filename)
+	video := dbschema.InquiryArchiveVideo{
+		ArchiveID:           0,
+		ArchiveRoundID:      nil,
+		VideoKind:           firstNonEmpty(strings.TrimSpace(c.PostForm("videoKind")), "round_clip"),
+		SessionID:           sessionID,
+		WindowID:            optionalString(c.PostForm("windowId")),
+		QuestionID:          optionalString(c.PostForm("questionId")),
+		VideoURL:            "",
+		MinIOBucket:         bucket,
+		MinIOObjectKey:      objectKey,
+		FileName:            trimToLimit(recordedFileName, 255),
+		ContentType:         trimToLimit(contentType, 128),
+		SizeBytes:           fileHeader.Size,
+		Modal:               firstNonEmpty(strings.TrimSpace(c.PostForm("modal")), "video_audio"),
+		StartSeconds:        parseArchiveOptionalFloat(c.PostForm("startSeconds")),
+		EndSeconds:          parseArchiveOptionalFloat(c.PostForm("endSeconds")),
+		HumanOmniModel:      trimToLimit(c.PostForm("humanOmniModel"), 128),
+		HumanOmniRawSummary: "",
+		UploadPayload:       jsonOrDefault(nil, "{}"),
+		CreatedAt:           now,
+	}
+	if h.db != nil {
+		if err := h.db.WithContext(c.Request.Context()).Create(&video).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"message": "登记归档视频失败"})
+			return
+		}
+	}
+
 	c.JSON(http.StatusCreated, archiveVideoUploadResponse{
 		UploadedFile: uploadedArchiveVideoFile{
-			Filename:    firstNonEmpty(fileHeader.Filename, filepath.Base(objectKey)),
-			StoredPath:  fmt.Sprintf("minio://%s/%s", bucket, objectKey),
+			Filename:    firstNonEmpty(recordedFileName, filepath.Base(objectKey)),
 			ContentType: contentType,
 			SizeBytes:   fileHeader.Size,
-			Bucket:      bucket,
-			ObjectKey:   objectKey,
 		},
 	})
 }
@@ -204,4 +229,16 @@ func randomObjectSuffix() string {
 		return hex.EncodeToString(data[:])
 	}
 	return strconv.FormatInt(time.Now().UnixNano(), 36)
+}
+
+func parseArchiveOptionalFloat(value string) *float64 {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	parsed, err := strconv.ParseFloat(trimmed, 64)
+	if err != nil {
+		return nil
+	}
+	return &parsed
 }

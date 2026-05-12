@@ -33,14 +33,9 @@ type Handler struct {
 
 type createArchiveRequest struct {
 	SessionID            string                `json:"sessionId"`
-	PassengerProfileID   *uint64               `json:"passengerProfileId"`
 	PassengerDocumentNum string                `json:"passengerDocumentNum"`
-	PassengerName        string                `json:"passengerName"`
-	PassengerSnapshot    json.RawMessage       `json:"passengerSnapshot"`
 	FinalJudgement       string                `json:"finalJudgement"`
 	JudgementReason      string                `json:"judgementReason"`
-	JudgementBriefing    json.RawMessage       `json:"judgementBriefing"`
-	MultimodalAssessment json.RawMessage       `json:"multimodalAssessment"`
 	TotalDurationSeconds int                   `json:"totalDurationSeconds"`
 	TranscriptCount      int                   `json:"transcriptCount"`
 	Rounds               []archiveRoundRequest `json:"rounds"`
@@ -69,9 +64,6 @@ type archiveVideoRequest struct {
 	VideoKind           string          `json:"videoKind"`
 	WindowID            string          `json:"windowId"`
 	QuestionID          string          `json:"questionId"`
-	VideoURL            string          `json:"videoUrl"`
-	MinIOBucket         string          `json:"minioBucket"`
-	MinIOObjectKey      string          `json:"minioObjectKey"`
 	FileName            string          `json:"fileName"`
 	ContentType         string          `json:"contentType"`
 	SizeBytes           int64           `json:"sizeBytes"`
@@ -80,7 +72,6 @@ type archiveVideoRequest struct {
 	EndSeconds          *float64        `json:"endSeconds"`
 	HumanOmniModel      string          `json:"humanOmniModel"`
 	HumanOmniRawSummary string          `json:"humanOmniRawSummary"`
-	UploadPayload       json.RawMessage `json:"uploadPayload"`
 }
 
 type listResponse struct {
@@ -336,8 +327,15 @@ func (h *Handler) handleStreamVideo(c *gin.Context) {
 func (h *Handler) statAllVideos(ctx context.Context, payload createArchiveRequest) error {
 	for _, round := range payload.Rounds {
 		for _, video := range round.Videos {
-			bucket := strings.TrimSpace(video.MinIOBucket)
-			objectKey := strings.TrimSpace(video.MinIOObjectKey)
+			resolvedVideo, err := h.findVideoBySessionAndFileName(ctx, payload.SessionID, video.FileName)
+			if err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return fmt.Errorf("归档视频不存在：%s", strings.TrimSpace(video.FileName))
+				}
+				return fmt.Errorf("查询归档视频失败：%w", err)
+			}
+			bucket := strings.TrimSpace(resolvedVideo.MinIOBucket)
+			objectKey := strings.TrimSpace(resolvedVideo.MinIOObjectKey)
 			if err := h.storage.StatObject(ctx, bucket, objectKey); err != nil {
 				if errors.Is(err, errObjectNotFound) {
 					return fmt.Errorf("MinIO 视频对象不存在：%s/%s", bucket, objectKey)
@@ -352,6 +350,10 @@ func (h *Handler) statAllVideos(ctx context.Context, payload createArchiveReques
 func (h *Handler) createArchive(ctx context.Context, claims auth.Claims, payload createArchiveRequest) (archiveDetailResponse, error) {
 	now := h.now().UTC()
 	var archiveID uint64
+	passengerName := ""
+	passengerSnapshot := json.RawMessage("{}")
+	judgementBriefing := json.RawMessage("{}")
+	multimodalAssessment := json.RawMessage("{}")
 
 	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		archiveCode, err := h.nextArchiveCode(tx, now)
@@ -360,20 +362,25 @@ func (h *Handler) createArchive(ctx context.Context, claims auth.Claims, payload
 		}
 
 		operatorID := claims.UserID
+		if existing, found, err := h.findDetailBySessionID(ctx, payload.SessionID); err == nil && found {
+			passengerName = existing.PassengerName
+			passengerSnapshot = jsonOrDefault(existing.PassengerSnapshot, "{}")
+			judgementBriefing = jsonOrDefault(existing.JudgementBriefing, "{}")
+			multimodalAssessment = jsonOrDefault(existing.MultimodalAssessment, "{}")
+		}
 		archive := dbschema.InquiryArchive{
 			ArchiveCode:          archiveCode,
 			SessionID:            strings.TrimSpace(payload.SessionID),
-			PassengerProfileID:   payload.PassengerProfileID,
 			PassengerDocumentNum: trimToLimit(payload.PassengerDocumentNum, 64),
-			PassengerName:        trimToLimit(payload.PassengerName, 128),
-			PassengerSnapshot:    jsonOrDefault(payload.PassengerSnapshot, "{}"),
+			PassengerName:        trimToLimit(passengerName, 128),
+			PassengerSnapshot:    passengerSnapshot,
 			OperatorID:           &operatorID,
 			OperatorWorkID:       trimToLimit(claims.WorkID, 64),
 			OperatorName:         trimToLimit(claims.Name, 64),
 			FinalJudgement:       strings.TrimSpace(payload.FinalJudgement),
 			JudgementReason:      strings.TrimSpace(payload.JudgementReason),
-			JudgementBriefing:    jsonOrDefault(payload.JudgementBriefing, "{}"),
-			MultimodalAssessment: jsonOrDefault(payload.MultimodalAssessment, "{}"),
+			JudgementBriefing:    judgementBriefing,
+			MultimodalAssessment: multimodalAssessment,
 			RoundCount:           len(payload.Rounds),
 			TotalDurationSeconds: maxInt(payload.TotalDurationSeconds, 0),
 			TranscriptCount:      maxInt(payload.TranscriptCount, 0),
@@ -412,6 +419,10 @@ func (h *Handler) createArchive(ctx context.Context, claims auth.Claims, payload
 			}
 
 			for _, videoPayload := range roundPayload.Videos {
+				videoFile, err := h.findVideoBySessionAndFileName(ctx, payload.SessionID, videoPayload.FileName)
+				if err != nil {
+					return err
+				}
 				roundID := round.ID
 				video := dbschema.InquiryArchiveVideo{
 					ArchiveID:           archive.ID,
@@ -420,9 +431,9 @@ func (h *Handler) createArchive(ctx context.Context, claims auth.Claims, payload
 					SessionID:           strings.TrimSpace(payload.SessionID),
 					WindowID:            optionalString(videoPayload.WindowID),
 					QuestionID:          optionalString(videoPayload.QuestionID),
-					VideoURL:            strings.TrimSpace(videoPayload.VideoURL),
-					MinIOBucket:         strings.TrimSpace(videoPayload.MinIOBucket),
-					MinIOObjectKey:      strings.TrimSpace(videoPayload.MinIOObjectKey),
+					VideoURL:            videoFile.VideoURL,
+					MinIOBucket:         videoFile.MinIOBucket,
+					MinIOObjectKey:      videoFile.MinIOObjectKey,
 					FileName:            trimToLimit(videoPayload.FileName, 255),
 					ContentType:         trimToLimit(videoPayload.ContentType, 128),
 					SizeBytes:           maxInt64(videoPayload.SizeBytes, 0),
@@ -431,11 +442,8 @@ func (h *Handler) createArchive(ctx context.Context, claims auth.Claims, payload
 					EndSeconds:          videoPayload.EndSeconds,
 					HumanOmniModel:      trimToLimit(videoPayload.HumanOmniModel, 128),
 					HumanOmniRawSummary: strings.TrimSpace(videoPayload.HumanOmniRawSummary),
-					UploadPayload:       jsonOrDefault(videoPayload.UploadPayload, "{}"),
+					UploadPayload:       json.RawMessage("{}"),
 					CreatedAt:           now,
-				}
-				if video.VideoURL == "" {
-					video.VideoURL = fmt.Sprintf("minio://%s/%s", video.MinIOBucket, video.MinIOObjectKey)
 				}
 				if err := tx.Create(&video).Error; err != nil {
 					return err
@@ -542,6 +550,18 @@ func (h *Handler) findDetail(ctx context.Context, id uint64) (archiveDetailRespo
 	}, true, nil
 }
 
+func (h *Handler) findVideoBySessionAndFileName(ctx context.Context, sessionID string, fileName string) (dbschema.InquiryArchiveVideo, error) {
+	var video dbschema.InquiryArchiveVideo
+	err := h.db.WithContext(ctx).
+		Where("session_id = ? AND file_name = ?", strings.TrimSpace(sessionID), strings.TrimSpace(fileName)).
+		Order("created_at DESC, id DESC").
+		First(&video).Error
+	if err != nil {
+		return dbschema.InquiryArchiveVideo{}, err
+	}
+	return video, nil
+}
+
 func validateCreateArchiveRequest(payload createArchiveRequest) error {
 	if strings.TrimSpace(payload.SessionID) == "" {
 		return errors.New("sessionId 不能为空")
@@ -570,11 +590,8 @@ func validateCreateArchiveRequest(payload createArchiveRequest) error {
 		seenRounds[round.RoundNo] = struct{}{}
 		for _, video := range round.Videos {
 			videoCount++
-			if strings.TrimSpace(video.MinIOBucket) == "" {
-				return errors.New("视频 minioBucket 不能为空")
-			}
-			if strings.TrimSpace(video.MinIOObjectKey) == "" {
-				return errors.New("视频 minioObjectKey 不能为空")
+			if strings.TrimSpace(video.FileName) == "" {
+				return errors.New("视频 fileName 不能为空")
 			}
 			if video.SizeBytes < 0 {
 				return errors.New("视频 sizeBytes 不能小于 0")

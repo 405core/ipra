@@ -1,84 +1,50 @@
 import { loadAuthSession } from '../auth';
+import type {
+  ProtectedAssetRef,
+  ProtectedDetailResponse,
+  ProtectedListItem,
+  ProtectedListResponse,
+} from './protected-service';
+import { protectedJson } from './protected-service';
 
 export interface InquiryArchiveVideoPayload {
   id: number;
-  archiveId: number;
-  archiveRoundId?: number | null;
-  videoKind: string;
-  sessionId: string;
-  windowId?: string | null;
-  questionId?: string | null;
-  videoUrl: string;
-  minioBucket: string;
-  minioObjectKey: string;
   fileName: string;
   contentType: string;
   sizeBytes: number;
   modal: string;
-  startSeconds?: number | null;
-  endSeconds?: number | null;
-  humanOmniModel: string;
-  humanOmniRawSummary: string;
-  uploadPayload?: Record<string, unknown> | null;
-  createdAt: string;
+  playbackPath: string;
 }
 
 export interface InquiryArchiveRoundPayload {
   id: number;
-  archiveId: number;
   roundNo: number;
-  roundClientId: string;
-  title: string;
-  focus: string;
-  strategyNote: string;
-  questions: unknown[];
-  transcripts: unknown[];
-  answerText: string;
-  roundSummary: string;
-  humanOmniSummary: string;
-  actionObservations: unknown[];
-  riskHints: string[];
   durationSeconds: number;
-  startedAt?: string | null;
-  endedAt?: string | null;
-  createdAt: string;
+  detailAsset?: ProtectedAssetRef;
   videos: InquiryArchiveVideoPayload[];
 }
 
 export interface InquiryArchiveDetailPayload {
-  id: number;
+  id: string;
   archiveCode: string;
   sessionId: string;
-  passengerProfileId?: number | null;
-  passengerDocumentNum: string;
-  passengerName: string;
-  passengerSnapshot?: Record<string, unknown> | null;
-  operatorId?: number | null;
-  operatorWorkId: string;
-  operatorName: string;
   finalJudgement: string;
-  judgementReason: string;
-  judgementBriefing?: Record<string, unknown> | null;
-  multimodalAssessment?: Record<string, unknown> | null;
   roundCount: number;
   totalDurationSeconds: number;
   transcriptCount: number;
   status: string;
   archivedAt: string;
-  createdAt: string;
-  updatedAt: string;
+  overviewAsset?: ProtectedAssetRef;
+  judgementAsset?: ProtectedAssetRef;
+  briefingAsset?: ProtectedAssetRef;
+  passengerAsset?: ProtectedAssetRef;
   rounds: InquiryArchiveRoundPayload[];
   videos: InquiryArchiveVideoPayload[];
 }
 
-export interface InquiryArchiveListItem {
-  id: number;
+export interface InquiryArchiveListItem extends ProtectedListItem {
   archiveCode: string;
   sessionId: string;
-  passengerDocumentNum: string;
-  passengerName: string;
-  operatorWorkId: string;
-  operatorName: string;
   finalJudgement: string;
   roundCount: number;
   totalDurationSeconds: number;
@@ -94,62 +60,28 @@ export interface InquiryArchiveListResult {
 }
 
 export interface CreateInquiryArchiveVideoPayload {
-  videoKind: string;
-  windowId?: string | null;
-  questionId?: string | null;
-  videoUrl: string;
-  minioBucket: string;
-  minioObjectKey: string;
   fileName: string;
   contentType?: string | null;
   sizeBytes: number;
-  modal: string;
-  startSeconds?: number | null;
-  endSeconds?: number | null;
-  humanOmniModel?: string | null;
-  humanOmniRawSummary?: string | null;
-  uploadPayload?: Record<string, unknown> | null;
 }
 
 export interface CreateInquiryArchiveRoundPayload {
   roundNo: number;
   roundClientId: string;
-  title: string;
-  focus: string;
-  strategyNote: string;
-  questions: unknown[];
-  transcripts: unknown[];
-  answerText: string;
-  roundSummary: string;
-  humanOmniSummary: string;
-  actionObservations: unknown[];
-  riskHints: string[];
-  durationSeconds: number;
   videos: CreateInquiryArchiveVideoPayload[];
 }
 
 export interface CreateInquiryArchivePayload {
   sessionId: string;
-  passengerProfileId?: number | null;
-  passengerDocumentNum: string;
-  passengerName: string;
-  passengerSnapshot: Record<string, unknown>;
   finalJudgement: string;
   judgementReason: string;
-  judgementBriefing: Record<string, unknown>;
-  multimodalAssessment: Record<string, unknown>;
-  totalDurationSeconds: number;
-  transcriptCount: number;
   rounds: CreateInquiryArchiveRoundPayload[];
 }
 
 export interface UploadedArchiveVideoFilePayload {
   filename: string;
-  storedPath: string;
   contentType?: string | null;
   sizeBytes: number;
-  bucket: string;
-  objectKey: string;
 }
 
 export interface InquiryArchiveVideoUploadResult {
@@ -213,7 +145,12 @@ export async function createInquiryArchive(
     method: 'POST',
     body: JSON.stringify(payload),
   });
-  return parsePayload<InquiryArchiveDetailPayload>(
+  return parsePayload<{
+    archiveCode: string;
+    archivedAt: string;
+    finalJudgement: string;
+    id: string;
+  }>(
     response,
     '保存问询归档失败。',
   );
@@ -255,16 +192,30 @@ export async function listInquiryArchives(query: InquiryArchiveQuery = {}) {
     String(query.limit && query.limit > 0 ? query.limit : 500),
   );
 
-  const response = await authorizedFetch(
+  const response = await protectedJson<ProtectedListResponse>(
     `/api/admin/inquiry-archives?${params.toString()}`,
+    '查询问询归档失败。'
   );
-  return parsePayload<InquiryArchiveListResult>(response, '查询问询归档失败。');
+  return {
+    items: response.items.map((item) => ({
+      ...item,
+      archiveCode: item.id,
+      sessionId: item.kind || '',
+      finalJudgement: '',
+      roundCount: 0,
+      totalDurationSeconds: 0,
+      transcriptCount: 0,
+      videoCount: 0,
+      status: '',
+      archivedAt: '',
+    })),
+    total: response.total,
+  } satisfies InquiryArchiveListResult;
 }
 
 export async function getInquiryArchive(id: number) {
-  const response = await authorizedFetch(`/api/admin/inquiry-archives/${id}`);
-  return parsePayload<InquiryArchiveDetailPayload>(
-    response,
+  return protectedJson<InquiryArchiveDetailPayload>(
+    `/api/admin/inquiry-archives/${id}`,
     '查询问询归档详情失败。',
   );
 }

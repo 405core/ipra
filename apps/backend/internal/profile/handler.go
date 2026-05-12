@@ -3,6 +3,7 @@ package profile
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -31,6 +32,13 @@ func NewHandler(db *gorm.DB, ocrConfig config.OCRConfig) *Handler {
 	}
 }
 
+func (h *Handler) Service() *Service {
+	if h == nil {
+		return nil
+	}
+	return h.service
+}
+
 func (h *Handler) SetSensitiveManager(manager *sensitive.Manager) {
 	if h == nil {
 		return
@@ -46,7 +54,9 @@ func (h *Handler) Register(r gin.IRouter, authMiddleware gin.HandlerFunc) {
 
 	group.GET("", h.handleSearch)
 	group.GET("/protected", h.handleProtectedSearch)
+	group.GET("/:id/protected", h.handleProtectedProfileByID)
 	group.POST("/imports", h.handleImport)
+	group.GET("/imports/:id/protected", h.handleProtectedImportDetail)
 	group.POST("/ocr/idcard", h.handleRecognizeIDCard)
 
 	templateGroup := r.Group("/api/import-templates")
@@ -62,12 +72,14 @@ func (h *Handler) Register(r gin.IRouter, authMiddleware gin.HandlerFunc) {
 
 	adminGroup.GET("/profiles", h.handleAdminListProfiles)
 	adminGroup.GET("/profiles/protected", h.handleAdminProtectedProfiles)
+	adminGroup.GET("/profiles/:id", h.handleAdminGetProfile)
 	adminGroup.POST("/profiles", h.handleAdminCreateProfile)
 	adminGroup.PUT("/profiles/:id", h.handleAdminUpdateProfile)
 	adminGroup.DELETE("/profiles/:id", h.handleAdminDeleteProfile)
 
 	adminGroup.GET("/watchlist", h.handleAdminListWatchlist)
 	adminGroup.GET("/watchlist/protected", h.handleAdminProtectedWatchlist)
+	adminGroup.GET("/watchlist/:id", h.handleAdminGetWatchlist)
 	adminGroup.POST("/watchlist", h.handleAdminCreateWatchlist)
 	adminGroup.PUT("/watchlist/:id", h.handleAdminUpdateWatchlist)
 	adminGroup.DELETE("/watchlist/:id", h.handleAdminDeleteWatchlist)
@@ -114,6 +126,37 @@ func (h *Handler) handleProtectedSearch(c *gin.Context) {
 		Page:     1,
 		PageSize: len(items),
 	})
+}
+
+func (h *Handler) handleProtectedProfileByID(c *gin.Context) {
+	if h.sensitive == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"message": "敏感图片服务未启用"})
+		return
+	}
+
+	claims, ok := auth.ClaimsFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "未授权"})
+		return
+	}
+
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+
+	profileRecord, err := h.service.GetProfileByID(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"message": "旅客画像不存在"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "查询旅客画像失败"})
+		return
+	}
+
+	item := h.buildProtectedProfileListItem(c, claims, profileRecord, "home:ask:profile")
+	c.JSON(http.StatusOK, item)
 }
 
 func (h *Handler) handleImport(c *gin.Context) {
@@ -177,17 +220,66 @@ func (h *Handler) handleImport(c *gin.Context) {
 		importType,
 		data,
 	)
-	if err != nil {
-		if errors.Is(err, ErrImportValidation) {
-			c.JSON(http.StatusOK, result)
-			return
-		}
-
+	if err != nil && !errors.Is(err, ErrImportValidation) {
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "导入旅客画像失败"})
 		return
 	}
 
-	c.JSON(http.StatusOK, result)
+	response := gin.H{
+		"batchId":      result.BatchID,
+		"batchNo":      result.BatchNo,
+		"status":       result.Status,
+		"totalRows":    result.TotalRows,
+		"successCount": result.SuccessCount,
+		"failedCount":  result.FailedCount,
+	}
+	if h.sensitive != nil && result.FailedCount > 0 {
+		response["detailAsset"] = h.putImportDetailAsset(
+			c,
+			claims,
+			result,
+			"home:import:detail",
+		)
+	}
+	c.JSON(http.StatusOK, response)
+}
+
+func (h *Handler) handleProtectedImportDetail(c *gin.Context) {
+	if h.sensitive == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"message": "敏感图片服务未启用"})
+		return
+	}
+
+	claims, ok := auth.ClaimsFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "未授权"})
+		return
+	}
+
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+
+	detail, err := h.service.GetImportBatchDetail(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"message": "导入批次不存在"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "读取导入明细失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, sensitive.DetailResponse{
+		ID: strconv.FormatUint(detail.BatchID, 10),
+		Asset: h.putImportBatchDetailAsset(
+			c,
+			claims,
+			detail,
+			"home:import:detail",
+		),
+	})
 }
 
 func (h *Handler) handleAdminListProfiles(c *gin.Context) {
@@ -233,6 +325,28 @@ func (h *Handler) handleAdminProtectedProfiles(c *gin.Context) {
 		Page:     1,
 		PageSize: len(items),
 	})
+}
+
+func (h *Handler) handleAdminGetProfile(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+
+	result, err := h.service.ListProfiles(c.Request.Context(), "", 500)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "查询基础画像失败"})
+		return
+	}
+
+	for _, item := range result.Items {
+		if item.ID == id {
+			c.JSON(http.StatusOK, item)
+			return
+		}
+	}
+
+	c.JSON(http.StatusNotFound, gin.H{"message": "基础画像不存在"})
 }
 
 func (h *Handler) handleAdminCreateProfile(c *gin.Context) {
@@ -329,6 +443,28 @@ func (h *Handler) handleAdminProtectedWatchlist(c *gin.Context) {
 		Page:     1,
 		PageSize: len(items),
 	})
+}
+
+func (h *Handler) handleAdminGetWatchlist(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+
+	result, err := h.service.ListWatchlist(c.Request.Context(), "", 500)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "查询高风险名单失败"})
+		return
+	}
+
+	for _, item := range result.Items {
+		if item.ID == id {
+			c.JSON(http.StatusOK, item)
+			return
+		}
+	}
+
+	c.JSON(http.StatusNotFound, gin.H{"message": "高风险名单不存在"})
 }
 
 func (h *Handler) handleAdminCreateWatchlist(c *gin.Context) {
@@ -1152,6 +1288,70 @@ func formatTime(value time.Time) string {
 		return "-"
 	}
 	return value.Local().Format("2006-01-02 15:04:05")
+}
+
+func (h *Handler) putImportDetailAsset(
+	c *gin.Context,
+	claims auth.Claims,
+	result ImportResult,
+	page string,
+) sensitive.AssetRef {
+	detail := ImportBatchDetail{
+		BatchID:      result.BatchID,
+		BatchNo:      result.BatchNo,
+		Status:       result.Status,
+		TotalRows:    result.TotalRows,
+		SuccessCount: result.SuccessCount,
+		FailedCount:  result.FailedCount,
+		ErrorDetails: result.ErrorDetails,
+	}
+	return h.putImportBatchDetailAsset(c, claims, detail, page)
+}
+
+func (h *Handler) putImportBatchDetailAsset(
+	c *gin.Context,
+	claims auth.Claims,
+	detail ImportBatchDetail,
+	page string,
+) sensitive.AssetRef {
+	lines := make([]string, 0, len(detail.ErrorDetails)*4+6)
+	lines = append(lines,
+		"批次号 "+firstNonEmptyText(detail.BatchNo, "-"),
+		"状态 "+firstNonEmptyText(detail.Status, "-"),
+		fmt.Sprintf("总行数 %d，成功 %d，失败 %d", detail.TotalRows, detail.SuccessCount, detail.FailedCount),
+	)
+	for _, item := range detail.ErrorDetails {
+		lines = append(lines, fmt.Sprintf("第 %d 行 [%s] %s", item.RowNo, firstNonEmptyText(item.ErrorCode, "-"), firstNonEmptyText(item.Message, "校验失败")))
+		for key, value := range item.RawData {
+			if strings.TrimSpace(value) == "" {
+				continue
+			}
+			lines = append(lines, fmt.Sprintf("%s：%s", strings.TrimSpace(key), strings.TrimSpace(value)))
+		}
+	}
+	if len(lines) == 0 {
+		lines = append(lines, "当前批次没有可展示的失败明细。")
+	}
+
+	document := sensitive.Document{
+		Eyebrow:  "批量导入",
+		Title:    "导入结果明细",
+		Subtitle: firstNonEmptyText(detail.FileName, detail.ImportType, "导入批次"),
+		Sections: []sensitive.Section{
+			{
+				Heading: "失败明细",
+				Lines:   lines,
+			},
+		},
+	}
+
+	return h.sensitive.Put(
+		claims.UserID,
+		document,
+		sensitive.PresetDialog,
+		sensitive.FormatPNG,
+		buildWatermarkContext(c, claims, page),
+	)
 }
 
 func firstNonEmptyText(values ...string) string {

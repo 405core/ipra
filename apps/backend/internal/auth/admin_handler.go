@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -30,6 +31,7 @@ func (h *Handler) RegisterAdminRoutes(r gin.IRouter) {
 
 	adminGroup.GET("", h.handleAdminListUsers)
 	adminGroup.GET("/protected", h.handleAdminProtectedUsers)
+	adminGroup.GET("/:id", h.handleAdminGetUser)
 	adminGroup.POST("", h.handleAdminCreateUser)
 	adminGroup.PUT("/:id", h.handleAdminUpdateUser)
 	adminGroup.PATCH("/:id/status", h.handleAdminUpdateUserStatus)
@@ -140,6 +142,26 @@ func (h *Handler) handleAdminProtectedUsers(c *gin.Context) {
 		Page:     1,
 		PageSize: len(items),
 	})
+}
+
+func (h *Handler) handleAdminGetUser(c *gin.Context) {
+	id, err := strconv.ParseUint(strings.TrimSpace(c.Param("id")), 10, 64)
+	if err != nil || id == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "ID 参数无效"})
+		return
+	}
+
+	var user dbschema.SystemUser
+	if err := h.db.First(&user, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"message": "用户不存在"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "查询用户失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, toUserResponse(user))
 }
 
 func userStatusTagTone(value string) sensitive.TagTone {
