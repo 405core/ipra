@@ -172,31 +172,65 @@ func userStatusTagTone(value string) sensitive.TagTone {
 	return sensitive.TagToneMuted
 }
 
+func displayUserRole(value string) string {
+	switch NormalizeRole(value) {
+	case RoleAdmin:
+		return "管理员"
+	case RoleUser:
+		return "员工"
+	default:
+		normalized := strings.TrimSpace(value)
+		if normalized == "" {
+			return "未设置角色"
+		}
+		return normalized
+	}
+}
+
+func displayUserStatus(value string) string {
+	switch NormalizeStatus(value) {
+	case StatusActive:
+		return "启用"
+	case StatusDisabled:
+		return "停用"
+	default:
+		normalized := strings.TrimSpace(value)
+		if normalized == "" {
+			return "未设置状态"
+		}
+		return normalized
+	}
+}
+
 func (h *Handler) buildProtectedUserItem(
 	c *gin.Context,
 	claims Claims,
 	user dbschema.SystemUser,
 	page string,
 ) sensitive.ListItem {
-	role := NormalizeRole(user.Role)
-	status := NormalizeStatus(user.Status)
+	roleCode := NormalizeRole(user.Role)
+	statusCode := NormalizeStatus(user.Status)
+	roleLabel := displayUserRole(user.Role)
+	statusLabel := displayUserStatus(user.Status)
+	workID := firstNonEmptyString(strings.TrimSpace(user.WorkID), "-")
+	name := firstNonEmptyString(strings.TrimSpace(user.Name), "系统用户")
+	updatedAt := "更新时间 " + displaytime.Format(user.UpdatedAt, "2006-01-02 15:04:05")
 	document := sensitive.Document{
 		Eyebrow:  "用户管理",
-		Title:    firstNonEmptyString(strings.TrimSpace(user.Name), "系统用户"),
+		Title:    name,
 		Subtitle: "用户账号信息",
 		TagItems: []sensitive.TagItem{
-			{Text: firstNonEmptyString(strings.TrimSpace(user.WorkID), "-"), Tone: sensitive.TagToneIdentity},
-			{Text: role, Tone: sensitive.TagToneDefault},
-			{Text: status, Tone: userStatusTagTone(user.Status)},
+			{Text: workID, Tone: sensitive.TagToneIdentity},
+			{Text: roleLabel, Tone: sensitive.TagToneDefault},
+			{Text: statusLabel, Tone: userStatusTagTone(user.Status)},
 		},
 		FactItems: []sensitive.FactItem{
-			{Label: "工号", Value: firstNonEmptyString(strings.TrimSpace(user.WorkID), "-")},
-			{Label: "姓名", Value: firstNonEmptyString(strings.TrimSpace(user.Name), "-")},
-			{Label: "角色", Value: role},
-			{Label: "状态", Value: status},
+			{Label: "工号", Value: workID},
+			{Label: "角色", Value: roleLabel},
+			{Label: "状态", Value: statusLabel},
 		},
 		Footer: []string{
-			"更新时间 " + displaytime.Format(user.UpdatedAt, "2006-01-02 15:04:05"),
+			updatedAt,
 		},
 	}
 
@@ -225,41 +259,37 @@ func (h *Handler) buildProtectedUserItem(
 		Fields: []sensitive.FieldRef{
 			{
 				Key:   "name",
-				Asset: inlineText(firstNonEmptyString(strings.TrimSpace(user.Name), "系统用户")),
-			},
-			{
-				Key:   "workId",
-				Asset: inlineText(firstNonEmptyString(strings.TrimSpace(user.WorkID), "-")),
-				Tone:  sensitive.TagToneIdentity,
+				Asset: inlineText(name),
 			},
 		},
 		Chips: []sensitive.FieldRef{
 			{
 				Key:   "role",
-				Asset: inlineText(role),
+				Asset: inlineText(roleLabel),
 				Tone:  sensitive.TagToneDefault,
 			},
 			{
 				Key:   "status",
-				Asset: inlineText(status),
+				Asset: inlineText(statusLabel),
 				Tone:  userStatusTagTone(user.Status),
 			},
 		},
 		Facts: []sensitive.FactRef{
-			{Key: "workId", Label: "工号", Asset: inlineText(firstNonEmptyString(strings.TrimSpace(user.WorkID), "-"))},
-			{Key: "name", Label: "姓名", Asset: inlineText(firstNonEmptyString(strings.TrimSpace(user.Name), "-"))},
-			{Key: "role", Label: "角色", Asset: inlineText(role)},
-			{Key: "status", Label: "状态", Asset: inlineText(status)},
-		},
-		Meta: []sensitive.FieldRef{
+			{
+				Key:   "workId",
+				Label: "工号",
+				Asset: inlineText(workID),
+			},
 			{
 				Key:   "updatedAt",
-				Asset: inlineText("更新时间 " + displaytime.Format(user.UpdatedAt, "2006-01-02 15:04:05")),
-				Tone:  sensitive.TagToneMuted,
+				Label: "更新时间",
+				Asset: inlineText(displaytime.Format(user.UpdatedAt, "2006-01-02 15:04:05")),
 			},
 		},
+		Meta: []sensitive.FieldRef{},
 		Flags: map[string]bool{
-			"isActive": status == StatusActive,
+			"isActive": statusCode == StatusActive,
+			"isAdmin":  roleCode == RoleAdmin,
 		},
 	}
 }

@@ -158,17 +158,22 @@ onBeforeUnmount(() => {
 .sensitive-image.is-inline {
   display: inline-flex;
   width: auto;
+  max-width: 100%;
   min-height: 0;
+  min-width: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
   overflow: visible;
   vertical-align: middle;
+  flex: 0 1 auto;
 }
 
 .sensitive-image.is-inline img {
   width: auto;
-  max-width: none;
+  max-width: 100%;
+  height: auto;
+  flex: 0 1 auto;
 }
 
 .sensitive-image__placeholder {

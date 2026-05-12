@@ -426,31 +426,9 @@ func (h *Handler) buildProtectedAuditItem(
 				Asset: inlineText(firstAuditValue(strings.TrimSpace(item.ActorName), "未知操作人") + " / " + firstAuditValue(strings.TrimSpace(item.ActorWorkID), "-")),
 			},
 			{
-				Key:   "path",
-				Label: "路径",
-				Asset: inlineText(strings.TrimSpace(item.Method) + " " + firstAuditValue(strings.TrimSpace(item.Path), "-")),
-			},
-			{
-				Key:   "statusCode",
-				Label: "状态码",
-				Asset: inlineText(strconv.Itoa(item.StatusCode)),
-			},
-			{
 				Key:   "createdAt",
 				Label: "时间",
 				Asset: inlineText(formatAuditTime(item.CreatedAt)),
-			},
-		},
-		Notes: []sensitive.FieldRef{
-			{
-				Key:   "clientIp",
-				Asset: inlineText("客户端 IP：" + firstAuditValue(strings.TrimSpace(item.ClientIP), "-")),
-				Tone:  sensitive.TagToneMuted,
-			},
-			{
-				Key:   "detail",
-				Asset: inlineText("详细数据：" + stringifyAuditDetail(item.Detail)),
-				Tone:  sensitive.TagToneMuted,
 			},
 		},
 	}
