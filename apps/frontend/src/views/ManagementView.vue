@@ -1844,7 +1844,10 @@ function stringifyDetail(value: unknown) {
                   </span>
                 </div>
 
-                <div class="admin-row__fact-list">
+                <div
+                  v-if="protectedFactEntries(item).length"
+                  class="admin-row__fact-list"
+                >
                   <span
                     v-for="detail in protectedFactEntries(item)"
                     :key="`${item.id}-${detail.key || detail.label}`"
@@ -2036,16 +2039,6 @@ function stringifyDetail(value: unknown) {
                     />
                   </strong>
                   <span
-                    v-if="findProtectedField(item.fields, 'workId')"
-                    class="admin-row__identity"
-                  >
-                    <SensitiveAssetImage
-                      :src="findProtectedField(item.fields, 'workId')!.asset.url"
-                      alt="工号"
-                      inline
-                    />
-                  </span>
-                  <span
                     v-for="chip in item.chips ?? []"
                     :key="`${item.id}-${chip.key}`"
                     class="admin-row__pill"
@@ -2059,7 +2052,10 @@ function stringifyDetail(value: unknown) {
                   </span>
                 </div>
 
-                <div class="admin-row__fact-list">
+                <div
+                  v-if="protectedFactEntries(item).length"
+                  class="admin-row__fact-list"
+                >
                   <span
                     v-for="detail in protectedFactEntries(item)"
                     :key="`${item.id}-${detail.key || detail.label}`"
@@ -2884,6 +2880,57 @@ function stringifyDetail(value: unknown) {
   align-items: stretch;
 }
 
+.admin-row--user {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.admin-row--user .admin-row__profile-content {
+  display: flex;
+  flex: 1 1 420px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+}
+
+.admin-row--user .admin-row__headline {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.admin-row--user .admin-row__fact-list {
+  flex: 1 1 auto;
+  justify-content: flex-start;
+  min-width: 0;
+}
+
+.admin-row--user .admin-row__fact {
+  min-height: 30px;
+  padding: 0 12px;
+}
+
+.admin-row--user .admin-row__actions {
+  flex: 0 0 auto;
+  width: auto;
+  max-width: 100%;
+  min-width: 0;
+  flex-direction: row;
+  justify-content: flex-end;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.admin-row--user .admin-row__actions button {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 112px;
+  min-height: 56px;
+  padding: 0 18px;
+  font-size: 0.96rem;
+  border-radius: 16px;
+}
+
 .admin-row--profile :deep(.sensitive-image) {
   display: flex;
   align-items: center;
@@ -3291,6 +3338,28 @@ function stringifyDetail(value: unknown) {
   .admin-row {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .admin-row--user .admin-row__profile-content {
+    display: grid;
+    align-items: stretch;
+    gap: 10px;
+    width: 100%;
+  }
+
+  .admin-row--user .admin-row__actions {
+    flex-direction: row;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    width: 100%;
+    min-width: 0;
+    gap: 10px;
+  }
+
+  .admin-row--user .admin-row__actions button {
+    width: auto;
+    min-width: 112px;
+    flex: 1 1 112px;
   }
 
   .admin-row__actions {
