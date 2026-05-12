@@ -29,6 +29,7 @@ import {
 import { recordAuditEvent } from '../app/audit-service';
 import {
   generateProtectedInquiryStrategy,
+  type ProtectedInquiryBlock,
   refreshProtectedInquiryMemory,
   requestProtectedInquiryFollowup,
   requestProtectedInquiryJudgement,
@@ -36,7 +37,12 @@ import {
   type ProtectedInquiryRoundSnapshot,
   type ProtectedInquirySessionSnapshot,
 } from '../app/inquiry-protected-service';
-import type { ProtectedAssetRef } from '../app/protected-service';
+import type {
+  ProtectedAssetRef,
+  ProtectedFactRef,
+  ProtectedFieldRef,
+  ProtectedListItem,
+} from '../app/protected-service';
 import {
   createInquiryArchive,
   uploadInquiryArchiveVideo,
@@ -49,6 +55,7 @@ import {
   persistMemoryUpdates,
 } from '../app/memory-service';
 import {
+  searchPassengerProfilesProtected,
   searchPassengerProfiles,
   type PassengerProfileRecord,
 } from '../app/profile-service';
@@ -126,6 +133,8 @@ interface InterviewRound {
   roundNumber: number;
   title: string;
   questionCount: number;
+  promptBlock: ProtectedInquiryBlock | null;
+  summaryBlock: ProtectedInquiryBlock | null;
   promptAsset: ProtectedAssetRef | null;
   summaryAsset: ProtectedAssetRef | null;
   focus: string;
@@ -355,6 +364,7 @@ const strategyBlueprints = [
 const currentStage = ref<WorkflowStage>('strategy');
 const sessionId = ref(createSessionId());
 const protectedSession = ref<ProtectedInquirySessionSnapshot | null>(null);
+const protectedProfile = ref<ProtectedListItem | null>(null);
 const maxInteractionRounds = ref(3);
 const inquirySettingsMessage = ref('');
 const hasLoadedInquirySettings = ref(false);
@@ -1010,6 +1020,7 @@ const selectedPassengerId = computed(
 
 function resetProfileDependentState() {
   currentStage.value = 'strategy';
+  protectedProfile.value = null;
   strategySummary.value = '';
   generatedQuestions.value = [];
   strategyFocusAreas.value = [];
@@ -1043,12 +1054,20 @@ async function loadSelectedProfile(documentNum: string) {
   profileLoadState.value = 'loading';
   profileLoadError.value = '';
   selectedProfile.value = null;
+  protectedProfile.value = null;
 
   try {
-    const profiles = await searchPassengerProfiles(trimmedDocumentNum);
+    const [profiles, protectedResult] = await Promise.all([
+      searchPassengerProfiles(trimmedDocumentNum),
+      searchPassengerProfilesProtected(trimmedDocumentNum),
+    ]);
     const matchedProfile =
       profiles.find((item) => item.documentNum === trimmedDocumentNum) ??
       profiles[0] ??
+      null;
+    protectedProfile.value =
+      protectedResult.items.find((item) => item.id === String(matchedProfile?.id ?? '')) ??
+      protectedResult.items[0] ??
       null;
 
     if (!matchedProfile || matchedProfile.id === 0) {
@@ -1207,6 +1226,8 @@ function createProtectedInterviewRound(
     roundNumber: snapshot.roundNumber,
     title: snapshot.title,
     questionCount: snapshot.questionCount,
+    promptBlock: snapshot.promptBlock ?? existing?.promptBlock ?? null,
+    summaryBlock: snapshot.summaryBlock ?? existing?.summaryBlock ?? null,
     promptAsset: snapshot.promptAsset ?? existing?.promptAsset ?? null,
     summaryAsset: snapshot.summaryAsset ?? existing?.summaryAsset ?? null,
     focus: existing?.focus || snapshot.title,
@@ -1232,6 +1253,7 @@ function createProtectedInterviewRound(
 
 function syncProtectedSessionState(snapshot: ProtectedInquirySessionSnapshot) {
   protectedSession.value = snapshot;
+  protectedProfile.value = snapshot.profile ?? protectedProfile.value;
   sessionId.value = snapshot.sessionId;
   syncMemoryStatus(Boolean(snapshot.memoryAsset));
 
@@ -1245,6 +1267,32 @@ function syncProtectedSessionState(snapshot: ProtectedInquirySessionSnapshot) {
     createProtectedInterviewRound(item, existingById.get(item.id)),
   );
   currentRoundId.value = snapshot.currentRound?.id ?? null;
+}
+
+function findProtectedField(
+  fields: ProtectedFieldRef[] | undefined,
+  key: string,
+) {
+  return fields?.find((item) => item.key === key) ?? null;
+}
+
+function findProtectedChip(
+  fields: ProtectedFieldRef[] | undefined,
+  key: string,
+) {
+  return findProtectedField(fields, key);
+}
+
+function protectedFactEntries(block?: ProtectedInquiryBlock | null) {
+  return (block?.facts ?? []) as ProtectedFactRef[];
+}
+
+function protectedMetaEntries(block?: ProtectedInquiryBlock | null) {
+  return (block?.meta ?? []) as ProtectedFieldRef[];
+}
+
+function protectedNoteEntries(block?: ProtectedInquiryBlock | null) {
+  return (block?.notes ?? []) as ProtectedFieldRef[];
 }
 
 function findProtectedRoundSnapshot(
@@ -1436,6 +1484,8 @@ function buildOpeningRound() {
     roundNumber: 1,
     title: '第 1 轮 · 首轮策略执行',
     questionCount: 0,
+    promptBlock: null,
+    summaryBlock: null,
     promptAsset: null,
     summaryAsset: null,
     focus: strategyFocusAreas.value.length
@@ -1508,6 +1558,8 @@ function buildFollowUpRoundFromResponse(
     roundNumber,
     title: `第 ${roundNumber} 轮 · AI 追问引导`,
     questionCount: questions.length,
+    promptBlock: null,
+    summaryBlock: null,
     promptAsset: null,
     summaryAsset: null,
     focus,
@@ -3432,56 +3484,112 @@ onBeforeUnmount(() => {
           <div class="strategy-layout">
             <section class="profile-panel profile-panel--compact">
               <template v-if="hasSelectedProfile">
-                <div class="profile-panel__identity">
-                  <div class="profile-avatar">
-                    {{ passengerProfile.alias.slice(0, 2) }}
+                <div
+                  v-if="protectedProfile"
+                  class="ask-protected-card"
+                  :class="{ 'is-high-risk': protectedProfile.flags?.isHighRisk }"
+                >
+                  <div class="ask-protected-card__headline">
+                    <strong class="ask-protected-card__title">
+                      <SensitiveAssetImage
+                        v-if="findProtectedField(protectedProfile.fields, 'fullName')"
+                        :src="findProtectedField(protectedProfile.fields, 'fullName')!.asset.url"
+                        alt="旅客姓名"
+                        inline
+                        eager
+                      />
+                    </strong>
+                    <span
+                      v-if="findProtectedChip(protectedProfile.chips, 'highRisk')"
+                      class="ask-protected-card__pill ask-protected-card__pill--alert"
+                    >
+                      <SensitiveAssetImage
+                        :src="findProtectedChip(protectedProfile.chips, 'highRisk')!.asset.url"
+                        alt="高风险预警"
+                        inline
+                      />
+                    </span>
+                    <span
+                      v-if="findProtectedChip(protectedProfile.chips, 'documentType')"
+                      class="ask-protected-card__pill"
+                    >
+                      <SensitiveAssetImage
+                        :src="findProtectedChip(protectedProfile.chips, 'documentType')!.asset.url"
+                        alt="证件类型"
+                        inline
+                      />
+                    </span>
+                    <span
+                      v-if="findProtectedChip(protectedProfile.chips, 'gender')"
+                      class="ask-protected-card__pill"
+                    >
+                      <SensitiveAssetImage
+                        :src="findProtectedChip(protectedProfile.chips, 'gender')!.asset.url"
+                        alt="性别"
+                        inline
+                      />
+                    </span>
+                    <span
+                      v-if="findProtectedChip(protectedProfile.chips, 'documentNum')"
+                      class="ask-protected-card__identity"
+                    >
+                      <SensitiveAssetImage
+                        :src="findProtectedChip(protectedProfile.chips, 'documentNum')!.asset.url"
+                        alt="证件号码"
+                        inline
+                      />
+                    </span>
                   </div>
-                  <div>
-                    <strong>{{ passengerProfile.name }}</strong>
-                    <span>{{ passengerProfile.documentId }}</span>
-                  </div>
-                </div>
 
-                <div class="profile-grid">
-                  <div>
-                    <span class="meta-label">旅客姓名</span>
-                    <strong>{{ passengerProfile.alias }}</strong>
+                  <div class="ask-protected-card__facts">
+                    <span
+                      v-for="detail in protectedFactEntries(protectedProfile)"
+                      :key="`${protectedProfile.id}-${detail.key || detail.label}`"
+                      class="ask-protected-card__fact"
+                    >
+                      <span class="ask-protected-card__fact-label">
+                        {{ detail.label }}
+                      </span>
+                      <strong class="ask-protected-card__fact-value">
+                        <SensitiveAssetImage
+                          :src="detail.asset.url"
+                          :alt="detail.label"
+                          inline
+                        />
+                      </strong>
+                    </span>
                   </div>
-                  <div>
-                    <span class="meta-label">PNR</span>
-                    <strong>{{ passengerProfile.pnr }}</strong>
-                  </div>
-                  <div>
-                    <span class="meta-label">航线</span>
-                    <strong>{{ passengerProfile.route }}</strong>
-                  </div>
-                  <div>
-                    <span class="meta-label">座位 / 舱位</span>
-                    <strong>{{ passengerProfile.seat }}</strong>
-                  </div>
-                  <div>
-                    <span class="meta-label">出发日期</span>
-                    <strong>{{ passengerProfile.eta }}</strong>
-                  </div>
-                  <div>
-                    <span class="meta-label">观察重点</span>
-                    <strong>{{ passengerProfile.observation }}</strong>
-                  </div>
-                </div>
 
-                <div class="profile-insight">
-                  <span class="meta-label">风险摘要</span>
-                  <p class="profile-summary">{{ passengerProfile.summary }}</p>
-                </div>
-
-                <div class="tag-row">
-                  <span
-                    v-for="tag in passengerProfile.tags"
-                    :key="tag"
-                    class="tag-chip tag-chip--passive"
+                  <div
+                    v-if="
+                      protectedMetaEntries(protectedProfile).length ||
+                      protectedNoteEntries(protectedProfile).length
+                    "
+                    class="ask-protected-card__tags"
                   >
-                    {{ tag }}
-                  </span>
+                    <span
+                      v-for="tag in protectedMetaEntries(protectedProfile)"
+                      :key="`${protectedProfile.id}-${tag.key}-${tag.asset.id}`"
+                      class="ask-protected-card__tag"
+                    >
+                      <SensitiveAssetImage
+                        :src="tag.asset.url"
+                        alt="风险标签"
+                        inline
+                      />
+                    </span>
+                    <span
+                      v-for="note in protectedNoteEntries(protectedProfile)"
+                      :key="`${protectedProfile.id}-${note.key}-${note.asset.id}`"
+                      class="ask-protected-card__tag ask-protected-card__tag--muted"
+                    >
+                      <SensitiveAssetImage
+                        :src="note.asset.url"
+                        alt="备注"
+                        inline
+                      />
+                    </span>
+                  </div>
                 </div>
               </template>
 
@@ -3514,8 +3622,11 @@ onBeforeUnmount(() => {
                 </div>
 
                 <SensitiveAssetImage
-                  v-if="protectedMemoryAsset"
-                  :src="protectedMemoryAsset.url"
+                  v-if="protectedSession?.memoryBlock?.asset || protectedMemoryAsset"
+                  :src="
+                    protectedSession?.memoryBlock?.asset?.url ||
+                    protectedMemoryAsset!.url
+                  "
                   alt="智能体记忆敏感图片"
                 />
 
@@ -3544,7 +3655,7 @@ onBeforeUnmount(() => {
                       : isGeneratingStrategy
                         ? '系统生成中'
                         : strategyGenerated
-                          ? `${generatedQuestions.length} 个问题已生成`
+                          ? '策略已生成'
                           : '等待生成'
                   }}
                 </span>
@@ -3552,87 +3663,20 @@ onBeforeUnmount(() => {
 
               <p class="workspace-summary">
                 {{
-                  protectedStrategyAsset
+                  protectedSession?.strategyBlock?.asset || protectedStrategyAsset
                     ? '首轮策略、风险预评估和问题包已转为服务端带水印图片'
                     : '系统将根据用户画像与风险标签生成首轮策略与问题包'
                 }}
               </p>
 
               <SensitiveAssetImage
-                v-if="protectedStrategyAsset"
-                :src="protectedStrategyAsset.url"
+                v-if="protectedSession?.strategyBlock?.asset || protectedStrategyAsset"
+                :src="
+                  protectedSession?.strategyBlock?.asset?.url ||
+                  protectedStrategyAsset!.url
+                "
                 alt="首轮策略敏感图片"
               />
-
-              <div
-                v-if="
-                  !isStrategyLocked &&
-                  (strategyRiskAssessment || strategyOperatorNote)
-                "
-                class="summary-stack summary-stack--dense"
-              >
-                <div v-if="strategyRiskAssessment" class="summary-item">
-                  <span class="meta-label">风险预评估</span>
-                  <div class="summary-item__inline">
-                    <strong>{{ strategyRiskAssessment.summary }}</strong>
-                    <span
-                      class="risk-chip"
-                      :class="
-                        strategyRiskToneClass(strategyRiskAssessment.level)
-                      "
-                    >
-                      {{ strategyRiskLabel(strategyRiskAssessment.level) }}
-                    </span>
-                  </div>
-                  <div
-                    v-if="strategyRiskAssessment.reasons.length"
-                    class="tag-row"
-                  >
-                    <span
-                      v-for="reason in strategyRiskAssessment.reasons"
-                      :key="reason"
-                      class="tag-chip tag-chip--passive"
-                    >
-                      {{ reason }}
-                    </span>
-                  </div>
-                </div>
-
-                <div v-if="strategyFocusAreas.length" class="summary-item">
-                  <span class="meta-label">关注方向</span>
-                  <div class="tag-row">
-                    <span
-                      v-for="area in strategyFocusAreas"
-                      :key="area"
-                      class="tag-chip tag-chip--passive"
-                    >
-                      {{ area }}
-                    </span>
-                  </div>
-                </div>
-
-                <div v-if="strategyOperatorNote" class="summary-item">
-                  <span class="meta-label">工作人员提示</span>
-                  <p>{{ strategyOperatorNote }}</p>
-                </div>
-              </div>
-
-              <div
-                v-if="!isStrategyLocked && strategyGenerated"
-                class="question-list question-list--scroll"
-              >
-                <article
-                  v-for="question in generatedQuestions"
-                  :key="question.id"
-                  class="question-item"
-                >
-                  <div class="question-item__meta">
-                    <strong>{{ question.title }}</strong>
-                    <span>{{ question.objective }}</span>
-                  </div>
-                  <p>{{ question.prompt }}</p>
-                </article>
-              </div>
 
               <div
                 v-else
@@ -3844,8 +3888,8 @@ onBeforeUnmount(() => {
                     class="live-dot"
                     :class="{ 'is-active': samplingState.phase === 'active' }"
                   ></span>
-                  <strong>{{ passengerProfile.alias }}</strong>
-                  <span>{{ passengerProfile.route }}</span>
+                  <strong>当前问询对象</strong>
+                  <span>信息已受保护显示</span>
                   <span>
                     {{
                       realtimeDetection.enabledModels.length
@@ -4104,29 +4148,15 @@ onBeforeUnmount(() => {
 
                 <div class="panel-subhead">
                   <strong>当前问题</strong>
-                  <span>{{ currentRound.questions.length }} 条</span>
-                </div>
-
-                <div class="current-questions current-questions--scroll">
-                  <article
-                    v-for="question in currentRound.questions"
-                    :key="question.id"
-                    class="question-brief"
-                  >
-                    <strong>{{ question.title }}</strong>
-                    <p>{{ question.prompt }}</p>
-                    <span>{{ question.objective }}</span>
-                  </article>
-                </div>
-
-                <div class="panel-subhead">
-                  <strong>当前问题</strong>
                   <span>{{ currentRound.questionCount }} 条</span>
                 </div>
 
                 <SensitiveAssetImage
-                  v-if="currentRound.promptAsset"
-                  :src="currentRound.promptAsset.url"
+                  v-if="currentRound.promptBlock?.asset || currentRound.promptAsset"
+                  :src="
+                    currentRound.promptBlock?.asset?.url ||
+                    currentRound.promptAsset!.url
+                  "
                   alt="当前轮问题包敏感图片"
                 />
                 <div class="panel-subhead">
@@ -4176,45 +4206,13 @@ onBeforeUnmount(() => {
                   </div>
 
                   <SensitiveAssetImage
-                    v-if="protectedMemoryAsset"
-                    :src="protectedMemoryAsset.url"
+                    v-if="protectedSession?.memoryBlock?.asset || protectedMemoryAsset"
+                    :src="
+                      protectedSession?.memoryBlock?.asset?.url ||
+                      protectedMemoryAsset!.url
+                    "
                     alt="问询记忆敏感图片"
                   />
-
-                  <div
-                    v-if="groupedMemoryReferences.length"
-                    class="memory-reference-row"
-                  >
-                    <span
-                      v-for="reference in groupedMemoryReferences"
-                      :key="reference.key"
-                      class="memory-reference-chip"
-                      :title="`引用：${reference.title}`"
-                    >
-                      <span>引用：{{ reference.title }}</span>
-                      <small
-                        >{{ reference.scopeLabel }} ·
-                        {{ reference.typeLabel }}</small
-                      >
-                      <b>×{{ reference.count }}</b>
-                    </span>
-                  </div>
-
-                  <div v-if="memoryPanelItems.length" class="memory-list">
-                    <article
-                      v-for="item in memoryPanelItems"
-                      :key="item.key"
-                      class="memory-item"
-                    >
-                      <div class="memory-item__meta">
-                        <strong>{{ item.title }}</strong>
-                        <span
-                          >{{ item.scopeLabel }} · {{ item.typeLabel }}</span
-                        >
-                      </div>
-                      <p>{{ item.content }}</p>
-                    </article>
-                  </div>
 
                   <div v-else class="empty-panel empty-panel--compact">
                     <strong>尚无可用记忆</strong>
@@ -4251,8 +4249,18 @@ onBeforeUnmount(() => {
                   <span>{{ round.questionCount }} 条问题</span>
                 </div>
                 <SensitiveAssetImage
-                  v-if="round.summaryAsset || round.promptAsset"
-                  :src="round.summaryAsset?.url || round.promptAsset?.url"
+                  v-if="
+                    round.summaryBlock?.asset ||
+                    round.promptBlock?.asset ||
+                    round.summaryAsset ||
+                    round.promptAsset
+                  "
+                  :src="
+                    round.summaryBlock?.asset?.url ||
+                    round.promptBlock?.asset?.url ||
+                    round.summaryAsset?.url ||
+                    round.promptAsset?.url
+                  "
                   alt="历史轮次敏感图片"
                 />
               </article>
@@ -4348,27 +4356,16 @@ onBeforeUnmount(() => {
               </div>
 
               <div
-                v-if="protectedJudgementAsset"
+                v-if="
+                  protectedSession?.judgementBlock?.asset || protectedJudgementAsset
+                "
                 class="summary-stack digest-stack"
               >
-                <div class="digest-kpis">
-                  <div class="summary-item">
-                    <span class="meta-label">对象</span>
-                    <strong
-                      >{{ passengerProfile.name }} /
-                      {{ passengerProfile.documentId }}</strong
-                    >
-                  </div>
-                  <div class="summary-item">
-                    <span class="meta-label">已完成轮次</span>
-                    <strong
-                      >{{ completedRoundCount }} 轮 ·
-                      {{ formatDuration(totalSampleDuration) }}</strong
-                    >
-                  </div>
-                </div>
                 <SensitiveAssetImage
-                  :src="protectedJudgementAsset.url"
+                  :src="
+                    protectedSession?.judgementBlock?.asset?.url ||
+                    protectedJudgementAsset!.url
+                  "
                   alt="人工辅助判断摘要敏感图片"
                 />
               </div>
@@ -4405,14 +4402,7 @@ onBeforeUnmount(() => {
             </div>
 
             <div class="stage-chip-group">
-              <span
-                v-if="selectedJudgement"
-                class="judgement-pill"
-                :class="judgmentToneClass(selectedJudgement)"
-              >
-                {{ selectedJudgementLabel }}
-              </span>
-              <span class="soft-chip">{{ archivedAt }}</span>
+              <span class="soft-chip">流程已锁定</span>
             </div>
           </header>
 
@@ -4420,39 +4410,30 @@ onBeforeUnmount(() => {
             <section class="completion-hero">
               <div class="completion-seal">已归档</div>
               <div>
-                <p class="section-eyebrow">归档编号</p>
-                <h4>{{ archiveCode }}</h4>
+                <p class="section-eyebrow">归档完成</p>
+                <h4>问询记录已保存</h4>
                 <p>
-                  本次问询共完成 {{ completedRoundCount }} 轮采样，累计转写
-                  {{ totalTranscriptCount }} 条，最终由
-                  {{ inspectorName }} 完成人工定性。
+                  本次问询的最终结论、理由摘要与关键依据已归档保存，当前页面仅保留完成态展示。
                 </p>
               </div>
             </section>
 
             <section class="completion-grid">
               <div class="completion-panel">
-                <span class="meta-label">最终判定</span>
-                <strong>{{ selectedJudgementLabel }}</strong>
-                <p>{{ archivedAt }}</p>
+                <span class="meta-label">归档状态</span>
+                <strong>已完成</strong>
+                <p>问询流程不可再修改</p>
               </div>
 
               <div class="completion-panel">
-                <span class="meta-label">详细理由</span>
-                <p>{{ judgementReason.trim() }}</p>
+                <span class="meta-label">采样轮次</span>
+                <strong>{{ completedRoundCount }} 轮</strong>
+                <p>累计转写 {{ totalTranscriptCount }} 条</p>
               </div>
 
               <div class="completion-panel">
-                <span class="meta-label">关键依据</span>
-                <div class="tag-row">
-                  <span
-                    v-for="tag in keyEvidenceTags"
-                    :key="tag"
-                    class="tag-chip tag-chip--passive"
-                  >
-                    {{ tag }}
-                  </span>
-                </div>
+                <span class="meta-label">处理结果</span>
+                <p>详细结论与依据已进入归档记录，后续请在归档页查看受保护内容。</p>
               </div>
             </section>
           </div>

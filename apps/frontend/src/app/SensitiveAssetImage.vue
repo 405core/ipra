@@ -9,6 +9,7 @@ const props = defineProps<{
   error?: string;
   fit?: 'contain' | 'cover';
   eager?: boolean;
+  inline?: boolean;
 }>();
 
 const objectFit = computed(() => props.fit ?? 'contain');
@@ -109,7 +110,11 @@ onBeforeUnmount(() => {
 <template>
   <div
     class="sensitive-image"
-    :class="{ 'is-loading': loading || (!!props.src && !resolvedSrc && !fetchError), 'has-error': !!(error || fetchError) }"
+    :class="{
+      'is-inline': inline,
+      'is-loading': loading || (!!props.src && !resolvedSrc && !fetchError),
+      'has-error': !!(error || fetchError),
+    }"
   >
     <img
       v-if="resolvedSrc && !(error || fetchError)"
@@ -120,13 +125,14 @@ onBeforeUnmount(() => {
       :decoding="imageDecoding"
       draggable="false"
     />
-    <div v-else-if="loading || (!!props.src && !resolvedSrc && !fetchError)" class="sensitive-image__placeholder">
-      <strong>正在加载受保护图片</strong>
-      <span>服务端正在返回带水印的敏感数据图像</span>
+    <div
+      v-else-if="loading || (!!props.src && !resolvedSrc && !fetchError)"
+      class="sensitive-image__placeholder"
+    >
+      <span>加载中</span>
     </div>
     <div v-else class="sensitive-image__placeholder sensitive-image__placeholder--error">
-      <strong>图片加载失败</strong>
-      <span>{{ error || fetchError || '请稍后重试' }}</span>
+      <span>{{ error || fetchError || '加载失败' }}</span>
     </div>
   </div>
 </template>
@@ -149,6 +155,22 @@ onBeforeUnmount(() => {
   max-width: 100%;
 }
 
+.sensitive-image.is-inline {
+  display: inline-flex;
+  width: auto;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+  vertical-align: middle;
+}
+
+.sensitive-image.is-inline img {
+  width: auto;
+  max-width: none;
+}
+
 .sensitive-image__placeholder {
   display: grid;
   place-items: center;
@@ -158,10 +180,6 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 
-.sensitive-image__placeholder strong {
-  color: #15252b;
-}
-
 .sensitive-image__placeholder span {
   color: #5b7179;
   line-height: 1.5;
@@ -169,5 +187,11 @@ onBeforeUnmount(() => {
 
 .sensitive-image__placeholder--error {
   background: rgba(255, 243, 241, 0.72);
+}
+
+.sensitive-image.is-inline .sensitive-image__placeholder {
+  min-height: 0;
+  padding: 0 2px;
+  background: transparent;
 }
 </style>

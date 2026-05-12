@@ -6,11 +6,39 @@ export interface ProtectedAssetRef {
   context: string;
 }
 
+export type ProtectedTagTone =
+  | 'default'
+  | 'accent'
+  | 'muted'
+  | 'alert'
+  | 'warning'
+  | 'success'
+  | 'identity';
+
+export interface ProtectedFieldRef {
+  key: string;
+  asset: ProtectedAssetRef;
+  tone?: ProtectedTagTone;
+}
+
+export interface ProtectedFactRef {
+  key?: string;
+  label: string;
+  asset: ProtectedAssetRef;
+}
+
 export interface ProtectedListItem {
   id: string;
   asset: ProtectedAssetRef;
   detailAsset?: ProtectedAssetRef;
   actions?: string[];
+  kind?: string;
+  fields?: ProtectedFieldRef[];
+  chips?: ProtectedFieldRef[];
+  facts?: ProtectedFactRef[];
+  meta?: ProtectedFieldRef[];
+  notes?: ProtectedFieldRef[];
+  flags?: Record<string, boolean>;
 }
 
 export interface ProtectedListResponse {

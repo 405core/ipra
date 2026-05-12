@@ -3,7 +3,21 @@ import type {
   HumanOmniWindowSummaryPayload,
   UploadedWindowFilePayload,
 } from './ai-service';
-import type { ProtectedAssetRef } from './protected-service';
+import type {
+  ProtectedAssetRef,
+  ProtectedFactRef,
+  ProtectedFieldRef,
+  ProtectedListItem,
+} from './protected-service';
+
+export interface ProtectedInquiryBlock {
+  asset?: ProtectedAssetRef;
+  fields?: ProtectedFieldRef[];
+  chips?: ProtectedFieldRef[];
+  facts?: ProtectedFactRef[];
+  meta?: ProtectedFieldRef[];
+  notes?: ProtectedFieldRef[];
+}
 
 export interface ProtectedInquiryRoundSnapshot {
   id: string;
@@ -11,6 +25,8 @@ export interface ProtectedInquiryRoundSnapshot {
   title: string;
   questionCount: number;
   status: string;
+  promptBlock?: ProtectedInquiryBlock;
+  summaryBlock?: ProtectedInquiryBlock;
   promptAsset?: ProtectedAssetRef;
   summaryAsset?: ProtectedAssetRef;
   recordedFileName?: string;
@@ -20,10 +36,14 @@ export interface ProtectedInquiryRoundSnapshot {
 
 export interface ProtectedInquirySessionSnapshot {
   sessionId: string;
+  profile?: ProtectedListItem;
+  strategyBlock?: ProtectedInquiryBlock;
+  memoryBlock?: ProtectedInquiryBlock;
   strategyAsset?: ProtectedAssetRef;
   memoryAsset?: ProtectedAssetRef;
   currentRound?: ProtectedInquiryRoundSnapshot;
   historicalRounds: ProtectedInquiryRoundSnapshot[];
+  judgementBlock?: ProtectedInquiryBlock;
   judgementAsset?: ProtectedAssetRef;
   completedRounds: number;
   totalSampleDuration: number;

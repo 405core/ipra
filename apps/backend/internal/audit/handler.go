@@ -145,12 +145,7 @@ func (h *Handler) handleProtectedList(c *gin.Context) {
 
 	listItems := make([]sensitive.ListItem, 0, len(items))
 	for _, item := range items {
-		listItems = append(listItems, sensitive.ListItem{
-			ID:          strconv.FormatUint(item.ID, 10),
-			Asset:       h.putAuditAsset(c, identity, item, sensitive.PresetList, "audit:list"),
-			DetailAsset: h.putAuditAsset(c, identity, item, sensitive.PresetDialog, "audit:detail"),
-			Actions:     []string{"detail"},
-		})
+		listItems = append(listItems, h.buildProtectedAuditItem(c, identity, item, "audit:list"))
 	}
 
 	c.JSON(http.StatusOK, sensitive.ListResponse{
@@ -371,6 +366,93 @@ func (h *Handler) putAuditAsset(
 		selectAuditFormat(preset),
 		buildAuditWatermarkContext(c, identity, page),
 	)
+}
+
+func (h *Handler) buildProtectedAuditItem(
+	c *gin.Context,
+	identity Identity,
+	item dbschema.AuditLog,
+	page string,
+) sensitive.ListItem {
+	inlineText := func(value string) sensitive.AssetRef {
+		return h.sensitive.PutWithStyle(
+			identity.UserID,
+			sensitive.Document{
+				Title: firstAuditValue(strings.TrimSpace(value), "-"),
+			},
+			sensitive.PresetInline,
+			sensitive.FormatWebP,
+			sensitive.RenderStyle{
+				Transparent: true,
+				HideAccent:  true,
+			},
+			buildAuditWatermarkContext(c, identity, page),
+		)
+	}
+
+	return sensitive.ListItem{
+		ID:          strconv.FormatUint(item.ID, 10),
+		Asset:       h.putAuditAsset(c, identity, item, sensitive.PresetList, page),
+		DetailAsset: h.putAuditAsset(c, identity, item, sensitive.PresetDialog, "audit:detail"),
+		Actions:     []string{"detail"},
+		Kind:        "audit",
+		Fields: []sensitive.FieldRef{
+			{
+				Key:   "resource",
+				Asset: inlineText(firstAuditValue(strings.TrimSpace(item.Resource), "员工操作记录")),
+			},
+			{
+				Key:   "action",
+				Asset: inlineText(firstAuditValue(strings.TrimSpace(item.Action), "未命名动作")),
+			},
+		},
+		Chips: []sensitive.FieldRef{
+			{
+				Key:   "result",
+				Asset: inlineText(formatAuditResult(item.Result)),
+				Tone:  auditResultTone(item.Result),
+			},
+			{
+				Key:   "role",
+				Asset: inlineText(firstAuditValue(strings.TrimSpace(item.ActorRole), "-")),
+				Tone:  sensitive.TagToneDefault,
+			},
+		},
+		Facts: []sensitive.FactRef{
+			{
+				Key:   "operator",
+				Label: "操作人",
+				Asset: inlineText(firstAuditValue(strings.TrimSpace(item.ActorName), "未知操作人") + " / " + firstAuditValue(strings.TrimSpace(item.ActorWorkID), "-")),
+			},
+			{
+				Key:   "path",
+				Label: "路径",
+				Asset: inlineText(strings.TrimSpace(item.Method) + " " + firstAuditValue(strings.TrimSpace(item.Path), "-")),
+			},
+			{
+				Key:   "statusCode",
+				Label: "状态码",
+				Asset: inlineText(strconv.Itoa(item.StatusCode)),
+			},
+			{
+				Key:   "createdAt",
+				Label: "时间",
+				Asset: inlineText(formatAuditTime(item.CreatedAt)),
+			},
+		},
+		Notes: []sensitive.FieldRef{
+			{
+				Key:   "clientIp",
+				Asset: inlineText("客户端 IP：" + firstAuditValue(strings.TrimSpace(item.ClientIP), "-")),
+				Tone:  sensitive.TagToneMuted,
+			},
+			{
+				Key:   "detail",
+				Asset: inlineText("详细数据：" + stringifyAuditDetail(item.Detail)),
+				Tone:  sensitive.TagToneMuted,
+			},
+		},
+	}
 }
 
 func buildAuditWatermarkContext(c *gin.Context, identity Identity, page string) sensitive.WatermarkContext {

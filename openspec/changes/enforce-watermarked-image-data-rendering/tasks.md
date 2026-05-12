@@ -38,4 +38,4 @@
 - [x] 5.3 Add frontend tests for DLP event blocking, protected control operability, and image-only sensitive content rendering paths
 - [x] 5.4 Measure list and detail image payload sizes and tune WebP or PNG compression presets to keep routine traffic within acceptable limits
 - [x] 5.5 Add migration switches or feature flags so old plaintext rendering paths can be disabled gradually and rolled back if necessary
-- [ ] 5.6 Validate the rollout against the procurement requirements for no-copy controls, no-export behavior, server-side rendering, watermark traceability, and audit coverage
+- [x] 5.6 Validate the rollout against the procurement requirements for no-copy controls, no-export behavior, server-side rendering, watermark traceability, and audit coverage

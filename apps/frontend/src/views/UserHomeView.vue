@@ -9,7 +9,11 @@ import {
   type IDCardOCRResponse,
   searchPassengerProfilesProtected,
 } from '../app/profile-service';
-import type { ProtectedListItem } from '../app/protected-service';
+import type {
+  ProtectedFactRef,
+  ProtectedFieldRef,
+  ProtectedListItem,
+} from '../app/protected-service';
 
 const router = useRouter();
 const defaultCameraStatus = '等待开启摄像头。';
@@ -549,6 +553,29 @@ async function requestCameraStream() {
   });
 }
 
+function findProtectedField(
+  fields: ProtectedFieldRef[] | undefined,
+  key: string,
+) {
+  return fields?.find((item) => item.key === key) ?? null;
+}
+
+function findProtectedChip(record: ProtectedListItem, key: string) {
+  return findProtectedField(record.chips, key);
+}
+
+function protectedFactEntries(record: ProtectedListItem) {
+  return (record.facts ?? []) as ProtectedFactRef[];
+}
+
+function protectedNoteEntries(record: ProtectedListItem) {
+  return (record.notes ?? []) as ProtectedFieldRef[];
+}
+
+function protectedRiskTags(record: ProtectedListItem) {
+  return (record.meta ?? []) as ProtectedFieldRef[];
+}
+
 function normalizeErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback;
 }
@@ -609,13 +636,120 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
                 v-for="record in results"
                 :key="record.id"
                 class="result-strip"
+                :class="{ 'is-high-risk': record.flags?.isHighRisk }"
               >
                 <div class="result-strip__content">
-                  <SensitiveAssetImage
-                    :src="record.asset.url"
-                    alt="检索结果敏感图片"
-                    eager
-                  />
+                  <div class="result-strip__headline">
+                    <strong class="result-strip__title">
+                      <SensitiveAssetImage
+                        v-if="findProtectedField(record.fields, 'fullName')"
+                        :src="findProtectedField(record.fields, 'fullName')!.asset.url"
+                        alt="旅客姓名"
+                        inline
+                        eager
+                      />
+                    </strong>
+                    <span
+                      v-if="findProtectedChip(record, 'highRisk')"
+                      class="result-strip__pill is-high-risk"
+                    >
+                      <SensitiveAssetImage
+                        :src="findProtectedChip(record, 'highRisk')!.asset.url"
+                        alt="高风险预警"
+                        inline
+                      />
+                    </span>
+                    <span
+                      v-if="findProtectedChip(record, 'documentType')"
+                      class="result-strip__pill"
+                    >
+                      <SensitiveAssetImage
+                        :src="findProtectedChip(record, 'documentType')!.asset.url"
+                        alt="证件类型"
+                        inline
+                      />
+                    </span>
+                    <span
+                      v-if="findProtectedChip(record, 'gender')"
+                      class="result-strip__pill"
+                    >
+                      <SensitiveAssetImage
+                        :src="findProtectedChip(record, 'gender')!.asset.url"
+                        alt="性别"
+                        inline
+                      />
+                    </span>
+                    <span
+                      v-if="findProtectedChip(record, 'documentNum')"
+                      class="result-strip__identity"
+                    >
+                      <SensitiveAssetImage
+                        :src="findProtectedChip(record, 'documentNum')!.asset.url"
+                        alt="证件号码"
+                        inline
+                      />
+                    </span>
+                    <span
+                      v-if="findProtectedChip(record, 'imported')"
+                      class="result-strip__pill"
+                    >
+                      <SensitiveAssetImage
+                        :src="findProtectedChip(record, 'imported')!.asset.url"
+                        alt="导入状态"
+                        inline
+                      />
+                    </span>
+                  </div>
+
+                  <div class="result-strip__fact-list">
+                    <span
+                      v-for="detail in protectedFactEntries(record)"
+                      :key="`${record.id}-${detail.key || detail.label}`"
+                      class="result-strip__fact"
+                    >
+                      <span class="result-strip__fact-label">
+                        {{ detail.label }}
+                      </span>
+                      <strong class="result-strip__fact-value">
+                        <SensitiveAssetImage
+                          :src="detail.asset.url"
+                          :alt="detail.label"
+                          inline
+                        />
+                      </strong>
+                    </span>
+                  </div>
+
+                  <div
+                    v-if="
+                      protectedRiskTags(record).length ||
+                      protectedNoteEntries(record).length
+                    "
+                    class="result-strip__tags"
+                  >
+                    <span
+                      v-for="tag in protectedRiskTags(record)"
+                      :key="`${record.id}-${tag.key}-${tag.asset.id}`"
+                      class="result-strip__tag"
+                    >
+                      <SensitiveAssetImage
+                        :src="tag.asset.url"
+                        alt="风险标签"
+                        inline
+                      />
+                    </span>
+                    <span
+                      v-for="note in protectedNoteEntries(record)"
+                      :key="`${record.id}-${note.key}-${note.asset.id}`"
+                      class="result-strip__tag result-strip__tag--muted"
+                    >
+                      <SensitiveAssetImage
+                        :src="note.asset.url"
+                        alt="备注"
+                        inline
+                      />
+                    </span>
+                  </div>
                 </div>
 
                 <div class="result-strip__actions">
@@ -1060,16 +1194,12 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 
 .results-list {
   display: grid;
-  gap: 12px;
+  gap: 14px;
   height: 100%;
-  margin-top: 12px;
+  margin-top: 16px;
   min-height: 0;
   align-content: start;
-  padding-right: 6px;
-  padding-bottom: 8px;
-  overflow-x: hidden;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
+  overflow: auto;
 }
 
 .surface-card--results .empty-state {
@@ -1083,9 +1213,9 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 .result-strip {
   position: relative;
   display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 12px 14px 14px 18px;
+  align-items: stretch;
+  gap: 18px;
+  padding: 16px 18px 16px 24px;
   border-radius: 24px;
   background: rgba(255, 255, 255, 0.94);
   border: 1px solid rgba(157, 189, 202, 0.36);
@@ -1107,43 +1237,117 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 
 .result-strip__content {
   min-width: 0;
+  flex: 1 1 auto;
+  display: grid;
+  gap: 10px;
+}
+
+.result-strip__headline {
   display: flex;
-  justify-content: center;
-  position: relative;
-  z-index: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
 }
 
-.result-strip :deep(.sensitive-image) {
+.result-strip__title {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+}
+
+.result-strip__title :deep(.sensitive-image img) {
+  height: 28px;
+}
+
+.result-strip__pill,
+.result-strip__identity,
+.result-strip__tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.result-strip__pill {
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(157, 189, 202, 0.48);
+  color: #43646e;
+}
+
+.result-strip__pill.is-high-risk {
+  background: rgba(199, 92, 71, 0.12);
+  border-color: rgba(199, 92, 71, 0.16);
+  color: #a24734;
+}
+
+.result-strip__identity {
+  background: rgba(217, 238, 244, 0.92);
+  color: #09596c;
+}
+
+.result-strip__fact-list {
   display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  width: 100%;
-  min-height: 0;
-  max-height: min(60vh, 620px);
-  pointer-events: none;
-  border-radius: 20px;
+  flex-wrap: wrap;
+  gap: 8px 10px;
 }
 
-.result-strip :deep(.sensitive-image img) {
-  width: auto;
-  height: auto;
-  max-width: 100%;
-  max-height: min(60vh, 620px);
-  object-fit: contain;
-  object-position: top center;
-  vertical-align: top;
+.result-strip__fact {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 12px;
+  background: #fbfeff;
+  border: 1px solid rgba(157, 189, 202, 0.36);
 }
 
-.result-strip :deep(.sensitive-image__placeholder) {
-  width: 100%;
-  min-height: 280px;
+.result-strip__fact-label {
+  color: #6c8790;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.result-strip__fact-value {
+  display: inline-flex;
+  align-items: center;
+  color: #15252b;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.result-strip__pill :deep(.sensitive-image img),
+.result-strip__identity :deep(.sensitive-image img),
+.result-strip__tag :deep(.sensitive-image img),
+.result-strip__fact-value :deep(.sensitive-image img) {
+  height: 18px;
+}
+
+.result-strip__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.result-strip__tag {
+  background: rgba(11, 114, 136, 0.12);
+  color: #09596c;
+}
+
+.result-strip__tag--muted {
+  background: rgba(91, 113, 121, 0.12);
+  color: #5b7179;
 }
 
 .result-strip__actions {
-  display: block;
-  width: 100%;
-  position: relative;
-  z-index: 2;
+  display: flex;
+  flex: 0 0 240px;
+  width: 240px;
+  align-items: stretch;
 }
 
 .result-strip__actions .primary-action {
@@ -1151,8 +1355,8 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
   align-items: center;
   justify-content: center;
   width: 100%;
-  min-height: 50px;
-  padding: 12px 20px;
+  min-height: 100%;
+  padding: 18px 20px;
   border-radius: 18px;
   font-size: 1.04rem;
   letter-spacing: 0.04em;
@@ -1332,6 +1536,7 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 
   .result-strip__actions {
     width: 100%;
+    flex: 0 0 auto;
   }
 
   .result-strip :deep(.sensitive-image__placeholder) {
