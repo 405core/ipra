@@ -6,25 +6,15 @@ import { nextTick } from 'vue';
 import ManagementView from './ManagementView.vue';
 
 const adminServiceMocks = vi.hoisted(() => ({
-  createAdminProfile: vi.fn(),
   createAdminUser: vi.fn(),
-  createAdminWatchlist: vi.fn(),
-  deleteAdminProfile: vi.fn(),
-  deleteAdminWatchlist: vi.fn(),
   getAdminInquirySettings: vi.fn(),
-  listAdminAuditLogs: vi.fn(),
   listAdminAuditLogsProtected: vi.fn(),
-  listAdminProfiles: vi.fn(),
   listAdminProfilesProtected: vi.fn(),
-  listAdminUsers: vi.fn(),
   listAdminUsersProtected: vi.fn(),
-  listAdminWatchlist: vi.fn(),
   listAdminWatchlistProtected: vi.fn(),
   updateAdminInquirySettings: vi.fn(),
-  updateAdminProfile: vi.fn(),
   updateAdminUser: vi.fn(),
   updateAdminUserStatus: vi.fn(),
-  updateAdminWatchlist: vi.fn(),
 }));
 
 vi.mock('../app/admin-service', () => adminServiceMocks);
@@ -88,6 +78,70 @@ function createProtectedListItem(id: string) {
       url: `/api/sensitive-assets/${id}`,
       context: 'admin',
     },
+    fields: [
+      {
+        key: 'fullName',
+        asset: {
+          id: `field-${id}-fullName`,
+          url: `/api/sensitive-assets/${id}-fullName`,
+          context: `admin-${id}-fullName`,
+        },
+      },
+      {
+        key: 'documentNum',
+        asset: {
+          id: `field-${id}-documentNum`,
+          url: `/api/sensitive-assets/${id}-documentNum`,
+          context: `admin-${id}-documentNum`,
+        },
+      },
+      {
+        key: 'nationality',
+        asset: {
+          id: `field-${id}-nationality`,
+          url: `/api/sensitive-assets/${id}-nationality`,
+          context: `admin-${id}-nationality`,
+        },
+      },
+    ],
+    chips: [
+      {
+        key: 'documentType',
+        asset: {
+          id: `chip-${id}-documentType`,
+          url: `/api/sensitive-assets/${id}-documentType`,
+          context: `admin-${id}-documentType`,
+        },
+      },
+      {
+        key: 'gender',
+        asset: {
+          id: `chip-${id}-gender`,
+          url: `/api/sensitive-assets/${id}-gender`,
+          context: `admin-${id}-gender`,
+        },
+      },
+      {
+        key: 'role',
+        asset: {
+          id: `chip-${id}-role`,
+          url: `/api/sensitive-assets/${id}-role`,
+          context: `admin-${id}-role`,
+        },
+      },
+      {
+        key: 'status',
+        asset: {
+          id: `chip-${id}-status`,
+          url: `/api/sensitive-assets/${id}-status`,
+          context: `admin-${id}-status`,
+        },
+      },
+    ],
+    facts: [],
+    meta: [],
+    notes: [],
+    flags: {},
   };
 }
 
@@ -96,28 +150,24 @@ describe('ManagementView settings tab', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    adminServiceMocks.listAdminProfiles.mockResolvedValue({ items: [], total: 0 });
     adminServiceMocks.listAdminProfilesProtected.mockResolvedValue({
       items: [createProtectedListItem('profile-1')],
       total: 1,
       page: 1,
       pageSize: 500,
     });
-    adminServiceMocks.listAdminWatchlist.mockResolvedValue({ items: [], total: 0 });
     adminServiceMocks.listAdminWatchlistProtected.mockResolvedValue({
       items: [createProtectedListItem('watchlist-1')],
       total: 1,
       page: 1,
       pageSize: 500,
     });
-    adminServiceMocks.listAdminUsers.mockResolvedValue({ items: [], total: 0 });
     adminServiceMocks.listAdminUsersProtected.mockResolvedValue({
       items: [createProtectedListItem('user-1')],
       total: 1,
       page: 1,
       pageSize: 500,
     });
-    adminServiceMocks.listAdminAuditLogs.mockResolvedValue({ items: [], total: 0 });
     adminServiceMocks.listAdminAuditLogsProtected.mockResolvedValue({
       items: [createProtectedListItem('audit-1')],
       total: 1,
@@ -170,6 +220,25 @@ describe('ManagementView settings tab', () => {
 
     expect(adminServiceMocks.updateAdminInquirySettings).toHaveBeenCalledWith(5);
     expect(wrapper.text()).toContain('系统设置已保存');
+  });
+
+  it('keeps profiles and watchlist as import-managed read-only views', async () => {
+    wrapper = mount(ManagementView);
+    await flushPromises();
+    await nextTick();
+
+    expect(wrapper.text()).not.toContain('新增基础画像');
+    expect(wrapper.text()).not.toContain('新增高风险名单');
+    expect(wrapper.text()).not.toContain('继续编辑');
+    expect(wrapper.text()).not.toContain('编辑');
+    expect(wrapper.text()).not.toContain('删除');
+
+    await findButton(wrapper, '高风险名单').trigger('click');
+    await nextTick();
+
+    expect(wrapper.text()).not.toContain('新增高风险名单');
+    expect(wrapper.text()).not.toContain('编辑');
+    expect(wrapper.text()).not.toContain('删除');
   });
 
   it('shows inquiry archive records and opens archive detail with video', async () => {
@@ -282,7 +351,7 @@ describe('ManagementView settings tab', () => {
     await findButton(wrapper, '问询归档').trigger('click');
     await nextTick();
 
-    expect(wrapper.text()).toContain('IPRA-ASK-20260511-0001');
+    expect(wrapper.text()).toContain('当前筛选后 1 条问询归档');
     await findButton(wrapper, '查看详情').trigger('click');
     await flushPromises();
     await nextTick();

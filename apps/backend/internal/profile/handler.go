@@ -338,9 +338,7 @@ func (h *Handler) handleAdminProtectedProfiles(c *gin.Context) {
 
 	items := make([]sensitive.ListItem, 0, len(result.Items))
 	for _, profile := range result.Items {
-		item := h.buildProtectedProfileListItem(c, claims, profile, "admin:profiles")
-		item.Actions = []string{"edit", "delete"}
-		items = append(items, item)
+		items = append(items, h.buildProtectedProfileListItem(c, claims, profile, "admin:profiles"))
 	}
 
 	c.JSON(http.StatusOK, sensitive.ListResponse{
@@ -352,78 +350,19 @@ func (h *Handler) handleAdminProtectedProfiles(c *gin.Context) {
 }
 
 func (h *Handler) handleAdminGetProfile(c *gin.Context) {
-	id, ok := parseUintParam(c, "id")
-	if !ok {
-		return
-	}
-
-	result, err := h.service.ListProfiles(c.Request.Context(), "", 500)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"message": "查询基础画像失败"})
-		return
-	}
-
-	for _, item := range result.Items {
-		if item.ID == id {
-			c.JSON(http.StatusOK, item)
-			return
-		}
-	}
-
-	c.JSON(http.StatusNotFound, gin.H{"message": "基础画像不存在"})
+	c.JSON(http.StatusForbidden, gin.H{"message": "基础画像仅支持通过导入文件维护"})
 }
 
 func (h *Handler) handleAdminCreateProfile(c *gin.Context) {
-	var payload SearchProfileResponse
-	if err := c.ShouldBindJSON(&payload); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"message": "请求参数无效"})
-		return
-	}
-	if strings.TrimSpace(payload.DocumentNum) == "" || strings.TrimSpace(payload.FullName) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"message": "证件号码和姓名不能为空"})
-		return
-	}
-
-	if err := h.service.CreateProfile(c.Request.Context(), payload); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"message": "新增基础画像失败"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "ok"})
+	c.JSON(http.StatusForbidden, gin.H{"message": "基础画像仅支持通过导入文件维护"})
 }
 
 func (h *Handler) handleAdminUpdateProfile(c *gin.Context) {
-	id, ok := parseUintParam(c, "id")
-	if !ok {
-		return
-	}
-
-	var payload SearchProfileResponse
-	if err := c.ShouldBindJSON(&payload); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"message": "请求参数无效"})
-		return
-	}
-
-	if err := h.service.UpdateProfile(c.Request.Context(), id, payload); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"message": "更新基础画像失败"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "ok"})
+	c.JSON(http.StatusForbidden, gin.H{"message": "基础画像仅支持通过导入文件维护"})
 }
 
 func (h *Handler) handleAdminDeleteProfile(c *gin.Context) {
-	id, ok := parseUintParam(c, "id")
-	if !ok {
-		return
-	}
-
-	if err := h.service.DeleteProfile(c.Request.Context(), id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"message": "删除基础画像失败"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "ok"})
+	c.JSON(http.StatusForbidden, gin.H{"message": "基础画像仅支持通过导入文件维护"})
 }
 
 func (h *Handler) handleAdminListWatchlist(c *gin.Context) {
@@ -470,82 +409,19 @@ func (h *Handler) handleAdminProtectedWatchlist(c *gin.Context) {
 }
 
 func (h *Handler) handleAdminGetWatchlist(c *gin.Context) {
-	id, ok := parseUintParam(c, "id")
-	if !ok {
-		return
-	}
-
-	result, err := h.service.ListWatchlist(c.Request.Context(), "", 500)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"message": "查询高风险名单失败"})
-		return
-	}
-
-	for _, item := range result.Items {
-		if item.ID == id {
-			c.JSON(http.StatusOK, item)
-			return
-		}
-	}
-
-	c.JSON(http.StatusNotFound, gin.H{"message": "高风险名单不存在"})
+	c.JSON(http.StatusForbidden, gin.H{"message": "高风险名单仅支持通过导入文件维护"})
 }
 
 func (h *Handler) handleAdminCreateWatchlist(c *gin.Context) {
-	var payload WatchlistItem
-	if err := c.ShouldBindJSON(&payload); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"message": "请求参数无效"})
-		return
-	}
-	if strings.TrimSpace(payload.DocumentNum) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"message": "证件号码不能为空"})
-		return
-	}
-
-	if err := h.service.CreateWatchlist(c.Request.Context(), payload); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"message": "新增高风险名单失败"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "ok"})
+	c.JSON(http.StatusForbidden, gin.H{"message": "高风险名单仅支持通过导入文件维护"})
 }
 
 func (h *Handler) handleAdminUpdateWatchlist(c *gin.Context) {
-	id, ok := parseUintParam(c, "id")
-	if !ok {
-		return
-	}
-
-	var payload WatchlistItem
-	if err := c.ShouldBindJSON(&payload); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"message": "请求参数无效"})
-		return
-	}
-	if strings.TrimSpace(payload.DocumentNum) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"message": "证件号码不能为空"})
-		return
-	}
-
-	if err := h.service.UpdateWatchlist(c.Request.Context(), id, payload); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"message": "更新高风险名单失败"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "ok"})
+	c.JSON(http.StatusForbidden, gin.H{"message": "高风险名单仅支持通过导入文件维护"})
 }
 
 func (h *Handler) handleAdminDeleteWatchlist(c *gin.Context) {
-	id, ok := parseUintParam(c, "id")
-	if !ok {
-		return
-	}
-
-	if err := h.service.DeleteWatchlist(c.Request.Context(), id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"message": "删除高风险名单失败"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "ok"})
+	c.JSON(http.StatusForbidden, gin.H{"message": "高风险名单仅支持通过导入文件维护"})
 }
 
 func parseListLimit(c *gin.Context) int {
@@ -891,7 +767,7 @@ func (h *Handler) buildProtectedWatchlistItem(
 		ID:          strconv.FormatUint(item.ID, 10),
 		Asset:       h.putWatchlistAsset(c, claims, item, sensitive.PresetList, page),
 		DetailAsset: h.putWatchlistAsset(c, claims, item, sensitive.PresetDialog, page+":detail"),
-		Actions:     []string{"edit", "delete"},
+		Actions:     []string{},
 		Kind:        "watchlist",
 		Fields: []sensitive.FieldRef{
 			h.putInlineFieldAsset(

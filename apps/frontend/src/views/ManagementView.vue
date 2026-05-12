@@ -22,26 +22,17 @@ import {
 import { openTouchInput } from '../app/touch-input';
 import { useProtectedPage } from '../app/use-protected-page';
 import {
-  createAdminProfile,
   createAdminUser,
-  createAdminWatchlist,
-  deleteAdminProfile,
-  deleteAdminWatchlist,
-  getAdminProfile,
   getAdminUser,
-  getAdminWatchlist,
   listAdminAuditLogsProtected,
   getAdminInquirySettings,
   listAdminProfilesProtected,
   listAdminUsersProtected,
   listAdminWatchlistProtected,
   updateAdminInquirySettings,
-  updateAdminProfile,
   updateAdminUser,
   updateAdminUserStatus,
-  updateAdminWatchlist,
   type AdminUserItem,
-  type AdminWatchlistItem,
   type InquirySettings,
 } from '../app/admin-service';
 import type {
@@ -58,7 +49,6 @@ import {
   type InquiryArchiveListItem,
   type InquiryArchiveVideoPayload,
 } from '../app/archive-service';
-import type { PassengerProfileRecord } from '../app/profile-service';
 
 type TabKey =
   | 'profiles'
@@ -80,30 +70,6 @@ type FilterPickerKey =
 interface FilterOption {
   value: string;
   label: string;
-}
-
-interface ProfileDetailEntry {
-  label: string;
-  value: string;
-}
-
-interface ProfileFormState {
-  documentNum: string;
-  fullName: string;
-  documentType: string;
-  nationality: string;
-  gender: string;
-  birthDate: string;
-  phone: string;
-  pnr: string;
-  flightNo: string;
-  destination: string;
-  purpose: string;
-  occupation: string;
-  company: string;
-  riskTags: string;
-  criminalRecord: string;
-  remark: string;
 }
 
 const router = useRouter();
@@ -159,8 +125,6 @@ const archives = ref<InquiryArchiveListItem[]>([]);
 const inquirySettings = ref<InquirySettings | null>(null);
 const inquiryMaxRoundsInput = ref(3);
 const isSavingInquirySettings = ref(false);
-const isProfileFormVisible = ref(false);
-const isWatchlistFormVisible = ref(false);
 const isUserFormVisible = ref(false);
 const isArchiveDetailVisible = ref(false);
 const isAuditDetailVisible = ref(false);
@@ -186,11 +150,6 @@ const auditFilters = ref({
   result: '',
 });
 
-const profileForm = ref<ProfileFormState>(createEmptyProfileForm());
-const watchlistForm = ref<Partial<AdminWatchlistItem>>({
-  documentNum: '',
-  riskReason: '',
-});
 const userForm = ref<{
   id?: number;
   workId: string;
@@ -206,14 +165,9 @@ const userForm = ref<{
   password: '',
 });
 
-const editingProfileId = ref<number | null>(null);
-const editingWatchlistId = ref<number | null>(null);
-
 const currentUserId = computed(() => session.value?.user.id ?? null);
 const isAnyFormVisible = computed(
   () =>
-    isProfileFormVisible.value ||
-    isWatchlistFormVisible.value ||
     isUserFormVisible.value ||
     isArchiveDetailVisible.value ||
     isAuditDetailVisible.value,
@@ -660,19 +614,6 @@ async function syncCurrentSession() {
   return nextSession;
 }
 
-function resetProfileForm() {
-  editingProfileId.value = null;
-  profileForm.value = createEmptyProfileForm();
-}
-
-function resetWatchlistForm() {
-  editingWatchlistId.value = null;
-  watchlistForm.value = {
-    documentNum: '',
-    riskReason: '',
-  };
-}
-
 function resetUserForm() {
   userForm.value = {
     workId: '',
@@ -681,25 +622,6 @@ function resetUserForm() {
     status: 'active',
     password: '',
   };
-}
-
-async function editProfileById(id: number) {
-  const item = await getAdminProfile(id);
-  openFilterPicker.value = null;
-  editingProfileId.value = item.id;
-  profileForm.value = mapProfileToForm(item);
-  isProfileFormVisible.value = true;
-}
-
-async function editWatchlistById(id: number) {
-  const item = await getAdminWatchlist(id);
-  openFilterPicker.value = null;
-  editingWatchlistId.value = item.id;
-  watchlistForm.value = {
-    documentNum: item.documentNum,
-    riskReason: item.riskReason,
-  };
-  isWatchlistFormVisible.value = true;
 }
 
 async function editUserById(id: number) {
@@ -714,65 +636,6 @@ async function editUserById(id: number) {
     password: '',
   };
   isUserFormVisible.value = true;
-}
-
-async function submitProfile() {
-  try {
-    const payload = buildProfilePayload(profileForm.value);
-    if (editingProfileId.value) {
-      await updateAdminProfile(editingProfileId.value, payload);
-      statusMessages.value.profiles = '基础画像已更新。';
-    } else {
-      await createAdminProfile(payload);
-      statusMessages.value.profiles = '基础画像已新增。';
-    }
-    resetProfileForm();
-    isProfileFormVisible.value = false;
-    await loadProfiles();
-  } catch (error) {
-    statusMessages.value.profiles =
-      error instanceof Error ? error.message : '基础画像保存失败。';
-  }
-}
-
-async function removeProfile(id: number) {
-  try {
-    await deleteAdminProfile(id);
-    statusMessages.value.profiles = '基础画像已删除。';
-    await loadProfiles();
-  } catch (error) {
-    statusMessages.value.profiles =
-      error instanceof Error ? error.message : '删除基础画像失败。';
-  }
-}
-
-async function submitWatchlist() {
-  try {
-    if (editingWatchlistId.value) {
-      await updateAdminWatchlist(editingWatchlistId.value, watchlistForm.value);
-      statusMessages.value.watchlist = '高风险名单已更新。';
-    } else {
-      await createAdminWatchlist(watchlistForm.value);
-      statusMessages.value.watchlist = '高风险名单已新增。';
-    }
-    resetWatchlistForm();
-    isWatchlistFormVisible.value = false;
-    await loadWatchlist();
-  } catch (error) {
-    statusMessages.value.watchlist =
-      error instanceof Error ? error.message : '高风险名单保存失败。';
-  }
-}
-
-async function removeWatchlist(id: number) {
-  try {
-    await deleteAdminWatchlist(id);
-    statusMessages.value.watchlist = '高风险名单已删除。';
-    await loadWatchlist();
-  } catch (error) {
-    statusMessages.value.watchlist =
-      error instanceof Error ? error.message : '删除高风险名单失败。';
-  }
 }
 
 async function submitUser() {
@@ -883,14 +746,6 @@ function handleDocumentKeydown(event: KeyboardEvent) {
     return;
   }
 
-  if (isProfileFormVisible.value) {
-    closeProfileForm();
-    return;
-  }
-  if (isWatchlistFormVisible.value) {
-    closeWatchlistForm();
-    return;
-  }
   if (isUserFormVisible.value) {
     closeUserForm();
     return;
@@ -913,34 +768,10 @@ function toggleFilterPicker(key: Exclude<FilterPickerKey, null>) {
   openFilterPicker.value = openFilterPicker.value === key ? null : key;
 }
 
-function openCreateProfileForm() {
-  openFilterPicker.value = null;
-  resetProfileForm();
-  isProfileFormVisible.value = true;
-}
-
-function openCreateWatchlistForm() {
-  openFilterPicker.value = null;
-  resetWatchlistForm();
-  isWatchlistFormVisible.value = true;
-}
-
 function openCreateUserForm() {
   openFilterPicker.value = null;
   resetUserForm();
   isUserFormVisible.value = true;
-}
-
-function closeProfileForm() {
-  openFilterPicker.value = null;
-  resetProfileForm();
-  isProfileFormVisible.value = false;
-}
-
-function closeWatchlistForm() {
-  openFilterPicker.value = null;
-  resetWatchlistForm();
-  isWatchlistFormVisible.value = false;
 }
 
 function closeUserForm() {
@@ -1172,282 +1003,6 @@ async function openToolbarSearchInput(options: {
   options.assign(nextValue);
 }
 
-function createEmptyProfileForm(): ProfileFormState {
-  return {
-    documentNum: '',
-    fullName: '',
-    documentType: '',
-    nationality: '',
-    gender: '',
-    birthDate: '',
-    phone: '',
-    pnr: '',
-    flightNo: '',
-    destination: '',
-    purpose: '',
-    occupation: '',
-    company: '',
-    riskTags: '',
-    criminalRecord: '',
-    remark: '',
-  };
-}
-
-function mapProfileToForm(item: PassengerProfileRecord): ProfileFormState {
-  const profileData = (item.profileData ?? {}) as Record<string, any>;
-  const basicInfo = (profileData.basicInfo ?? {}) as Record<string, any>;
-  const tripInfo = (profileData.tripInfo ?? {}) as Record<string, any>;
-  const occupation = (profileData.occupation ?? {}) as Record<string, any>;
-  const riskInfo = (profileData.riskInfo ?? {}) as Record<string, any>;
-
-  return {
-    documentNum: item.documentNum,
-    fullName: item.fullName,
-    documentType: String(basicInfo.documentType ?? ''),
-    nationality: String(basicInfo.nationality ?? ''),
-    gender: String(basicInfo.gender ?? ''),
-    birthDate: String(basicInfo.birthDate ?? ''),
-    phone: String(basicInfo.phone ?? ''),
-    pnr: String(tripInfo.pnr ?? ''),
-    flightNo: String(tripInfo.flightNo ?? ''),
-    destination: String(tripInfo.destination ?? ''),
-    purpose: String(tripInfo.purposeDeclared ?? ''),
-    occupation: String(occupation.occupation ?? ''),
-    company: String(occupation.company ?? ''),
-    riskTags: Array.isArray(riskInfo.riskTags)
-      ? riskInfo.riskTags.join(', ')
-      : '',
-    criminalRecord: String(riskInfo.criminalRecord ?? ''),
-    remark: String(riskInfo.note ?? ''),
-  };
-}
-
-function buildProfilePayload(
-  form: ProfileFormState,
-): Partial<PassengerProfileRecord> {
-  return {
-    documentNum: form.documentNum.trim(),
-    fullName: form.fullName.trim(),
-    profileData: {
-      basicInfo: compactObject({
-        documentType: form.documentType.trim(),
-        nationality: form.nationality.trim(),
-        gender: form.gender.trim(),
-        birthDate: form.birthDate.trim(),
-        phone: form.phone.trim(),
-      }),
-      tripInfo: compactObject({
-        pnr: form.pnr.trim(),
-        flightNo: form.flightNo.trim(),
-        destination: form.destination.trim(),
-        purposeDeclared: form.purpose.trim(),
-      }),
-      occupation: compactObject({
-        occupation: form.occupation.trim(),
-        company: form.company.trim(),
-      }),
-      riskInfo: compactObject({
-        riskTags: splitTags(form.riskTags),
-        criminalRecord: form.criminalRecord.trim(),
-        note: form.remark.trim(),
-      }),
-    },
-  };
-}
-
-function splitTags(value: string) {
-  return value
-    .split(/[,，、;；]/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function compactObject(input: Record<string, unknown>) {
-  const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(input)) {
-    if (Array.isArray(value)) {
-      if (value.length > 0) {
-        result[key] = value;
-      }
-      continue;
-    }
-    if (typeof value === 'string') {
-      if (value.trim()) {
-        result[key] = value.trim();
-      }
-      continue;
-    }
-    if (value) {
-      result[key] = value;
-    }
-  }
-  return result;
-}
-
-function buildProfileSummary(item: PassengerProfileRecord) {
-  const profileData = (item.profileData ?? {}) as Record<string, any>;
-  const tripInfo = (profileData.tripInfo ?? {}) as Record<string, any>;
-  const occupation = (profileData.occupation ?? {}) as Record<string, any>;
-  const destination = String(tripInfo.destination ?? '').trim();
-  const purpose = String(tripInfo.purposeDeclared ?? '').trim();
-  const occupationName = String(occupation.occupation ?? '').trim();
-
-  return (
-    [destination, purpose, occupationName].filter(Boolean).join(' · ') ||
-    '未填写更多画像信息'
-  );
-}
-
-function buildProfileDetailEntries(
-  item: PassengerProfileRecord,
-): ProfileDetailEntry[] {
-  const profileData = (item.profileData ?? {}) as Record<string, any>;
-  const basicInfo = (profileData.basicInfo ?? {}) as Record<string, any>;
-  const tripInfo = (profileData.tripInfo ?? {}) as Record<string, any>;
-  const occupation = (profileData.occupation ?? {}) as Record<string, any>;
-  const occupationSummary = [occupation.occupation, occupation.company]
-    .map((value) => String(value ?? '').trim())
-    .filter(Boolean)
-    .join(' · ');
-
-  return [
-    {
-      label: '国籍',
-      value: String(basicInfo.nationality ?? '').trim() || '未填写',
-    },
-    {
-      label: '出生',
-      value: String(basicInfo.birthDate ?? '').trim() || '未填写',
-    },
-    {
-      label: '电话',
-      value: String(basicInfo.phone ?? '').trim() || '未填写',
-    },
-    {
-      label: 'PNR',
-      value: String(tripInfo.pnr ?? '').trim() || '未填写',
-    },
-    {
-      label: '航班',
-      value: String(tripInfo.flightNo ?? '').trim() || '未填写',
-    },
-    {
-      label: '目的地',
-      value: String(tripInfo.destination ?? '').trim() || '未填写',
-    },
-    {
-      label: '目的',
-      value: String(tripInfo.purposeDeclared ?? '').trim() || '未填写',
-    },
-    {
-      label: '职业 / 单位',
-      value: occupationSummary || '未填写',
-    },
-  ];
-}
-
-function buildProfileRiskTags(item: PassengerProfileRecord) {
-  const profileData = (item.profileData ?? {}) as Record<string, any>;
-  const riskInfo = (profileData.riskInfo ?? {}) as Record<string, any>;
-  const rawTags = riskInfo.riskTags;
-  if (!Array.isArray(rawTags)) {
-    return [] as string[];
-  }
-
-  return rawTags.map((tag) => String(tag ?? '').trim()).filter(Boolean);
-}
-
-function buildProfileNotes(item: PassengerProfileRecord): ProfileDetailEntry[] {
-  const profileData = (item.profileData ?? {}) as Record<string, any>;
-  const riskInfo = (profileData.riskInfo ?? {}) as Record<string, any>;
-  const notes: ProfileDetailEntry[] = [];
-  const criminalRecord = String(riskInfo.criminalRecord ?? '').trim();
-  const remark = String(riskInfo.note ?? '').trim();
-
-  if (criminalRecord) {
-    notes.push({
-      label: '违法犯罪记录',
-      value: criminalRecord,
-    });
-  }
-  if (remark) {
-    notes.push({
-      label: '备注',
-      value: remark,
-    });
-  }
-
-  return notes;
-}
-
-function buildProfileSearchText(item: PassengerProfileRecord) {
-  return [
-    item.fullName,
-    item.documentNum,
-    item.riskReason,
-    readProfileField(item, 'basicInfo', 'documentType'),
-    formatDocumentTypeLabel(
-      readProfileField(item, 'basicInfo', 'documentType'),
-    ),
-    readProfileField(item, 'basicInfo', 'nationality'),
-    readProfileField(item, 'basicInfo', 'gender'),
-    formatGenderLabel(readProfileField(item, 'basicInfo', 'gender')),
-    ...buildProfileDetailEntries(item).flatMap((detail) => [
-      detail.label,
-      detail.value,
-    ]),
-    ...buildProfileRiskTags(item),
-    ...buildProfileNotes(item).flatMap((note) => [note.label, note.value]),
-  ];
-}
-
-function buildUserSearchText(item: AdminUserItem) {
-  return [
-    item.workId,
-    item.name,
-    item.role,
-    formatUserRoleLabel(item.role),
-    item.status,
-    formatUserStatusLabel(item.status),
-  ];
-}
-
-function matchesSearch(values: Array<string | undefined>, rawQuery: string) {
-  const terms = rawQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
-
-  if (terms.length === 0) {
-    return true;
-  }
-
-  const haystack = values
-    .map((value) =>
-      String(value ?? '')
-        .trim()
-        .toLowerCase(),
-    )
-    .filter(Boolean)
-    .join(' ');
-
-  return terms.every((term) => haystack.includes(term));
-}
-
-function buildDistinctOptions(
-  values: string[],
-  formatter?: (value: string) => string,
-) {
-  const distinctValues = [
-    ...new Set(values.map((item) => item.trim()).filter(Boolean)),
-  ].sort((left, right) => left.localeCompare(right, 'zh-Hans-CN'));
-
-  return [
-    { value: '', label: '全部' },
-    ...distinctValues.map((value) => ({
-      value,
-      label: formatter ? formatter(value) : value,
-    })),
-  ];
-}
-
 function describeFilterLabel(
   prefix: string,
   options: FilterOption[],
@@ -1455,16 +1010,6 @@ function describeFilterLabel(
 ) {
   const label = options.find((item) => item.value === value)?.label ?? '全部';
   return `${prefix}：${label}`;
-}
-
-function readProfileField(
-  item: PassengerProfileRecord,
-  section: 'basicInfo' | 'tripInfo' | 'occupation' | 'riskInfo',
-  field: string,
-) {
-  const profileData = (item.profileData ?? {}) as Record<string, any>;
-  const sectionData = (profileData[section] ?? {}) as Record<string, any>;
-  return String(sectionData[field] ?? '').trim();
 }
 
 function formatDocumentTypeLabel(value: string) {
@@ -1774,13 +1319,6 @@ function stringifyDetail(value: unknown) {
             <button type="button" class="ghost" @click="clearProfileFilters">
               清空筛选
             </button>
-            <button
-              type="button"
-              class="ghost ghost--strong"
-              @click="openCreateProfileForm"
-            >
-              {{ editingProfileId ? '继续编辑' : '新增基础画像' }}
-            </button>
           </div>
         </div>
 
@@ -1900,21 +1438,6 @@ function stringifyDetail(value: unknown) {
                 </span>
               </div>
             </div>
-            <div class="admin-row__actions">
-              <button
-                type="button"
-                @click="editProfileById(Number(item.id))"
-              >
-                编辑
-              </button>
-              <button
-                type="button"
-                class="danger"
-                @click="removeProfile(Number(item.id))"
-              >
-                删除
-              </button>
-            </div>
           </article>
         </div>
       </section>
@@ -1944,13 +1467,6 @@ function stringifyDetail(value: unknown) {
           <div class="admin-toolbar__actions">
             <button type="button" class="ghost" @click="clearWatchlistFilters">
               清空检索
-            </button>
-            <button
-              type="button"
-              class="ghost ghost--strong"
-              @click="openCreateWatchlistForm"
-            >
-              {{ editingWatchlistId ? '继续编辑' : '新增高风险名单' }}
             </button>
           </div>
         </div>
@@ -2019,21 +1535,6 @@ function stringifyDetail(value: unknown) {
                   />
                 </span>
               </div>
-            </div>
-            <div class="admin-row__actions">
-              <button
-                type="button"
-                @click="editWatchlistById(Number(item.id))"
-              >
-                编辑
-              </button>
-              <button
-                type="button"
-                class="danger"
-                @click="removeWatchlist(Number(item.id))"
-              >
-                删除
-              </button>
             </div>
           </article>
         </div>
@@ -2614,331 +2115,6 @@ function stringifyDetail(value: unknown) {
       </section>
     </section>
   </main>
-
-  <Teleport to="body">
-    <section
-      v-if="isProfileFormVisible"
-      class="admin-dialog"
-      @click.self="closeProfileForm"
-    >
-      <div
-        class="admin-form-card admin-form-card--dialog admin-form-card--profile"
-      >
-        <div class="admin-form-card__header">
-          <div>
-            <h3>{{ editingProfileId ? '编辑基础画像' : '新增基础画像' }}</h3>
-            <p>在弹窗内填写并提交基础画像信息。</p>
-          </div>
-          <button type="button" class="ghost" @click="closeProfileForm">
-            关闭窗口
-          </button>
-        </div>
-
-        <div class="admin-form-grid">
-          <input
-            v-model="profileForm.documentNum"
-            :title="touchInputHint"
-            type="text"
-            placeholder="证件号码"
-            @dblclick.stop.prevent="
-              openFormFieldInput({
-                title: '输入证件号码',
-                placeholder: '输入证件号码',
-                value: profileForm.documentNum,
-                assign: (value) => (profileForm.documentNum = value),
-              })
-            "
-          />
-          <input
-            v-model="profileForm.fullName"
-            :title="touchInputHint"
-            type="text"
-            placeholder="姓名"
-            @dblclick.stop.prevent="
-              openFormFieldInput({
-                title: '输入姓名',
-                placeholder: '输入姓名',
-                value: profileForm.fullName,
-                assign: (value) => (profileForm.fullName = value),
-              })
-            "
-          />
-          <input
-            v-model="profileForm.documentType"
-            :title="touchInputHint"
-            type="text"
-            placeholder="证件类型"
-            @dblclick.stop.prevent="
-              openFormFieldInput({
-                title: '输入证件类型',
-                placeholder: '输入证件类型',
-                value: profileForm.documentType,
-                assign: (value) => (profileForm.documentType = value),
-              })
-            "
-          />
-          <input
-            v-model="profileForm.nationality"
-            :title="touchInputHint"
-            type="text"
-            placeholder="国籍"
-            @dblclick.stop.prevent="
-              openFormFieldInput({
-                title: '输入国籍',
-                placeholder: '输入国籍',
-                value: profileForm.nationality,
-                assign: (value) => (profileForm.nationality = value),
-              })
-            "
-          />
-          <input
-            v-model="profileForm.gender"
-            :title="touchInputHint"
-            type="text"
-            placeholder="性别"
-            @dblclick.stop.prevent="
-              openFormFieldInput({
-                title: '输入性别',
-                placeholder: '输入性别',
-                value: profileForm.gender,
-                assign: (value) => (profileForm.gender = value),
-              })
-            "
-          />
-          <input
-            v-model="profileForm.birthDate"
-            :title="touchInputHint"
-            type="text"
-            placeholder="出生日期"
-            @dblclick.stop.prevent="
-              openFormFieldInput({
-                title: '输入出生日期',
-                placeholder: '输入出生日期',
-                value: profileForm.birthDate,
-                assign: (value) => (profileForm.birthDate = value),
-              })
-            "
-          />
-          <input
-            v-model="profileForm.phone"
-            :title="touchInputHint"
-            type="text"
-            inputmode="tel"
-            placeholder="联系电话"
-            @dblclick.stop.prevent="
-              openFormFieldInput({
-                title: '输入联系电话',
-                placeholder: '输入联系电话',
-                value: profileForm.phone,
-                inputMode: 'tel',
-                assign: (value) => (profileForm.phone = value),
-              })
-            "
-          />
-          <input
-            v-model="profileForm.pnr"
-            :title="touchInputHint"
-            type="text"
-            placeholder="订票编码 PNR"
-            @dblclick.stop.prevent="
-              openFormFieldInput({
-                title: '输入订票编码 PNR',
-                placeholder: '输入订票编码 PNR',
-                value: profileForm.pnr,
-                assign: (value) => (profileForm.pnr = value),
-              })
-            "
-          />
-          <input
-            v-model="profileForm.flightNo"
-            :title="touchInputHint"
-            type="text"
-            placeholder="航班号"
-            @dblclick.stop.prevent="
-              openFormFieldInput({
-                title: '输入航班号',
-                placeholder: '输入航班号',
-                value: profileForm.flightNo,
-                assign: (value) => (profileForm.flightNo = value),
-              })
-            "
-          />
-          <input
-            v-model="profileForm.destination"
-            :title="touchInputHint"
-            type="text"
-            placeholder="目的地"
-            @dblclick.stop.prevent="
-              openFormFieldInput({
-                title: '输入目的地',
-                placeholder: '输入目的地',
-                value: profileForm.destination,
-                assign: (value) => (profileForm.destination = value),
-              })
-            "
-          />
-          <input
-            v-model="profileForm.purpose"
-            :title="touchInputHint"
-            type="text"
-            placeholder="出行目的"
-            @dblclick.stop.prevent="
-              openFormFieldInput({
-                title: '输入出行目的',
-                placeholder: '输入出行目的',
-                value: profileForm.purpose,
-                assign: (value) => (profileForm.purpose = value),
-              })
-            "
-          />
-          <input
-            v-model="profileForm.occupation"
-            :title="touchInputHint"
-            type="text"
-            placeholder="职业"
-            @dblclick.stop.prevent="
-              openFormFieldInput({
-                title: '输入职业',
-                placeholder: '输入职业',
-                value: profileForm.occupation,
-                assign: (value) => (profileForm.occupation = value),
-              })
-            "
-          />
-          <input
-            v-model="profileForm.company"
-            :title="touchInputHint"
-            type="text"
-            placeholder="工作单位"
-            @dblclick.stop.prevent="
-              openFormFieldInput({
-                title: '输入工作单位',
-                placeholder: '输入工作单位',
-                value: profileForm.company,
-                assign: (value) => (profileForm.company = value),
-              })
-            "
-          />
-          <input
-            v-model="profileForm.riskTags"
-            :title="touchInputHint"
-            type="text"
-            placeholder="风险标签，多个用逗号分隔"
-            @dblclick.stop.prevent="
-              openFormFieldInput({
-                title: '输入风险标签',
-                description: '多个标签可用逗号分隔。',
-                placeholder: '输入风险标签，多个用逗号分隔',
-                value: profileForm.riskTags,
-                assign: (value) => (profileForm.riskTags = value),
-              })
-            "
-          />
-          <textarea
-            v-model="profileForm.criminalRecord"
-            :title="touchInputHint"
-            placeholder="违法犯罪记录"
-            @dblclick.stop.prevent="
-              openFormFieldInput({
-                title: '输入违法犯罪记录',
-                placeholder: '输入违法犯罪记录',
-                value: profileForm.criminalRecord,
-                multiline: true,
-                assign: (value) => (profileForm.criminalRecord = value),
-              })
-            "
-          ></textarea>
-          <textarea
-            v-model="profileForm.remark"
-            :title="touchInputHint"
-            placeholder="备注"
-            @dblclick.stop.prevent="
-              openFormFieldInput({
-                title: '输入备注',
-                placeholder: '输入备注',
-                value: profileForm.remark,
-                multiline: true,
-                assign: (value) => (profileForm.remark = value),
-              })
-            "
-          ></textarea>
-        </div>
-
-        <div class="admin-form-actions">
-          <button type="button" @click="submitProfile">
-            {{ editingProfileId ? '更新基础画像' : '新增基础画像' }}
-          </button>
-          <button type="button" class="ghost" @click="closeProfileForm">
-            取消
-          </button>
-        </div>
-      </div>
-    </section>
-  </Teleport>
-
-  <Teleport to="body">
-    <section
-      v-if="isWatchlistFormVisible"
-      class="admin-dialog"
-      @click.self="closeWatchlistForm"
-    >
-      <div
-        class="admin-form-card admin-form-card--dialog admin-form-card--watchlist"
-      >
-        <div class="admin-form-card__header">
-          <div>
-            <h3>
-              {{ editingWatchlistId ? '编辑高风险名单' : '新增高风险名单' }}
-            </h3>
-            <p>在弹窗内填写证件号码和高风险原因。</p>
-          </div>
-          <button type="button" class="ghost" @click="closeWatchlistForm">
-            关闭窗口
-          </button>
-        </div>
-
-        <div class="admin-form-grid">
-          <input
-            v-model="watchlistForm.documentNum"
-            :title="touchInputHint"
-            type="text"
-            placeholder="证件号码"
-            @dblclick.stop.prevent="
-              openFormFieldInput({
-                title: '输入证件号码',
-                placeholder: '输入证件号码',
-                value: watchlistForm.documentNum ?? '',
-                assign: (value) => (watchlistForm.documentNum = value),
-              })
-            "
-          />
-          <textarea
-            v-model="watchlistForm.riskReason"
-            :title="touchInputHint"
-            placeholder="高风险原因"
-            @dblclick.stop.prevent="
-              openFormFieldInput({
-                title: '输入高风险原因',
-                placeholder: '输入高风险原因',
-                value: watchlistForm.riskReason ?? '',
-                multiline: true,
-                assign: (value) => (watchlistForm.riskReason = value),
-              })
-            "
-          ></textarea>
-        </div>
-
-        <div class="admin-form-actions">
-          <button type="button" @click="submitWatchlist">
-            {{ editingWatchlistId ? '更新高风险名单' : '新增高风险名单' }}
-          </button>
-          <button type="button" class="ghost" @click="closeWatchlistForm">
-            取消
-          </button>
-        </div>
-      </div>
-    </section>
-  </Teleport>
 
   <Teleport to="body">
     <section
