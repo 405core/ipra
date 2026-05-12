@@ -107,8 +107,8 @@ func (h *Handler) handleProtectedSearch(c *gin.Context) {
 	for _, profile := range profiles {
 		items = append(items, sensitive.ListItem{
 			ID:          strconv.FormatUint(profile.ID, 10),
-			Asset:       h.putProfileAsset(c, claims, profile, sensitive.PresetDetail, "home:data"),
-			DetailAsset: h.putProfileAsset(c, claims, profile, sensitive.PresetDetail, "home:data:detail"),
+			Asset:       h.putProfileAsset(c, claims, profile, sensitive.PresetList, "home:data"),
+			DetailAsset: h.putProfileAsset(c, claims, profile, sensitive.PresetDialog, "home:data:detail"),
 			Actions:     []string{"open-ask"},
 		})
 	}
@@ -448,56 +448,74 @@ func (h *Handler) putProfileAsset(
 	page string,
 ) sensitive.AssetRef {
 	riskTags := profileStringSlice(profile, "riskInfo", "riskTags")
-	company := profileField(profile, "occupation", "company")
-	tags := compactStrings([]string{formatRiskTag(profile.IsHighRisk)})
+	documentType := formatDocumentTypeLabel(profileField(profile, "basicInfo", "documentType"))
+	gender := formatGenderLabel(profileField(profile, "basicInfo", "gender"))
+	title := firstNonEmptyText(strings.TrimSpace(profile.FullName), "旅客画像")
+	subtitle := ""
 	sections := make([]sensitive.Section, 0, 3)
+	factItems := []sensitive.FactItem{}
+	tagItems := []sensitive.TagItem{}
+	metaItems := make([]sensitive.TagItem, 0, len(riskTags)+4)
 
 	if preset == sensitive.PresetList {
-		tags = append(tags, compactStrings([]string{
-			formatProfileTag("证件类型", formatDocumentTypeLabel(profileField(profile, "basicInfo", "documentType"))),
-			formatProfileTag("性别", formatGenderLabel(profileField(profile, "basicInfo", "gender"))),
-			formatProfileTag("国籍", profileField(profile, "basicInfo", "nationality")),
-		})...)
-		if profile.ID == 0 {
-			tags = append(tags, "基础画像未导入")
-		}
-		tags = append(tags, riskTags...)
-
-		sections = append(sections, sensitive.Section{
-			Heading: "概要信息",
-			Lines: compactStrings([]string{
-				formatProfileFieldLabel("证件号码", profile.DocumentNum),
-				formatProfileFieldLabel("目的地", profileField(profile, "tripInfo", "destination")),
-				formatProfileFieldLabel("高风险原因", profile.RiskReason),
-			}),
-		})
-	} else {
-		tags = append(tags, compactStrings([]string{
-			formatProfileTag("证件类型", formatDocumentTypeLabel(profileField(profile, "basicInfo", "documentType"))),
-			formatProfileTag("性别", formatGenderLabel(profileField(profile, "basicInfo", "gender"))),
-			formatProfileTag("国籍", profileField(profile, "basicInfo", "nationality")),
-			formatProfileTag("出生", profileField(profile, "basicInfo", "birthDate")),
-			formatProfileTag("电话", profileField(profile, "basicInfo", "phone")),
-			formatProfileTag("PNR", profileField(profile, "tripInfo", "pnr")),
-			formatProfileTag("航班", profileField(profile, "tripInfo", "flightNo")),
-			formatProfileTag("目的地", profileField(profile, "tripInfo", "destination")),
-			formatProfileTag("申报目的", profileField(profile, "tripInfo", "purposeDeclared")),
-			formatProfileTag("职业", profileField(profile, "occupation", "occupation")),
-			buildRouteTag(profile),
-		})...)
-		if profile.ID == 0 {
-			tags = append(tags, "基础画像未导入")
-		}
-		tags = append(tags, riskTags...)
-
-		if summaryLines := compactStrings([]string{
-			formatProfileFieldLabel("单位", company),
-		}); len(summaryLines) > 0 {
-			sections = append(sections, sensitive.Section{
-				Heading: "补充信息",
-				Lines:   summaryLines,
+		subtitle = buildProfileListSubtitle(profile)
+		if documentType != "" {
+			tagItems = append(tagItems, sensitive.TagItem{
+				Text: documentType,
+				Tone: sensitive.TagToneDefault,
 			})
 		}
+		if gender != "" {
+			tagItems = append(tagItems, sensitive.TagItem{
+				Text: gender,
+				Tone: sensitive.TagToneDefault,
+			})
+		}
+		tagItems = append(tagItems, sensitive.TagItem{
+			Text: profile.DocumentNum,
+			Tone: sensitive.TagToneIdentity,
+		})
+		factItems = buildProfileFactItems(profile)
+		if profile.IsHighRisk {
+			metaItems = append(metaItems, sensitive.TagItem{
+				Text: formatRiskTag(profile.IsHighRisk),
+				Tone: sensitive.TagToneAlert,
+			})
+		}
+		if profile.ID == 0 {
+			metaItems = append(metaItems, sensitive.TagItem{
+				Text: "基础画像未导入",
+				Tone: sensitive.TagToneWarning,
+			})
+		}
+		metaItems = append(metaItems, buildRiskTagItems(riskTags, sensitive.TagToneAccent)...)
+		sections = append(sections, buildProfileListSections(profile)...)
+	} else {
+		subtitle = "证件号 " + firstNonEmptyText(strings.TrimSpace(profile.DocumentNum), "-")
+		tagItems = append(tagItems, sensitive.TagItem{
+			Text: formatRiskTag(profile.IsHighRisk),
+			Tone: profileRiskTone(profile.IsHighRisk),
+		})
+		if documentType != "" {
+			tagItems = append(tagItems, sensitive.TagItem{
+				Text: documentType,
+				Tone: sensitive.TagToneDefault,
+			})
+		}
+		if gender != "" {
+			tagItems = append(tagItems, sensitive.TagItem{
+				Text: gender,
+				Tone: sensitive.TagToneDefault,
+			})
+		}
+		if profile.ID == 0 {
+			metaItems = append(metaItems, sensitive.TagItem{
+				Text: "基础画像未导入",
+				Tone: sensitive.TagToneWarning,
+			})
+		}
+		metaItems = append(metaItems, buildRiskTagItems(riskTags, sensitive.TagToneAccent)...)
+		metaItems = append(metaItems, buildProfileNoteTagItems(profile)...)
 
 		if riskLines := compactStrings([]string{
 			formatProfileFieldLabel("高风险原因", profile.RiskReason),
@@ -512,11 +530,13 @@ func (h *Handler) putProfileAsset(
 	}
 
 	document := sensitive.Document{
-		Eyebrow:  "",
-		Title:    firstNonEmptyText(strings.TrimSpace(profile.FullName), "旅客画像"),
-		Subtitle: "证件号 " + firstNonEmptyText(strings.TrimSpace(profile.DocumentNum), "-"),
-		Tags:     tags,
-		Sections: sections,
+		Eyebrow:   "",
+		Title:     title,
+		Subtitle:  subtitle,
+		TagItems:  tagItems,
+		FactItems: factItems,
+		MetaItems: metaItems,
+		Sections:  sections,
 		Footer: []string{
 			"更新时间 " + formatTime(profile.UpdatedAt),
 		},
@@ -540,15 +560,16 @@ func (h *Handler) putWatchlistAsset(
 ) sensitive.AssetRef {
 	document := sensitive.Document{
 		Eyebrow:  "高风险名单",
-		Title:    "名单命中记录",
-		Subtitle: "证件号 " + firstNonEmptyText(strings.TrimSpace(item.DocumentNum), "-"),
-		Tags:     []string{"高风险预警"},
+		Title:    firstNonEmptyText(strings.TrimSpace(item.DocumentNum), "名单命中记录"),
+		Subtitle: firstNonEmptyText(strings.TrimSpace(item.RiskReason), "高风险名单命中"),
+		TagItems: []sensitive.TagItem{
+			{Text: "高风险预警", Tone: sensitive.TagToneAlert},
+		},
 		Sections: []sensitive.Section{
 			{
-				Heading: "名单信息",
+				Heading: "命中原因",
 				Lines: compactStrings([]string{
-					formatProfileFieldLabel("证件号码", item.DocumentNum),
-					formatProfileFieldLabel("命中原因", item.RiskReason),
+					firstNonEmptyText(strings.TrimSpace(item.RiskReason), "高风险名单命中"),
 				}),
 			},
 		},
@@ -659,6 +680,159 @@ func formatProfileTag(label string, value string) string {
 		return value
 	}
 	return label + " " + value
+}
+
+func profileRiskTone(highRisk bool) sensitive.TagTone {
+	if highRisk {
+		return sensitive.TagToneAlert
+	}
+	return sensitive.TagToneAccent
+}
+
+func buildProfileFactItems(profile SearchProfileResponse) []sensitive.FactItem {
+	profileData := profile.ProfileData
+	basicInfo, _ := profileData["basicInfo"].(map[string]any)
+	tripInfo, _ := profileData["tripInfo"].(map[string]any)
+	occupation, _ := profileData["occupation"].(map[string]any)
+
+	return compactFactItems([]sensitive.FactItem{
+		{Label: "国籍", Value: strings.TrimSpace(stringifyValue(basicInfo["nationality"]))},
+		{Label: "出生", Value: strings.TrimSpace(stringifyValue(basicInfo["birthDate"]))},
+		{Label: "电话", Value: strings.TrimSpace(stringifyValue(basicInfo["phone"]))},
+		{Label: "PNR", Value: strings.TrimSpace(stringifyValue(tripInfo["pnr"]))},
+		{Label: "航班", Value: strings.TrimSpace(stringifyValue(tripInfo["flightNo"]))},
+		{Label: "出发地", Value: strings.TrimSpace(stringifyValue(tripInfo["origin"]))},
+		{Label: "目的地", Value: strings.TrimSpace(stringifyValue(tripInfo["destination"]))},
+		{Label: "目的", Value: strings.TrimSpace(stringifyValue(tripInfo["purposeDeclared"]))},
+		{Label: "职业", Value: strings.TrimSpace(stringifyValue(occupation["occupation"]))},
+		{Label: "单位", Value: strings.TrimSpace(stringifyValue(occupation["company"]))},
+	})
+}
+
+func buildProfileMetaItems(profile SearchProfileResponse) []sensitive.TagItem {
+	items := []sensitive.TagItem{}
+	for _, value := range compactStrings([]string{
+		formatProfileTag("国籍", profileField(profile, "basicInfo", "nationality")),
+		formatProfileTag("出生", profileField(profile, "basicInfo", "birthDate")),
+		formatProfileTag("电话", profileField(profile, "basicInfo", "phone")),
+		formatProfileTag("PNR", profileField(profile, "tripInfo", "pnr")),
+		formatProfileTag("航班", profileField(profile, "tripInfo", "flightNo")),
+		formatProfileTag("目的地", profileField(profile, "tripInfo", "destination")),
+		formatProfileTag("申报目的", profileField(profile, "tripInfo", "purposeDeclared")),
+		formatProfileTag("职业", profileField(profile, "occupation", "occupation")),
+		buildRouteTag(profile),
+	}) {
+		items = append(items, sensitive.TagItem{Text: value, Tone: sensitive.TagToneAccent})
+	}
+	return items
+}
+
+func buildProfileListSubtitle(profile SearchProfileResponse) string {
+	values := compactStrings([]string{
+		buildExplicitRouteValue(profile),
+		profileField(profile, "tripInfo", "destination"),
+		profileField(profile, "tripInfo", "purposeDeclared"),
+		profileField(profile, "occupation", "occupation"),
+		profileField(profile, "occupation", "company"),
+	})
+	if len(values) > 4 {
+		values = values[:4]
+	}
+	return strings.Join(values, " · ")
+}
+
+func buildProfileListSections(profile SearchProfileResponse) []sensitive.Section {
+	sections := make([]sensitive.Section, 0, 2)
+
+	tripLines := compactStrings([]string{
+		formatProfileFieldLabel("完整行程", buildExplicitRouteValue(profile)),
+		formatProfileFieldLabel("出发地", profileField(profile, "tripInfo", "origin")),
+	})
+	if len(tripLines) > 0 {
+		sections = append(sections, sensitive.Section{
+			Heading: "行程说明",
+			Lines:   tripLines,
+		})
+	}
+
+	riskLines := compactStrings([]string{
+		formatProfileFieldLabel("高风险原因", profile.RiskReason),
+		formatProfileFieldLabel("违法犯罪记录", profileField(profile, "riskInfo", "criminalRecord")),
+		formatProfileFieldLabel("备注", profileField(profile, "riskInfo", "note")),
+	})
+	if len(riskLines) > 0 {
+		sections = append(sections, sensitive.Section{
+			Heading: "风险说明",
+			Lines:   riskLines,
+		})
+	}
+
+	return sections
+}
+
+func buildRiskTagItems(values []string, tone sensitive.TagTone) []sensitive.TagItem {
+	items := make([]sensitive.TagItem, 0, len(values))
+	for _, value := range compactStrings(values) {
+		items = append(items, sensitive.TagItem{Text: value, Tone: tone})
+	}
+	return items
+}
+
+func buildProfileNoteTagItems(profile SearchProfileResponse) []sensitive.TagItem {
+	items := make([]sensitive.TagItem, 0, 2)
+	if strings.TrimSpace(profileField(profile, "riskInfo", "criminalRecord")) != "" {
+		items = append(items, sensitive.TagItem{
+			Text: "违法犯罪记录",
+			Tone: sensitive.TagToneMuted,
+		})
+	}
+	if strings.TrimSpace(profileField(profile, "riskInfo", "note")) != "" {
+		items = append(items, sensitive.TagItem{
+			Text: "备注",
+			Tone: sensitive.TagToneMuted,
+		})
+	}
+	return items
+}
+
+func compactFactItems(values []sensitive.FactItem) []sensitive.FactItem {
+	result := make([]sensitive.FactItem, 0, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value.Label) == "" || strings.TrimSpace(value.Value) == "" {
+			continue
+		}
+		result = append(result, sensitive.FactItem{
+			Label: strings.TrimSpace(value.Label),
+			Value: strings.TrimSpace(value.Value),
+		})
+	}
+	return result
+}
+
+func buildRouteValue(profile SearchProfileResponse) string {
+	route := profileField(profile, "tripInfo", "route")
+	if route != "" {
+		return route
+	}
+
+	flightNo := profileField(profile, "tripInfo", "flightNo")
+	origin := profileField(profile, "tripInfo", "origin")
+	destination := profileField(profile, "tripInfo", "destination")
+
+	switch {
+	case flightNo != "" && origin != "" && destination != "":
+		return flightNo + " " + origin + " -> " + destination
+	case origin != "" && destination != "":
+		return origin + " -> " + destination
+	case destination != "":
+		return "目的地 " + destination
+	default:
+		return ""
+	}
+}
+
+func buildExplicitRouteValue(profile SearchProfileResponse) string {
+	return profileField(profile, "tripInfo", "route")
 }
 
 func buildRouteTag(profile SearchProfileResponse) string {

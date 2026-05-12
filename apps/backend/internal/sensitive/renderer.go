@@ -219,6 +219,21 @@ func measureDocument(
 		lines, y = appendTags(lines, tagFace, x, y, maxWidth, doc.Tags)
 	}
 
+	if len(doc.TagItems) > 0 {
+		y += 14
+		lines, y = appendStructuredTagItems(lines, tagFace, x, y, maxWidth, doc.TagItems)
+	}
+
+	if len(doc.FactItems) > 0 {
+		y += 14
+		lines, y = appendFactItems(lines, bodyFace, x, y, maxWidth, doc.FactItems)
+	}
+
+	if len(doc.MetaItems) > 0 {
+		y += 14
+		lines, y = appendStructuredTagItems(lines, tagFace, x, y, maxWidth, doc.MetaItems)
+	}
+
 	for _, section := range doc.Sections {
 		sectionLines := compactValues(section.Lines)
 		if strings.TrimSpace(section.Heading) == "" && len(sectionLines) == 0 {
@@ -267,6 +282,11 @@ func measureDocument(
 		}
 	}
 
+	if len(doc.FooterTags) > 0 {
+		y += 14
+		lines, y = appendStructuredTagItems(lines, tagFace, x, y, maxWidth, doc.FooterTags)
+	}
+
 	return lines, y + layout.Padding
 }
 
@@ -313,6 +333,57 @@ func appendTags(
 		return lines, top
 	}
 
+	items := make([]tagLayoutItem, 0, len(cleaned))
+	for _, tag := range cleaned {
+		items = append(items, tagLayoutItem{
+			Text: tag,
+			Tone: inferTagTone(tag),
+		})
+	}
+	return appendTagLayout(lines, face, x, top, maxWidth, items)
+}
+
+type tagLayoutItem struct {
+	Text string
+	Tone TagTone
+}
+
+func appendStructuredTagItems(
+	lines []drawnLine,
+	face font.Face,
+	x int,
+	top int,
+	maxWidth int,
+	tags []TagItem,
+) ([]drawnLine, int) {
+	items := make([]tagLayoutItem, 0, len(tags))
+	for _, tag := range tags {
+		if strings.TrimSpace(tag.Text) == "" {
+			continue
+		}
+		items = append(items, tagLayoutItem{
+			Text: strings.TrimSpace(tag.Text),
+			Tone: tag.Tone,
+		})
+	}
+	if len(items) == 0 {
+		return lines, top
+	}
+	return appendTagLayout(lines, face, x, top, maxWidth, items)
+}
+
+func appendTagLayout(
+	lines []drawnLine,
+	face font.Face,
+	x int,
+	top int,
+	maxWidth int,
+	items []tagLayoutItem,
+) ([]drawnLine, int) {
+	if len(items) == 0 {
+		return lines, top
+	}
+
 	const (
 		paddingX      = 14
 		paddingTop    = 6
@@ -330,8 +401,8 @@ func appendTags(
 	rowHeight := 0
 	maxX := x + maxWidth
 
-	for _, tag := range cleaned {
-		wrapped := wrapSingleLine(face, tag, maxWidth-paddingX*2)
+	for _, item := range items {
+		wrapped := wrapSingleLine(face, item.Text, maxWidth-paddingX*2)
 		if len(wrapped) == 0 {
 			continue
 		}
@@ -353,7 +424,7 @@ func appendTags(
 			rowHeight = 0
 		}
 
-		textColor, backgroundColor, borderColor := resolveTagPalette(tag)
+		textColor, backgroundColor, borderColor := resolveTagPalette(item.Tone)
 		rect := image.Rect(cursorX, cursorY, cursorX+boxWidth, cursorY+boxHeight)
 		baseline := cursorY + paddingTop + ascent
 		for index, wrappedLine := range wrapped {
@@ -383,16 +454,111 @@ func appendTags(
 	return lines, cursorY + rowHeight
 }
 
-func resolveTagPalette(tag string) (color.Color, color.Color, color.Color) {
+func inferTagTone(tag string) TagTone {
 	normalized := strings.ToLower(strings.TrimSpace(tag))
 	switch {
-	case strings.Contains(normalized, "高风险"):
-		return color.RGBA{154, 61, 41, 255}, color.RGBA{251, 232, 227, 255}, color.RGBA{226, 183, 172, 255}
+	case strings.Contains(normalized, "高风险"), strings.Contains(normalized, "失败"), strings.Contains(normalized, "拒绝"):
+		return TagToneAlert
 	case strings.Contains(normalized, "未导入"):
+		return TagToneWarning
+	case strings.Contains(normalized, "成功"), strings.Contains(normalized, "启用"):
+		return TagToneSuccess
+	default:
+		return TagToneAccent
+	}
+}
+
+func resolveTagPalette(tone TagTone) (color.Color, color.Color, color.Color) {
+	switch tone {
+	case TagToneAlert:
+		return color.RGBA{154, 61, 41, 255}, color.RGBA{251, 232, 227, 255}, color.RGBA{226, 183, 172, 255}
+	case TagToneWarning:
 		return color.RGBA{112, 83, 17, 255}, color.RGBA{251, 243, 219, 255}, color.RGBA{224, 206, 137, 255}
+	case TagToneMuted:
+		return color.RGBA{85, 101, 109, 255}, color.RGBA{233, 238, 240, 255}, color.RGBA{194, 205, 210, 255}
+	case TagToneIdentity:
+		return color.RGBA{122, 81, 66, 255}, color.RGBA{243, 231, 222, 235}, color.RGBA{220, 201, 191, 255}
+	case TagToneSuccess:
+		return color.RGBA{45, 139, 58, 255}, color.RGBA{228, 244, 231, 255}, color.RGBA{182, 216, 188, 255}
+	case TagToneDefault:
+		return color.RGBA{67, 100, 110, 255}, color.RGBA{255, 255, 255, 240}, color.RGBA{188, 203, 209, 255}
 	default:
 		return color.RGBA{9, 89, 108, 255}, color.RGBA{221, 239, 244, 255}, color.RGBA{168, 198, 208, 255}
 	}
+}
+
+func appendFactItems(
+	lines []drawnLine,
+	face font.Face,
+	x int,
+	top int,
+	maxWidth int,
+	facts []FactItem,
+) ([]drawnLine, int) {
+	const (
+		paddingX      = 12
+		paddingTop    = 8
+		paddingBottom = 8
+		gapX          = 10
+		gapY          = 10
+		maxRadius     = 12
+		labelGap      = 10
+	)
+
+	lineHeight := face.Metrics().Height.Ceil()
+	ascent := face.Metrics().Ascent.Ceil()
+	cursorX := x
+	cursorY := top
+	rowHeight := 0
+	maxX := x + maxWidth
+
+	for _, fact := range facts {
+		label := strings.TrimSpace(fact.Label)
+		value := strings.TrimSpace(fact.Value)
+		if label == "" || value == "" {
+			continue
+		}
+
+		text := label + " " + value
+		boxWidth := minInt(maxWidth, textWidth(face, text)+paddingX*2+labelGap)
+		boxHeight := paddingTop + paddingBottom + lineHeight
+
+		if cursorX > x && cursorX+boxWidth > maxX {
+			cursorY += rowHeight + gapY
+			cursorX = x
+			rowHeight = 0
+		}
+
+		rect := image.Rect(cursorX, cursorY, cursorX+boxWidth, cursorY+boxHeight)
+		lines = append(lines,
+			drawnLine{
+				text: label,
+				x:    cursorX + paddingX,
+				y:    cursorY + paddingTop + ascent,
+				face: face,
+				fill: color.RGBA{140, 107, 93, 255},
+				chip: &drawnChip{
+					rect:           rect,
+					fill:           color.RGBA{255, 253, 251, 255},
+					border:         color.RGBA{214, 193, 180, 168},
+					radius:         maxRadius,
+					drawBackground: true,
+				},
+			},
+			drawnLine{
+				text: value,
+				x:    cursorX + paddingX + textWidth(face, label) + labelGap,
+				y:    cursorY + paddingTop + ascent,
+				face: face,
+				fill: color.RGBA{31, 40, 44, 255},
+			},
+		)
+
+		rowHeight = maxInt(rowHeight, boxHeight)
+		cursorX += boxWidth + gapX
+	}
+
+	return lines, cursorY + rowHeight
 }
 
 func drawAccent(dst *image.RGBA, layout presetLayout, preset RenderPreset) {

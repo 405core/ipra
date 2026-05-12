@@ -315,27 +315,41 @@ func (h *Handler) putAuditAsset(
 	preset sensitive.RenderPreset,
 	page string,
 ) sensitive.AssetRef {
+	metaItems := []sensitive.TagItem{
+		{
+			Text: formatAuditTime(item.CreatedAt),
+			Tone: sensitive.TagToneMuted,
+		},
+		{
+			Text: firstAuditValue(strings.TrimSpace(item.ActorName), "未知操作人") + " / " + firstAuditValue(strings.TrimSpace(item.ActorWorkID), "-"),
+			Tone: sensitive.TagToneMuted,
+		},
+		{
+			Text: strings.TrimSpace(item.Method) + " " + firstAuditValue(strings.TrimSpace(item.Path), "-"),
+			Tone: sensitive.TagToneMuted,
+		},
+		{
+			Text: "状态码 " + strconv.Itoa(item.StatusCode),
+			Tone: sensitive.TagToneMuted,
+		},
+	}
+
 	document := sensitive.Document{
 		Eyebrow:  "审计日志",
 		Title:    firstAuditValue(strings.TrimSpace(item.Resource), "员工操作记录"),
-		Subtitle: firstAuditValue(strings.TrimSpace(item.Action), "未命名动作") + " · " + formatAuditResult(item.Result),
-		Tags: compactAuditValues([]string{
-			"角色 " + firstAuditValue(strings.TrimSpace(item.ActorRole), "-"),
-			"工号 " + firstAuditValue(strings.TrimSpace(item.ActorWorkID), "-"),
-			"状态码 " + strconv.Itoa(item.StatusCode),
-		}),
-		Sections: []sensitive.Section{
+		Subtitle: firstAuditValue(strings.TrimSpace(item.Action), "未命名动作"),
+		TagItems: []sensitive.TagItem{
 			{
-				Heading: "操作概览",
-				Lines: compactAuditValues([]string{
-					"操作人：" + firstAuditValue(strings.TrimSpace(item.ActorName), "-"),
-					"工号：" + firstAuditValue(strings.TrimSpace(item.ActorWorkID), "-"),
-					"角色：" + firstAuditValue(strings.TrimSpace(item.ActorRole), "-"),
-					"结果：" + formatAuditResult(item.Result),
-					"方法：" + firstAuditValue(strings.TrimSpace(item.Method), "-"),
-					"路径：" + firstAuditValue(strings.TrimSpace(item.Path), "-"),
-				}),
+				Text: formatAuditResult(item.Result),
+				Tone: auditResultTone(item.Result),
 			},
+			{
+				Text: firstAuditValue(strings.TrimSpace(item.ActorRole), "-"),
+				Tone: sensitive.TagToneDefault,
+			},
+		},
+		MetaItems: metaItems,
+		Sections: []sensitive.Section{
 			{
 				Heading: "环境信息",
 				Lines: compactAuditValues([]string{
@@ -394,6 +408,17 @@ func formatAuditResult(value string) string {
 		return "失败"
 	default:
 		return firstAuditValue(strings.TrimSpace(value), "未知")
+	}
+}
+
+func auditResultTone(value string) sensitive.TagTone {
+	switch strings.TrimSpace(value) {
+	case "success":
+		return sensitive.TagToneSuccess
+	case "denied", "failure":
+		return sensitive.TagToneMuted
+	default:
+		return sensitive.TagToneDefault
 	}
 }
 
