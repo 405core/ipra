@@ -6,7 +6,12 @@ import {
   listProtectedAuditLogs,
 } from '../app/audit-service';
 import { useProtectedPage } from '../app/use-protected-page';
-import type { ProtectedDetailResponse, ProtectedListItem } from '../app/protected-service';
+import type {
+  ProtectedDetailResponse,
+  ProtectedFactRef,
+  ProtectedFieldRef,
+  ProtectedListItem,
+} from '../app/protected-service';
 
 type HistoryTabKey = 'scan' | 'log';
 
@@ -68,6 +73,21 @@ function closeLogDetail() {
   selectedLog.value = null;
   detailError.value = '';
 }
+
+function findProtectedField(
+  fields: ProtectedFieldRef[] | undefined,
+  key: string,
+) {
+  return fields?.find((item) => item.key === key) ?? null;
+}
+
+function protectedFactEntries(item: ProtectedListItem) {
+  return (item.facts ?? []) as ProtectedFactRef[];
+}
+
+function protectedNotes(item: ProtectedListItem) {
+  return (item.notes ?? []) as ProtectedFieldRef[];
+}
 </script>
 
 <template>
@@ -120,9 +140,75 @@ function closeLogDetail() {
       <section v-else class="audit-card">
         <div class="audit-list">
           <article v-for="item in filteredLogs" :key="item.id" class="audit-item">
-            <div class="audit-item__image">
-              <SensitiveAssetImage :src="item.asset.url" alt="审计日志敏感图片" />
+            <div class="audit-item__head">
+              <div class="audit-item__title">
+                <strong>
+                  <SensitiveAssetImage
+                    v-if="findProtectedField(item.fields, 'resource')"
+                    :src="findProtectedField(item.fields, 'resource')!.asset.url"
+                    alt="资源"
+                    inline
+                  />
+                </strong>
+                <span class="audit-item__subtitle">
+                  <SensitiveAssetImage
+                    v-if="findProtectedField(item.fields, 'action')"
+                    :src="findProtectedField(item.fields, 'action')!.asset.url"
+                    alt="动作"
+                    inline
+                  />
+                </span>
+              </div>
+              <div class="audit-item__chips">
+                <span
+                  v-for="chip in item.chips ?? []"
+                  :key="`${item.id}-${chip.key}`"
+                  class="audit-item__pill"
+                  :class="`is-${chip.tone || 'default'}`"
+                >
+                  <SensitiveAssetImage
+                    :src="chip.asset.url"
+                    :alt="chip.key"
+                    inline
+                  />
+                </span>
+              </div>
             </div>
+
+            <div class="audit-item__meta">
+              <span
+                v-for="detail in protectedFactEntries(item)"
+                :key="`${item.id}-${detail.key || detail.label}`"
+                class="audit-item__meta-entry"
+              >
+                <span class="audit-item__meta-label">{{ detail.label }}</span>
+                <strong>
+                  <SensitiveAssetImage
+                    :src="detail.asset.url"
+                    :alt="detail.label"
+                    inline
+                  />
+                </strong>
+              </span>
+            </div>
+
+            <div
+              v-if="protectedNotes(item).length"
+              class="audit-item__notes"
+            >
+              <span
+                v-for="note in protectedNotes(item)"
+                :key="`${item.id}-${note.key}`"
+                class="audit-item__note"
+              >
+                <SensitiveAssetImage
+                  :src="note.asset.url"
+                  :alt="note.key"
+                  inline
+                />
+              </span>
+            </div>
+
             <div class="audit-item__actions">
               <button type="button" class="audit-item__detail" @click="openLogDetail(item)">
                 详情
@@ -145,7 +231,6 @@ function closeLogDetail() {
         <div class="audit-dialog__head">
           <div>
             <h3>日志详情</h3>
-            <p>受保护审计日志图片</p>
           </div>
           <button type="button" class="audit-dialog__close" @click="closeLogDetail">关闭</button>
         </div>
@@ -273,6 +358,7 @@ function closeLogDetail() {
 
 .audit-item__head {
   justify-content: space-between;
+  align-items: flex-start;
 }
 
 .audit-item__head strong,
@@ -281,10 +367,55 @@ function closeLogDetail() {
   color: #15252b;
 }
 
+.audit-item__title {
+  display: grid;
+  gap: 8px;
+}
+
+.audit-item__title strong,
+.audit-item__subtitle {
+  display: inline-flex;
+  align-items: center;
+}
+
+.audit-item__title :deep(.sensitive-image img) {
+  height: 22px;
+}
+
+.audit-item__chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .audit-item__meta {
   flex-wrap: wrap;
   justify-content: flex-start;
   margin-top: 10px;
+}
+
+.audit-item__meta-entry {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 12px;
+  background: #fbfeff;
+  border: 1px solid rgba(157, 189, 202, 0.36);
+}
+
+.audit-item__meta-entry strong {
+  display: inline-flex;
+  align-items: center;
+}
+
+.audit-item__meta-label {
+  color: #6c8790;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 
 .audit-item__pill {
@@ -302,10 +433,39 @@ function closeLogDetail() {
   color: #237d4d;
 }
 
+.audit-item__pill.is-alert,
 .audit-item__pill.is-denied,
 .audit-item__pill.is-failure {
   background: rgba(199, 92, 71, 0.12);
   color: #a24734;
+}
+
+.audit-item__pill.is-muted {
+  background: rgba(91, 113, 121, 0.12);
+  color: #5b7179;
+}
+
+.audit-item__pill.is-default {
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(157, 189, 202, 0.48);
+  color: #43646e;
+}
+
+.audit-item__notes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.audit-item__note {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(91, 113, 121, 0.12);
+  color: #5b7179;
 }
 
 .audit-item__detail,

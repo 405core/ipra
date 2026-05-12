@@ -80,10 +80,14 @@ type ProtectedSession struct {
 	PassengerProfile map[string]any
 	TripProfile     map[string]any
 	KnownFacts      []string
+	ProfileBlock    *sensitive.ListItem
+	StrategyBlock   *sensitive.ListItem
+	MemoryBlock     *sensitive.ListItem
 	StrategyAsset   *sensitive.AssetRef
 	MemoryAsset     *sensitive.AssetRef
 	CurrentRoundID  string
 	Rounds          []*ProtectedRound
+	JudgementBlock  *sensitive.ListItem
 	JudgementAsset  *sensitive.AssetRef
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
@@ -94,6 +98,8 @@ type ProtectedRound struct {
 	RoundNumber        int
 	Title              string
 	QuestionCount      int
+	PromptBlock        *sensitive.ListItem
+	SummaryBlock       *sensitive.ListItem
 	PromptAsset        *sensitive.AssetRef
 	SummaryAsset       *sensitive.AssetRef
 	Status             string
@@ -108,12 +114,23 @@ type ProtectedRound struct {
 	ASR                map[string]any
 }
 
+type ProtectedBlockSnapshot struct {
+	Asset  *sensitive.AssetRef   `json:"asset,omitempty"`
+	Fields []sensitive.FieldRef  `json:"fields,omitempty"`
+	Chips  []sensitive.FieldRef  `json:"chips,omitempty"`
+	Facts  []sensitive.FactRef   `json:"facts,omitempty"`
+	Meta   []sensitive.FieldRef  `json:"meta,omitempty"`
+	Notes  []sensitive.FieldRef  `json:"notes,omitempty"`
+}
+
 type ProtectedRoundSnapshot struct {
 	ID               string              `json:"id"`
 	RoundNumber      int                 `json:"roundNumber"`
 	Title            string              `json:"title"`
 	QuestionCount    int                 `json:"questionCount"`
 	Status           string              `json:"status"`
+	PromptBlock      *ProtectedBlockSnapshot `json:"promptBlock,omitempty"`
+	SummaryBlock     *ProtectedBlockSnapshot `json:"summaryBlock,omitempty"`
 	PromptAsset      *sensitive.AssetRef `json:"promptAsset,omitempty"`
 	SummaryAsset     *sensitive.AssetRef `json:"summaryAsset,omitempty"`
 	RecordedFileName string              `json:"recordedFileName,omitempty"`
@@ -122,14 +139,18 @@ type ProtectedRoundSnapshot struct {
 }
 
 type ProtectedSessionSnapshot struct {
-	SessionID         string                   `json:"sessionId"`
-	StrategyAsset     *sensitive.AssetRef      `json:"strategyAsset,omitempty"`
-	MemoryAsset       *sensitive.AssetRef      `json:"memoryAsset,omitempty"`
-	CurrentRound      *ProtectedRoundSnapshot  `json:"currentRound,omitempty"`
-	HistoricalRounds  []ProtectedRoundSnapshot `json:"historicalRounds"`
-	JudgementAsset    *sensitive.AssetRef      `json:"judgementAsset,omitempty"`
-	CompletedRounds   int                      `json:"completedRounds"`
-	TotalSampleDuration int                    `json:"totalSampleDuration"`
+	SessionID           string                   `json:"sessionId"`
+	Profile             *sensitive.ListItem      `json:"profile,omitempty"`
+	StrategyBlock       *ProtectedBlockSnapshot  `json:"strategyBlock,omitempty"`
+	MemoryBlock         *ProtectedBlockSnapshot  `json:"memoryBlock,omitempty"`
+	StrategyAsset       *sensitive.AssetRef      `json:"strategyAsset,omitempty"`
+	MemoryAsset         *sensitive.AssetRef      `json:"memoryAsset,omitempty"`
+	CurrentRound        *ProtectedRoundSnapshot  `json:"currentRound,omitempty"`
+	HistoricalRounds    []ProtectedRoundSnapshot `json:"historicalRounds"`
+	JudgementBlock      *ProtectedBlockSnapshot  `json:"judgementBlock,omitempty"`
+	JudgementAsset      *sensitive.AssetRef      `json:"judgementAsset,omitempty"`
+	CompletedRounds     int                      `json:"completedRounds"`
+	TotalSampleDuration int                      `json:"totalSampleDuration"`
 }
 
 type createSessionRequest struct {
@@ -284,6 +305,8 @@ func (h *Handler) handleProtectedStrategy(c *gin.Context) {
 	strategyAsset := h.renderStrategyAsset(c, claims, aiResponse)
 	memoryAsset := h.renderMemoryAsset(c, claims, req.SessionID, req.PassengerID, memoryContext)
 	round := h.buildOpeningRound(c, claims, aiResponse)
+	strategyBlock := h.buildStrategyBlock(c, claims, aiResponse, strategyAsset)
+	memoryBlock := h.buildMemoryBlock(c, claims, req.SessionID, req.PassengerID, memoryContext, memoryAsset)
 
 	h.mu.Lock()
 	h.protectedSessions[req.SessionID] = &ProtectedSession{
@@ -293,6 +316,8 @@ func (h *Handler) handleProtectedStrategy(c *gin.Context) {
 		PassengerProfile: cloneMap(req.PassengerProfile),
 		TripProfile:      cloneMap(req.TripProfile),
 		KnownFacts:       append([]string(nil), req.KnownFacts...),
+		StrategyBlock:    strategyBlock,
+		MemoryBlock:      memoryBlock,
 		StrategyAsset:    &strategyAsset,
 		MemoryAsset:      optionalAsset(memoryAsset),
 		CurrentRoundID:   round.ID,
@@ -372,6 +397,7 @@ func (h *Handler) handleProtectedWindowSummary(c *gin.Context) {
 	round.Status = "uploaded"
 	summaryAsset := h.renderRoundSummaryAsset(c, claims, round)
 	round.SummaryAsset = &summaryAsset
+	round.SummaryBlock = h.buildRoundSummaryBlock(c, claims, round, summaryAsset)
 	session.UpdatedAt = time.Now().UTC()
 
 	c.JSON(http.StatusOK, h.snapshotProtectedSession(session.SessionID))
@@ -409,6 +435,7 @@ func (h *Handler) handleProtectedFollowup(c *gin.Context) {
 	currentRound.Status = "uploaded"
 	summaryAsset := h.renderRoundSummaryAsset(c, claims, currentRound)
 	currentRound.SummaryAsset = &summaryAsset
+	currentRound.SummaryBlock = h.buildRoundSummaryBlock(c, claims, currentRound, summaryAsset)
 
 	memoryContext := h.loadMemoryContext(session.SessionID, session.PassengerID)
 	aiPayload := map[string]any{
@@ -436,7 +463,9 @@ func (h *Handler) handleProtectedFollowup(c *gin.Context) {
 	nextRound := h.buildFollowupRound(c, claims, aiResponse, req.RoundNumber)
 	session.Rounds = append(session.Rounds, nextRound)
 	session.CurrentRoundID = nextRound.ID
-	session.MemoryAsset = optionalAsset(h.renderMemoryAsset(c, claims, session.SessionID, session.PassengerID, memoryContext))
+	memoryAsset := h.renderMemoryAsset(c, claims, session.SessionID, session.PassengerID, memoryContext)
+	session.MemoryAsset = optionalAsset(memoryAsset)
+	session.MemoryBlock = h.buildMemoryBlock(c, claims, session.SessionID, session.PassengerID, memoryContext, memoryAsset)
 	session.UpdatedAt = time.Now().UTC()
 
 	c.JSON(http.StatusOK, h.snapshotProtectedSession(session.SessionID))
@@ -484,6 +513,7 @@ func (h *Handler) handleProtectedJudgement(c *gin.Context) {
 
 	judgementAsset := h.renderJudgementAsset(c, claims, aiResponse, session)
 	session.JudgementAsset = &judgementAsset
+	session.JudgementBlock = h.buildJudgementBlock(c, claims, aiResponse, session, judgementAsset)
 	session.UpdatedAt = time.Now().UTC()
 
 	c.JSON(http.StatusOK, h.snapshotProtectedSession(session.SessionID))
@@ -508,6 +538,7 @@ func (h *Handler) handleProtectedMemory(c *gin.Context) {
 	context := h.loadMemoryContext(session.SessionID, session.PassengerID)
 	asset := h.renderMemoryAsset(c, claims, session.SessionID, session.PassengerID, context)
 	session.MemoryAsset = optionalAsset(asset)
+	session.MemoryBlock = h.buildMemoryBlock(c, claims, session.SessionID, session.PassengerID, context, asset)
 	session.UpdatedAt = time.Now().UTC()
 
 	c.JSON(http.StatusOK, gin.H{
@@ -983,6 +1014,8 @@ func (h *Handler) snapshotProtectedSession(sessionID string) ProtectedSessionSna
 			Title:            round.Title,
 			QuestionCount:    round.QuestionCount,
 			Status:           round.Status,
+			PromptBlock:      toProtectedBlockSnapshot(round.PromptBlock),
+			SummaryBlock:     toProtectedBlockSnapshot(round.SummaryBlock),
 			PromptAsset:      round.PromptAsset,
 			SummaryAsset:     round.SummaryAsset,
 			RecordedFileName: round.RecordedFileName,
@@ -1002,14 +1035,37 @@ func (h *Handler) snapshotProtectedSession(sessionID string) ProtectedSessionSna
 
 	return ProtectedSessionSnapshot{
 		SessionID:           session.SessionID,
+		Profile:             session.ProfileBlock,
+		StrategyBlock:       toProtectedBlockSnapshot(session.StrategyBlock),
+		MemoryBlock:         toProtectedBlockSnapshot(session.MemoryBlock),
 		StrategyAsset:       session.StrategyAsset,
 		MemoryAsset:         session.MemoryAsset,
 		CurrentRound:        currentRound,
 		HistoricalRounds:    historical,
+		JudgementBlock:      toProtectedBlockSnapshot(session.JudgementBlock),
 		JudgementAsset:      session.JudgementAsset,
 		CompletedRounds:     completedRounds,
 		TotalSampleDuration: totalDuration,
 	}
+}
+
+func toProtectedBlockSnapshot(item *sensitive.ListItem) *ProtectedBlockSnapshot {
+	if item == nil {
+		return nil
+	}
+
+	result := &ProtectedBlockSnapshot{
+		Fields: append([]sensitive.FieldRef(nil), item.Fields...),
+		Chips:  append([]sensitive.FieldRef(nil), item.Chips...),
+		Facts:  append([]sensitive.FactRef(nil), item.Facts...),
+		Meta:   append([]sensitive.FieldRef(nil), item.Meta...),
+		Notes:  append([]sensitive.FieldRef(nil), item.Notes...),
+	}
+	if item.Asset.ID != "" {
+		asset := item.Asset
+		result.Asset = &asset
+	}
+	return result
 }
 
 func (h *Handler) renderStrategyAsset(c *gin.Context, claims auth.Claims, response map[string]any) sensitive.AssetRef {
@@ -1175,6 +1231,149 @@ func (h *Handler) renderJudgementAsset(c *gin.Context, claims auth.Claims, respo
 		},
 	}
 	return h.sensitive.Put(claims.UserID, document, sensitive.PresetDialog, sensitive.FormatPNG, buildInquiryWatermark(c, claims, "home:ask:judgement"))
+}
+
+func (h *Handler) buildStrategyBlock(
+	c *gin.Context,
+	claims auth.Claims,
+	response map[string]any,
+	asset sensitive.AssetRef,
+) *sensitive.ListItem {
+	return &sensitive.ListItem{
+		ID:    "strategy",
+		Asset: asset,
+		Facts: []sensitive.FactRef{
+			h.buildInlineFact(c, claims, "风险摘要", extractStringMap(response, "riskAssessment", "summary"), "home:ask:strategy"),
+			h.buildInlineFact(c, claims, "模型", extractStringMap(response, "llm", "model"), "home:ask:strategy"),
+		},
+		Meta: h.buildInlineTags(c, claims, extractStringSliceMap(response, "riskAssessment", "reasons"), sensitive.TagToneAccent, "home:ask:strategy:meta"),
+		Notes: h.buildInlineTags(c, claims, compactInquiryStrings([]string{
+			extractString(response["operatorNote"]),
+		}), sensitive.TagToneMuted, "home:ask:strategy:note"),
+	}
+}
+
+func (h *Handler) buildMemoryBlock(
+	c *gin.Context,
+	claims auth.Claims,
+	sessionID string,
+	passengerID string,
+	context map[string]any,
+	asset sensitive.AssetRef,
+) *sensitive.ListItem {
+	notes := []string{
+		"会话 " + firstNonEmptyInquiry(sessionID, "-"),
+		"旅客标识 " + firstNonEmptyInquiry(passengerID, "-"),
+	}
+	lines := make([]string, 0, 6)
+	for _, key := range []string{"sessionMemories", "passengerMemories", "ruleMemories"} {
+		lines = append(lines, strconv.Itoa(len(extractMapSlice(context[key])))+" 条"+key)
+	}
+	return &sensitive.ListItem{
+		ID:    "memory",
+		Asset: asset,
+		Notes: h.buildInlineTags(c, claims, compactInquiryStrings(notes), sensitive.TagToneMuted, "home:ask:memory:note"),
+		Meta:  h.buildInlineTags(c, claims, compactInquiryStrings(lines), sensitive.TagToneAccent, "home:ask:memory:meta"),
+	}
+}
+
+func (h *Handler) buildRoundSummaryBlock(
+	c *gin.Context,
+	claims auth.Claims,
+	round *ProtectedRound,
+	asset sensitive.AssetRef,
+) *sensitive.ListItem {
+	return &sensitive.ListItem{
+		ID:    round.ID + "-summary",
+		Asset: asset,
+		Facts: []sensitive.FactRef{
+			h.buildInlineFact(c, claims, "采样时长", strconv.Itoa(round.DurationSeconds)+" 秒", "home:ask:summary"),
+			h.buildInlineFact(c, claims, "录制文件", round.RecordedFileName, "home:ask:summary"),
+		},
+		Notes: h.buildInlineTags(c, claims, compactInquiryStrings([]string{
+			round.HumanOmniSummary,
+		}), sensitive.TagToneMuted, "home:ask:summary:note"),
+	}
+}
+
+func (h *Handler) buildJudgementBlock(
+	c *gin.Context,
+	claims auth.Claims,
+	response map[string]any,
+	session *ProtectedSession,
+	asset sensitive.AssetRef,
+) *sensitive.ListItem {
+	return &sensitive.ListItem{
+		ID:    "judgement",
+		Asset: asset,
+		Facts: []sensitive.FactRef{
+			h.buildInlineFact(c, claims, "已完成轮次", strconv.Itoa(len(session.Rounds))+" 轮", "home:ask:judgement"),
+			h.buildInlineFact(c, claims, "摘要", extractStringMap(response, "multimodalAssessment", "summary"), "home:ask:judgement"),
+		},
+		Meta: h.buildInlineTags(c, claims, extractStringSliceMap(response, "multimodalAssessment", "riskHints"), sensitive.TagToneAccent, "home:ask:judgement:meta"),
+		Notes: h.buildInlineTags(c, claims, compactInquiryStrings([]string{
+			extractString(response["operatorNote"]),
+		}), sensitive.TagToneMuted, "home:ask:judgement:note"),
+	}
+}
+
+func (h *Handler) buildInlineFact(
+	c *gin.Context,
+	claims auth.Claims,
+	label string,
+	value string,
+	page string,
+) sensitive.FactRef {
+	return sensitive.FactRef{
+		Key:   label,
+		Label: label,
+		Asset: putInquiryInlineTextAsset(h, c, claims, value, page),
+	}
+}
+
+func (h *Handler) buildInlineTags(
+	c *gin.Context,
+	claims auth.Claims,
+	values []string,
+	tone sensitive.TagTone,
+	page string,
+) []sensitive.FieldRef {
+	result := make([]sensitive.FieldRef, 0, len(values))
+	for index, value := range values {
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		result = append(result, sensitive.FieldRef{
+			Key:   fmt.Sprintf("tag-%d", index),
+			Asset: putInquiryInlineTextAsset(h, c, claims, value, page),
+			Tone:  tone,
+		})
+	}
+	return result
+}
+
+func putInquiryInlineTextAsset(
+	h *Handler,
+	c *gin.Context,
+	claims auth.Claims,
+	value string,
+	page string,
+) sensitive.AssetRef {
+	document := sensitive.Document{
+		Title: firstNonEmptyInquiry(strings.TrimSpace(value), "-"),
+	}
+
+	return h.sensitive.PutWithStyle(
+		claims.UserID,
+		document,
+		sensitive.PresetInline,
+		sensitive.FormatWebP,
+		sensitive.RenderStyle{
+			Transparent: true,
+			HideAccent:  true,
+		},
+		buildInquiryWatermark(c, claims, page),
+	)
 }
 
 func (h *Handler) buildQaHistory(session *ProtectedSession) []map[string]any {

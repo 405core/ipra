@@ -121,12 +121,58 @@ func (r *Renderer) Render(spec AssetSpec) (EncodedImage, error) {
 	}
 	drawWatermark(canvas, layout, watermarkFace, spec.Watermark, spec.Style)
 	drawDocument(canvas, lines)
+	if spec.Style.Transparent {
+		canvas = trimTransparentCanvas(canvas)
+	}
 
 	format := spec.Format
 	if format == "" {
 		format = FormatWebP
 	}
 	return encodeImage(canvas, format, layout.Quality)
+}
+
+func trimTransparentCanvas(src *image.RGBA) *image.RGBA {
+	bounds := src.Bounds()
+	minX := bounds.Max.X
+	minY := bounds.Max.Y
+	maxX := bounds.Min.X
+	maxY := bounds.Min.Y
+
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			if src.RGBAAt(x, y).A == 0 {
+				continue
+			}
+			if x < minX {
+				minX = x
+			}
+			if y < minY {
+				minY = y
+			}
+			if x > maxX {
+				maxX = x
+			}
+			if y > maxY {
+				maxY = y
+			}
+		}
+	}
+
+	if minX > maxX || minY > maxY {
+		return src
+	}
+
+	padding := 2
+	minX = maxInt(bounds.Min.X, minX-padding)
+	minY = maxInt(bounds.Min.Y, minY-padding)
+	maxX = minInt(bounds.Max.X-1, maxX+padding)
+	maxY = minInt(bounds.Max.Y-1, maxY+padding)
+
+	dstBounds := image.Rect(0, 0, maxX-minX+1, maxY-minY+1)
+	dst := image.NewRGBA(dstBounds)
+	stddraw.Draw(dst, dstBounds, src, image.Point{X: minX, Y: minY}, stddraw.Src)
+	return dst
 }
 
 func (r *Renderer) newFace(size float64) (font.Face, error) {

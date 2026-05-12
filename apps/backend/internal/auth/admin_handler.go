@@ -131,36 +131,7 @@ func (h *Handler) handleAdminProtectedUsers(c *gin.Context) {
 
 	items := make([]sensitive.ListItem, 0, len(users))
 	for _, user := range users {
-		document := sensitive.Document{
-			Eyebrow:  "用户管理",
-			Title:    firstNonEmptyString(strings.TrimSpace(user.Name), "系统用户"),
-			Subtitle: "用户账号信息",
-			TagItems: []sensitive.TagItem{
-				{Text: firstNonEmptyString(strings.TrimSpace(user.WorkID), "-"), Tone: sensitive.TagToneIdentity},
-				{Text: NormalizeRole(user.Role), Tone: sensitive.TagToneDefault},
-				{Text: NormalizeStatus(user.Status), Tone: userStatusTagTone(user.Status)},
-			},
-			FactItems: []sensitive.FactItem{
-				{Label: "工号", Value: firstNonEmptyString(strings.TrimSpace(user.WorkID), "-")},
-				{Label: "姓名", Value: firstNonEmptyString(strings.TrimSpace(user.Name), "-")},
-				{Label: "角色", Value: NormalizeRole(user.Role)},
-				{Label: "状态", Value: NormalizeStatus(user.Status)},
-			},
-			Footer: []string{
-				"更新时间 " + user.UpdatedAt.Local().Format("2006-01-02 15:04:05"),
-			},
-		}
-		items = append(items, sensitive.ListItem{
-			ID: strconv.FormatUint(user.ID, 10),
-			Asset: h.sensitive.Put(
-				claims.UserID,
-				document,
-				sensitive.PresetList,
-				sensitive.FormatWebP,
-				buildSensitiveWatermarkContext(c, claims, "admin:users"),
-			),
-			Actions: []string{"edit", "toggle-status"},
-		})
+		items = append(items, h.buildProtectedUserItem(c, claims, user, "admin:users"))
 	}
 
 	c.JSON(http.StatusOK, sensitive.ListResponse{
@@ -176,6 +147,98 @@ func userStatusTagTone(value string) sensitive.TagTone {
 		return sensitive.TagToneSuccess
 	}
 	return sensitive.TagToneMuted
+}
+
+func (h *Handler) buildProtectedUserItem(
+	c *gin.Context,
+	claims Claims,
+	user dbschema.SystemUser,
+	page string,
+) sensitive.ListItem {
+	role := NormalizeRole(user.Role)
+	status := NormalizeStatus(user.Status)
+	document := sensitive.Document{
+		Eyebrow:  "用户管理",
+		Title:    firstNonEmptyString(strings.TrimSpace(user.Name), "系统用户"),
+		Subtitle: "用户账号信息",
+		TagItems: []sensitive.TagItem{
+			{Text: firstNonEmptyString(strings.TrimSpace(user.WorkID), "-"), Tone: sensitive.TagToneIdentity},
+			{Text: role, Tone: sensitive.TagToneDefault},
+			{Text: status, Tone: userStatusTagTone(user.Status)},
+		},
+		FactItems: []sensitive.FactItem{
+			{Label: "工号", Value: firstNonEmptyString(strings.TrimSpace(user.WorkID), "-")},
+			{Label: "姓名", Value: firstNonEmptyString(strings.TrimSpace(user.Name), "-")},
+			{Label: "角色", Value: role},
+			{Label: "状态", Value: status},
+		},
+		Footer: []string{
+			"更新时间 " + user.UpdatedAt.Local().Format("2006-01-02 15:04:05"),
+		},
+	}
+
+	inlineText := func(value string) sensitive.AssetRef {
+		return h.sensitive.PutWithStyle(
+			claims.UserID,
+			sensitive.Document{Title: firstNonEmptyString(strings.TrimSpace(value), "-")},
+			sensitive.PresetInline,
+			sensitive.FormatWebP,
+			sensitive.RenderStyle{Transparent: true, HideAccent: true},
+			buildSensitiveWatermarkContext(c, claims, page),
+		)
+	}
+
+	return sensitive.ListItem{
+		ID: strconv.FormatUint(user.ID, 10),
+		Asset: h.sensitive.Put(
+			claims.UserID,
+			document,
+			sensitive.PresetList,
+			sensitive.FormatWebP,
+			buildSensitiveWatermarkContext(c, claims, page),
+		),
+		Actions: []string{"edit", "toggle-status"},
+		Kind:    "user",
+		Fields: []sensitive.FieldRef{
+			{
+				Key:   "name",
+				Asset: inlineText(firstNonEmptyString(strings.TrimSpace(user.Name), "系统用户")),
+			},
+			{
+				Key:   "workId",
+				Asset: inlineText(firstNonEmptyString(strings.TrimSpace(user.WorkID), "-")),
+				Tone:  sensitive.TagToneIdentity,
+			},
+		},
+		Chips: []sensitive.FieldRef{
+			{
+				Key:   "role",
+				Asset: inlineText(role),
+				Tone:  sensitive.TagToneDefault,
+			},
+			{
+				Key:   "status",
+				Asset: inlineText(status),
+				Tone:  userStatusTagTone(user.Status),
+			},
+		},
+		Facts: []sensitive.FactRef{
+			{Key: "workId", Label: "工号", Asset: inlineText(firstNonEmptyString(strings.TrimSpace(user.WorkID), "-"))},
+			{Key: "name", Label: "姓名", Asset: inlineText(firstNonEmptyString(strings.TrimSpace(user.Name), "-"))},
+			{Key: "role", Label: "角色", Asset: inlineText(role)},
+			{Key: "status", Label: "状态", Asset: inlineText(status)},
+		},
+		Meta: []sensitive.FieldRef{
+			{
+				Key:   "updatedAt",
+				Asset: inlineText("更新时间 " + user.UpdatedAt.Local().Format("2006-01-02 15:04:05")),
+				Tone:  sensitive.TagToneMuted,
+			},
+		},
+		Flags: map[string]bool{
+			"isActive": status == StatusActive,
+		},
+	}
 }
 
 func (h *Handler) handleAdminCreateUser(c *gin.Context) {

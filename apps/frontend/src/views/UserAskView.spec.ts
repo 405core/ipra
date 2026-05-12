@@ -31,6 +31,7 @@ vi.mock('../app/archive-service', () => archiveServiceMocks);
 
 const profileServiceMocks = vi.hoisted(() => ({
   searchPassengerProfiles: vi.fn(),
+  searchPassengerProfilesProtected: vi.fn(),
 }));
 
 vi.mock('../app/profile-service', () => profileServiceMocks);
@@ -272,6 +273,66 @@ function createProtectedAsset(id: string, url = `/api/sensitive-assets/${id}`) {
   };
 }
 
+function createProtectedProfile(id = '10') {
+  return {
+    id,
+    asset: createProtectedAsset(`profile-${id}`),
+    fields: [
+      {
+        key: 'fullName',
+        asset: createProtectedAsset(`profile-${id}-fullName`),
+      },
+    ],
+    chips: [
+      {
+        key: 'highRisk',
+        asset: createProtectedAsset(`profile-${id}-highRisk`),
+        tone: 'alert',
+      },
+      {
+        key: 'documentType',
+        asset: createProtectedAsset(`profile-${id}-documentType`),
+      },
+      {
+        key: 'gender',
+        asset: createProtectedAsset(`profile-${id}-gender`),
+      },
+      {
+        key: 'documentNum',
+        asset: createProtectedAsset(`profile-${id}-documentNum`),
+        tone: 'identity',
+      },
+    ],
+    facts: [
+      {
+        key: 'pnr',
+        label: 'PNR',
+        asset: createProtectedAsset(`profile-${id}-pnr`),
+      },
+      {
+        key: 'route',
+        label: '航线',
+        asset: createProtectedAsset(`profile-${id}-route`),
+      },
+    ],
+    meta: [
+      {
+        key: 'riskTag',
+        asset: createProtectedAsset(`profile-${id}-riskTag`),
+      },
+    ],
+    notes: [
+      {
+        key: 'note',
+        asset: createProtectedAsset(`profile-${id}-note`),
+      },
+    ],
+    flags: {
+      isHighRisk: true,
+    },
+  };
+}
+
 function createPassengerProfile(overrides = {}) {
   return {
     id: 10,
@@ -360,6 +421,12 @@ describe('UserAskView realtime speech sampling', () => {
     profileServiceMocks.searchPassengerProfiles.mockResolvedValue([
       createPassengerProfile(),
     ]);
+    profileServiceMocks.searchPassengerProfilesProtected.mockResolvedValue({
+      items: [createProtectedProfile()],
+      total: 1,
+      page: 1,
+      pageSize: 1,
+    });
     adminServiceMocks.getInquirySettings.mockResolvedValue({
       maxRounds: 3,
       minRounds: 1,
@@ -661,9 +728,10 @@ describe('UserAskView realtime speech sampling', () => {
     expect(profileServiceMocks.searchPassengerProfiles).toHaveBeenCalledWith(
       '440582199402155270',
     );
-    expect(wrapper.text()).toContain('黎泽宝');
-    expect(wrapper.text()).toContain('440582199402155270');
-    expect(wrapper.text()).toContain('CZ3101 (CAN -> BKK)');
+    expect(profileServiceMocks.searchPassengerProfilesProtected).toHaveBeenCalledWith(
+      '440582199402155270',
+    );
+    expect(wrapper.text()).toContain('画像已载入');
     expect(
       findButton(wrapper, '生成策略').attributes('disabled'),
     ).toBeUndefined();
@@ -1144,6 +1212,6 @@ describe('UserAskView realtime speech sampling', () => {
       ],
     });
     expect(wrapper.text()).toContain('流程已完成归档');
-    expect(wrapper.text()).toContain('IPRA-ASK-20260511-0001');
+    expect(wrapper.text()).toContain('问询记录已保存');
   });
 });

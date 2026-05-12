@@ -105,12 +105,7 @@ func (h *Handler) handleProtectedSearch(c *gin.Context) {
 
 	items := make([]sensitive.ListItem, 0, len(profiles))
 	for _, profile := range profiles {
-		items = append(items, sensitive.ListItem{
-			ID:          strconv.FormatUint(profile.ID, 10),
-			Asset:       h.putProfileAsset(c, claims, profile, sensitive.PresetList, "home:data"),
-			DetailAsset: h.putProfileAsset(c, claims, profile, sensitive.PresetDialog, "home:data:detail"),
-			Actions:     []string{"open-ask"},
-		})
+		items = append(items, h.buildProtectedProfileListItem(c, claims, profile, "home:data"))
 	}
 
 	c.JSON(http.StatusOK, sensitive.ListResponse{
@@ -227,12 +222,9 @@ func (h *Handler) handleAdminProtectedProfiles(c *gin.Context) {
 
 	items := make([]sensitive.ListItem, 0, len(result.Items))
 	for _, profile := range result.Items {
-		items = append(items, sensitive.ListItem{
-			ID:          strconv.FormatUint(profile.ID, 10),
-			Asset:       h.putProfileAsset(c, claims, profile, sensitive.PresetCompactList, "admin:profiles"),
-			DetailAsset: h.putProfileAsset(c, claims, profile, sensitive.PresetDialog, "admin:profiles:detail"),
-			Actions:     []string{"edit", "delete"},
-		})
+		item := h.buildProtectedProfileListItem(c, claims, profile, "admin:profiles")
+		item.Actions = []string{"edit", "delete"}
+		items = append(items, item)
 	}
 
 	c.JSON(http.StatusOK, sensitive.ListResponse{
@@ -328,12 +320,7 @@ func (h *Handler) handleAdminProtectedWatchlist(c *gin.Context) {
 
 	items := make([]sensitive.ListItem, 0, len(result.Items))
 	for _, item := range result.Items {
-		items = append(items, sensitive.ListItem{
-			ID:          strconv.FormatUint(item.ID, 10),
-			Asset:       h.putWatchlistAsset(c, claims, item, sensitive.PresetList, "admin:watchlist"),
-			DetailAsset: h.putWatchlistAsset(c, claims, item, sensitive.PresetDialog, "admin:watchlist:detail"),
-			Actions:     []string{"edit", "delete"},
-		})
+		items = append(items, h.buildProtectedWatchlistItem(c, claims, item, "admin:watchlist"))
 	}
 
 	c.JSON(http.StatusOK, sensitive.ListResponse{
@@ -569,6 +556,135 @@ func (h *Handler) putProfileAsset(
 	)
 }
 
+func (h *Handler) buildProtectedProfileListItem(
+	c *gin.Context,
+	claims auth.Claims,
+	profile SearchProfileResponse,
+	page string,
+) sensitive.ListItem {
+	riskTags := compactStrings(profileStringSlice(profile, "riskInfo", "riskTags"))
+	chips := make([]sensitive.FieldRef, 0, 8)
+
+	if documentType := formatDocumentTypeLabel(profileField(profile, "basicInfo", "documentType")); documentType != "" {
+		chips = append(chips, h.putInlineFieldAsset(c, claims, "documentType", documentType, sensitive.TagToneDefault, page+":chip"))
+	}
+	if gender := formatGenderLabel(profileField(profile, "basicInfo", "gender")); gender != "" {
+		chips = append(chips, h.putInlineFieldAsset(c, claims, "gender", gender, sensitive.TagToneDefault, page+":chip"))
+	}
+	chips = append(chips, h.putInlineFieldAsset(
+		c,
+		claims,
+		"documentNum",
+		firstNonEmptyText(strings.TrimSpace(profile.DocumentNum), "未填证件号"),
+		sensitive.TagToneIdentity,
+		page+":chip",
+	))
+	if profile.IsHighRisk {
+		chips = append(chips, h.putInlineFieldAsset(c, claims, "highRisk", "高风险预警", sensitive.TagToneAlert, page+":chip"))
+	}
+	if profile.ID == 0 {
+		chips = append(chips, h.putInlineFieldAsset(c, claims, "imported", "基础画像未导入", sensitive.TagToneWarning, page+":chip"))
+	}
+
+	notes := make([]sensitive.FieldRef, 0, 6)
+	if value := strings.TrimSpace(profile.RiskReason); value != "" {
+		notes = append(notes, h.putInlineFieldAsset(c, claims, "riskReason", value, sensitive.TagToneAlert, page+":note"))
+	}
+	if value := strings.TrimSpace(profileField(profile, "riskInfo", "criminalRecord")); value != "" {
+		notes = append(notes, h.putInlineFieldAsset(c, claims, "criminalRecord", value, sensitive.TagToneMuted, page+":note"))
+	}
+	if value := strings.TrimSpace(profileField(profile, "riskInfo", "note")); value != "" {
+		notes = append(notes, h.putInlineFieldAsset(c, claims, "note", value, sensitive.TagToneMuted, page+":note"))
+	}
+
+	meta := make([]sensitive.FieldRef, 0, len(riskTags))
+	for _, value := range riskTags {
+		meta = append(meta, h.putInlineFieldAsset(c, claims, "riskTag", value, sensitive.TagToneAccent, page+":meta"))
+	}
+
+	return sensitive.ListItem{
+		ID:          strconv.FormatUint(profile.ID, 10),
+		Asset:       h.putProfileAsset(c, claims, profile, sensitive.PresetList, page),
+		DetailAsset: h.putProfileAsset(c, claims, profile, sensitive.PresetDialog, page+":detail"),
+		Actions:     []string{"open-ask"},
+		Kind:        "profile",
+		Fields: []sensitive.FieldRef{
+			h.putInlineFieldAsset(
+				c,
+				claims,
+				"fullName",
+				firstNonEmptyText(strings.TrimSpace(profile.FullName), "旅客画像"),
+				sensitive.TagToneDefault,
+				page+":field",
+			),
+		},
+		Chips: chips,
+		Facts: h.buildProtectedProfileFacts(c, claims, profile, page+":fact"),
+		Meta:  meta,
+		Notes: notes,
+		Flags: map[string]bool{
+			"isHighRisk": profile.IsHighRisk,
+			"isImported": profile.ID != 0,
+		},
+	}
+}
+
+func (h *Handler) buildProtectedProfileFacts(
+	c *gin.Context,
+	claims auth.Claims,
+	profile SearchProfileResponse,
+	page string,
+) []sensitive.FactRef {
+	facts := buildProfileFactItems(profile)
+	result := make([]sensitive.FactRef, 0, len(facts))
+	for _, fact := range facts {
+		result = append(result, sensitive.FactRef{
+			Key:   fact.Label,
+			Label: fact.Label,
+			Asset: h.putInlineTextAsset(c, claims, fact.Value, page),
+		})
+	}
+	return result
+}
+
+func (h *Handler) putInlineFieldAsset(
+	c *gin.Context,
+	claims auth.Claims,
+	key string,
+	value string,
+	tone sensitive.TagTone,
+	page string,
+) sensitive.FieldRef {
+	return sensitive.FieldRef{
+		Key:   key,
+		Asset: h.putInlineTextAsset(c, claims, value, page),
+		Tone:  tone,
+	}
+}
+
+func (h *Handler) putInlineTextAsset(
+	c *gin.Context,
+	claims auth.Claims,
+	value string,
+	page string,
+) sensitive.AssetRef {
+	document := sensitive.Document{
+		Title: firstNonEmptyText(strings.TrimSpace(value), "-"),
+	}
+
+	return h.sensitive.PutWithStyle(
+		claims.UserID,
+		document,
+		sensitive.PresetInline,
+		sensitive.FormatWebP,
+		sensitive.RenderStyle{
+			Transparent: true,
+			HideAccent:  true,
+		},
+		buildWatermarkContext(c, claims, page),
+	)
+}
+
 func (h *Handler) putWatchlistAsset(
 	c *gin.Context,
 	claims auth.Claims,
@@ -603,6 +719,55 @@ func (h *Handler) putWatchlistAsset(
 		selectFormat(preset),
 		buildWatermarkContext(c, claims, page),
 	)
+}
+
+func (h *Handler) buildProtectedWatchlistItem(
+	c *gin.Context,
+	claims auth.Claims,
+	item WatchlistItem,
+	page string,
+) sensitive.ListItem {
+	result := sensitive.ListItem{
+		ID:          strconv.FormatUint(item.ID, 10),
+		Asset:       h.putWatchlistAsset(c, claims, item, sensitive.PresetList, page),
+		DetailAsset: h.putWatchlistAsset(c, claims, item, sensitive.PresetDialog, page+":detail"),
+		Actions:     []string{"edit", "delete"},
+		Kind:        "watchlist",
+		Fields: []sensitive.FieldRef{
+			h.putInlineFieldAsset(
+				c,
+				claims,
+				"documentNum",
+				firstNonEmptyText(strings.TrimSpace(item.DocumentNum), "-"),
+				sensitive.TagToneIdentity,
+				page+":field",
+			),
+		},
+		Chips: []sensitive.FieldRef{
+			h.putInlineFieldAsset(c, claims, "status", "高风险预警", sensitive.TagToneAlert, page+":chip"),
+		},
+		Notes: []sensitive.FieldRef{
+			h.putInlineFieldAsset(
+				c,
+				claims,
+				"riskReason",
+				firstNonEmptyText(strings.TrimSpace(item.RiskReason), "高风险名单命中"),
+				sensitive.TagToneAlert,
+				page+":note",
+			),
+		},
+		Flags: map[string]bool{
+			"isHighRisk": true,
+		},
+	}
+
+	if updatedAt := formatTime(item.UpdatedAt); updatedAt != "" {
+		result.Meta = []sensitive.FieldRef{
+			h.putInlineFieldAsset(c, claims, "updatedAt", "更新时间 "+updatedAt, sensitive.TagToneMuted, page+":meta"),
+		}
+	}
+
+	return result
 }
 
 func buildWatermarkContext(c *gin.Context, claims auth.Claims, page string) sensitive.WatermarkContext {

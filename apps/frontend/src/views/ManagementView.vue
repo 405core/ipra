@@ -14,7 +14,10 @@ import {
 } from '../app/watermark';
 import SensitiveAssetImage from '../app/SensitiveAssetImage.vue';
 import { ElMessage } from '../app/el-message';
-import { recordAuditEvent } from '../app/audit-service';
+import {
+  getProtectedAuditLogDetail,
+  recordAuditEvent,
+} from '../app/audit-service';
 import { openTouchInput } from '../app/touch-input';
 import { useProtectedPage } from '../app/use-protected-page';
 import {
@@ -40,7 +43,12 @@ import {
   type AdminWatchlistItem,
   type InquirySettings,
 } from '../app/admin-service';
-import type { ProtectedListItem } from '../app/protected-service';
+import type {
+  ProtectedDetailResponse,
+  ProtectedFactRef,
+  ProtectedFieldRef,
+  ProtectedListItem,
+} from '../app/protected-service';
 import {
   fetchArchiveVideoBlob,
   getInquiryArchive,
@@ -147,9 +155,13 @@ const isProfileFormVisible = ref(false);
 const isWatchlistFormVisible = ref(false);
 const isUserFormVisible = ref(false);
 const isArchiveDetailVisible = ref(false);
+const isAuditDetailVisible = ref(false);
 const selectedArchive = ref<InquiryArchiveDetailPayload | null>(null);
+const selectedAuditLog = ref<ProtectedDetailResponse | null>(null);
 const archiveVideoUrls = ref<Record<number, string>>({});
 const isLoadingArchiveDetail = ref(false);
+const isLoadingAuditDetail = ref(false);
+const auditDetailError = ref('');
 const profileFilters = ref({
   documentType: '',
   nationality: '',
@@ -195,7 +207,8 @@ const isAnyFormVisible = computed(
     isProfileFormVisible.value ||
     isWatchlistFormVisible.value ||
     isUserFormVisible.value ||
-    isArchiveDetailVisible.value,
+    isArchiveDetailVisible.value ||
+    isAuditDetailVisible.value,
 );
 const isEditingCurrentUser = computed(
   () => userForm.value.id != null && userForm.value.id === currentUserId.value,
@@ -289,6 +302,21 @@ const filteredUsers = computed(() =>
   }),
 );
 const filteredAuditLogs = computed(() => protectedAuditLogs.value);
+const filteredProtectedProfiles = computed(() =>
+  protectedProfiles.value.filter((item) =>
+    filteredProfiles.value.some((profile) => String(profile.id) === item.id),
+  ),
+);
+const filteredProtectedWatchlist = computed(() =>
+  protectedWatchlist.value.filter((item) =>
+    filteredWatchlist.value.some((entry) => String(entry.id) === item.id),
+  ),
+);
+const filteredProtectedUsers = computed(() =>
+  protectedUsers.value.filter((item) =>
+    filteredUsers.value.some((entry) => String(entry.id) === item.id),
+  ),
+);
 const filteredArchives = computed(() =>
   archives.value.filter((item) =>
     matchesSearch(
@@ -716,6 +744,10 @@ function handleDocumentKeydown(event: KeyboardEvent) {
   }
   if (isArchiveDetailVisible.value) {
     closeArchiveDetail();
+    return;
+  }
+  if (isAuditDetailVisible.value) {
+    closeAuditDetail();
   }
 }
 
@@ -769,6 +801,13 @@ function closeArchiveDetail() {
   isArchiveDetailVisible.value = false;
   selectedArchive.value = null;
   revokeArchiveVideoUrls();
+}
+
+function closeAuditDetail() {
+  openFilterPicker.value = null;
+  isAuditDetailVisible.value = false;
+  selectedAuditLog.value = null;
+  auditDetailError.value = '';
 }
 
 function clearProfileFilters() {
@@ -863,6 +902,22 @@ async function openArchiveDetail(item: InquiryArchiveListItem) {
     isArchiveDetailVisible.value = false;
   } finally {
     isLoadingArchiveDetail.value = false;
+  }
+}
+
+async function openAuditDetail(item: ProtectedListItem) {
+  isAuditDetailVisible.value = true;
+  selectedAuditLog.value = null;
+  auditDetailError.value = '';
+  isLoadingAuditDetail.value = true;
+
+  try {
+    selectedAuditLog.value = await getProtectedAuditLogDetail(item.id);
+  } catch (error) {
+    auditDetailError.value =
+      error instanceof Error ? error.message : '查询审计日志详情失败。';
+  } finally {
+    isLoadingAuditDetail.value = false;
   }
 }
 
@@ -1329,6 +1384,64 @@ function formatArchiveTime(value: string) {
   return formatAuditTime(value);
 }
 
+function findProtectedField(
+  fields: ProtectedFieldRef[] | undefined,
+  key: string,
+) {
+  return fields?.find((item) => item.key === key) ?? null;
+}
+
+function findProtectedChip(item: ProtectedListItem, key: string) {
+  return findProtectedField(item.chips, key);
+}
+
+function protectedFactEntries(item: ProtectedListItem) {
+  return (item.facts ?? []) as ProtectedFactRef[];
+}
+
+function protectedRiskTags(item: ProtectedListItem) {
+  return (item.meta ?? []) as ProtectedFieldRef[];
+}
+
+function protectedNotes(item: ProtectedListItem) {
+  return (item.notes ?? []) as ProtectedFieldRef[];
+}
+
+function protectedMeta(item: ProtectedListItem) {
+  return (item.meta ?? []) as ProtectedFieldRef[];
+}
+
+function protectedChipToneClass(tone?: string) {
+  switch (tone) {
+    case 'alert':
+      return 'admin-row__pill--alert';
+    case 'warning':
+      return 'admin-row__pill--warning';
+    case 'success':
+      return 'admin-row__pill--success';
+    case 'identity':
+      return 'admin-row__pill--identity';
+    default:
+      return '';
+  }
+}
+
+function findWatchlistRecord(item: ProtectedListItem) {
+  return (
+    filteredWatchlist.value.find((entry) => String(entry.id) === item.id) ??
+    watchlist.value.find((entry) => String(entry.id) === item.id) ??
+    null
+  );
+}
+
+function findUserRecord(item: ProtectedListItem) {
+  return (
+    filteredUsers.value.find((entry) => String(entry.id) === item.id) ??
+    users.value.find((entry) => String(entry.id) === item.id) ??
+    null
+  );
+}
+
 function asArray(value: unknown) {
   return Array.isArray(value) ? value : [];
 }
@@ -1474,25 +1587,129 @@ function stringifyDetail(value: unknown) {
         </div>
 
         <p class="admin-filter-summary">
-          当前展示 {{ protectedProfiles.length }} 条基础画像。
+          当前展示 {{ filteredProtectedProfiles.length }} 条基础画像。
         </p>
 
         <div class="admin-table">
           <article
-            v-for="(item, index) in protectedProfiles"
+            v-for="item in filteredProtectedProfiles"
             :key="item.id"
             class="admin-row admin-row--profile"
           >
             <div class="admin-row__profile-content">
-              <SensitiveAssetImage
-                :src="item.asset.url"
-                alt="基础画像敏感图片"
-              />
+              <div class="admin-row__headline">
+                <strong class="admin-inline-title">
+                  <SensitiveAssetImage
+                    v-if="findProtectedField(item.fields, 'fullName')"
+                    :src="findProtectedField(item.fields, 'fullName')!.asset.url"
+                    alt="姓名"
+                    inline
+                    eager
+                  />
+                </strong>
+                <span
+                  v-if="findProtectedChip(item, 'highRisk')"
+                  class="admin-row__pill admin-row__pill--alert"
+                >
+                  <SensitiveAssetImage
+                    :src="findProtectedChip(item, 'highRisk')!.asset.url"
+                    alt="高风险预警"
+                    inline
+                  />
+                </span>
+                <span
+                  v-if="findProtectedChip(item, 'documentType')"
+                  class="admin-row__pill"
+                >
+                  <SensitiveAssetImage
+                    :src="findProtectedChip(item, 'documentType')!.asset.url"
+                    alt="证件类型"
+                    inline
+                  />
+                </span>
+                <span
+                  v-if="findProtectedChip(item, 'gender')"
+                  class="admin-row__pill"
+                >
+                  <SensitiveAssetImage
+                    :src="findProtectedChip(item, 'gender')!.asset.url"
+                    alt="性别"
+                    inline
+                  />
+                </span>
+                <span
+                  v-if="findProtectedChip(item, 'documentNum')"
+                  class="admin-row__identity"
+                >
+                  <SensitiveAssetImage
+                    :src="findProtectedChip(item, 'documentNum')!.asset.url"
+                    alt="证件号码"
+                    inline
+                  />
+                </span>
+                <span
+                  v-if="findProtectedChip(item, 'imported')"
+                  class="admin-row__pill admin-row__pill--warning"
+                >
+                  <SensitiveAssetImage
+                    :src="findProtectedChip(item, 'imported')!.asset.url"
+                    alt="导入状态"
+                    inline
+                  />
+                </span>
+              </div>
+              <div class="admin-row__fact-list">
+                <span
+                  v-for="detail in protectedFactEntries(item)"
+                  :key="`${item.id}-${detail.key || detail.label}`"
+                  class="admin-row__fact"
+                >
+                  <span class="admin-row__fact-label">{{ detail.label }}</span>
+                  <strong class="admin-row__fact-value">
+                    <SensitiveAssetImage
+                      :src="detail.asset.url"
+                      :alt="detail.label"
+                      inline
+                    />
+                  </strong>
+                </span>
+              </div>
+              <div
+                v-if="protectedRiskTags(item).length || protectedNotes(item).length"
+                class="admin-row__tags"
+              >
+                <span
+                  v-for="tag in protectedRiskTags(item)"
+                  :key="`${item.id}-${tag.key}-${tag.asset.id}`"
+                  class="admin-row__tag"
+                >
+                  <SensitiveAssetImage
+                    :src="tag.asset.url"
+                    alt="风险标签"
+                    inline
+                  />
+                </span>
+                <span
+                  v-for="note in protectedNotes(item)"
+                  :key="`${item.id}-${note.key}-${note.asset.id}`"
+                  class="admin-row__tag admin-row__tag--muted"
+                >
+                  <SensitiveAssetImage
+                    :src="note.asset.url"
+                    alt="补充说明"
+                    inline
+                  />
+                </span>
+              </div>
             </div>
             <div class="admin-row__actions">
               <button
                 type="button"
-                @click="editProfile(filteredProfiles[index] || profiles[index])"
+                @click="
+                  editProfile(
+                    filteredProfiles.find((profile) => String(profile.id) === item.id)!,
+                  )
+                "
               >
                 编辑
               </button>
@@ -1500,7 +1717,9 @@ function stringifyDetail(value: unknown) {
                 type="button"
                 class="danger"
                 @click="
-                  removeProfile((filteredProfiles[index] || profiles[index]).id)
+                  removeProfile(
+                    filteredProfiles.find((profile) => String(profile.id) === item.id)!.id,
+                  )
                 "
               >
                 删除
@@ -1536,38 +1755,83 @@ function stringifyDetail(value: unknown) {
         </div>
 
         <p class="admin-filter-summary">
-          当前展示 {{ protectedWatchlist.length }} 条高风险名单。
+          当前展示 {{ filteredProtectedWatchlist.length }} 条高风险名单。
         </p>
 
         <div class="admin-table">
           <article
-            v-for="(item, index) in protectedWatchlist"
+            v-for="item in filteredProtectedWatchlist"
             :key="item.id"
-            class="admin-row"
+            class="admin-row admin-row--watchlist"
           >
             <div class="admin-row__profile-content">
-              <SensitiveAssetImage
-                :src="item.asset.url"
-                alt="高风险名单敏感图片"
-              />
+              <div class="admin-row__headline">
+                <span
+                  v-if="findProtectedField(item.fields, 'documentNum')"
+                  class="admin-row__identity"
+                >
+                  <SensitiveAssetImage
+                    :src="findProtectedField(item.fields, 'documentNum')!.asset.url"
+                    alt="证件号码"
+                    inline
+                    eager
+                  />
+                </span>
+                <span
+                  v-for="chip in item.chips ?? []"
+                  :key="`${item.id}-${chip.key}`"
+                  class="admin-row__pill"
+                  :class="protectedChipToneClass(chip.tone)"
+                >
+                  <SensitiveAssetImage
+                    :src="chip.asset.url"
+                    :alt="chip.key"
+                    inline
+                  />
+                </span>
+              </div>
+
+              <div v-if="protectedNotes(item).length" class="admin-row__tags">
+                <span
+                  v-for="note in protectedNotes(item)"
+                  :key="`${item.id}-${note.key}`"
+                  class="admin-row__tag"
+                >
+                  <SensitiveAssetImage
+                    :src="note.asset.url"
+                    :alt="note.key"
+                    inline
+                  />
+                </span>
+              </div>
+
+              <div v-if="protectedMeta(item).length" class="admin-row__tags">
+                <span
+                  v-for="meta in protectedMeta(item)"
+                  :key="`${item.id}-${meta.key}`"
+                  class="admin-row__tag admin-row__tag--muted"
+                >
+                  <SensitiveAssetImage
+                    :src="meta.asset.url"
+                    :alt="meta.key"
+                    inline
+                  />
+                </span>
+              </div>
             </div>
             <div class="admin-row__actions">
               <button
                 type="button"
-                @click="
-                  editWatchlist(filteredWatchlist[index] || watchlist[index])
-                "
+                :disabled="!findWatchlistRecord(item)"
+                @click="findWatchlistRecord(item) && editWatchlist(findWatchlistRecord(item)!)"
               >
                 编辑
               </button>
               <button
                 type="button"
                 class="danger"
-                @click="
-                  removeWatchlist(
-                    (filteredWatchlist[index] || watchlist[index]).id,
-                  )
-                "
+                :disabled="!findWatchlistRecord(item)"
+                @click="findWatchlistRecord(item) && removeWatchlist(findWatchlistRecord(item)!.id)"
               >
                 删除
               </button>
@@ -1771,16 +2035,81 @@ function stringifyDetail(value: unknown) {
             当前展示 {{ filteredAuditLogs.length }} 条审计日志。
           </p>
 
-          <div class="admin-audit-list">
+          <div class="admin-table">
             <article
               v-for="item in filteredAuditLogs"
               :key="item.id"
-              class="admin-audit-item"
+              class="admin-row admin-row--audit"
             >
-              <SensitiveAssetImage
-                :src="item.asset.url"
-                alt="审计日志敏感图片"
-              />
+              <div class="admin-row__profile-content">
+                <div class="admin-row__headline">
+                  <strong class="admin-inline-title">
+                    <SensitiveAssetImage
+                      v-if="findProtectedField(item.fields, 'resource')"
+                      :src="findProtectedField(item.fields, 'resource')!.asset.url"
+                      alt="资源"
+                      inline
+                      eager
+                    />
+                  </strong>
+                  <span class="admin-row__pill admin-row__pill--identity">
+                    <SensitiveAssetImage
+                      v-if="findProtectedField(item.fields, 'action')"
+                      :src="findProtectedField(item.fields, 'action')!.asset.url"
+                      alt="动作"
+                      inline
+                    />
+                  </span>
+                  <span
+                    v-for="chip in item.chips ?? []"
+                    :key="`${item.id}-${chip.key}`"
+                    class="admin-row__pill"
+                    :class="protectedChipToneClass(chip.tone)"
+                  >
+                    <SensitiveAssetImage
+                      :src="chip.asset.url"
+                      :alt="chip.key"
+                      inline
+                    />
+                  </span>
+                </div>
+
+                <div class="admin-row__fact-list">
+                  <span
+                    v-for="detail in protectedFactEntries(item)"
+                    :key="`${item.id}-${detail.key || detail.label}`"
+                    class="admin-row__fact"
+                  >
+                    <span class="admin-row__fact-label">{{ detail.label }}</span>
+                    <strong class="admin-row__fact-value">
+                      <SensitiveAssetImage
+                        :src="detail.asset.url"
+                        :alt="detail.label"
+                        inline
+                      />
+                    </strong>
+                  </span>
+                </div>
+
+                <div v-if="protectedNotes(item).length" class="admin-row__tags">
+                  <span
+                    v-for="note in protectedNotes(item)"
+                    :key="`${item.id}-${note.key}`"
+                    class="admin-row__tag admin-row__tag--muted"
+                  >
+                    <SensitiveAssetImage
+                      :src="note.asset.url"
+                      :alt="note.key"
+                      inline
+                    />
+                  </span>
+                </div>
+              </div>
+              <div class="admin-row__actions">
+                <button type="button" @click="openAuditDetail(item)">
+                  查看详情
+                </button>
+              </div>
             </article>
           </div>
         </template>
@@ -1894,38 +2223,97 @@ function stringifyDetail(value: unknown) {
           </div>
 
           <p class="admin-filter-summary">
-            当前展示 {{ protectedUsers.length }} 个用户。
+            当前展示 {{ filteredProtectedUsers.length }} 个用户。
           </p>
 
           <div class="admin-table">
             <article
-              v-for="(item, index) in protectedUsers"
+              v-for="item in filteredProtectedUsers"
               :key="item.id"
-              class="admin-row"
+              class="admin-row admin-row--user"
             >
               <div class="admin-row__profile-content">
-                <SensitiveAssetImage :src="item.asset.url" alt="用户敏感图片" />
+                <div class="admin-row__headline">
+                  <strong class="admin-inline-title">
+                    <SensitiveAssetImage
+                      v-if="findProtectedField(item.fields, 'name')"
+                      :src="findProtectedField(item.fields, 'name')!.asset.url"
+                      alt="姓名"
+                      inline
+                      eager
+                    />
+                  </strong>
+                  <span
+                    v-if="findProtectedField(item.fields, 'workId')"
+                    class="admin-row__identity"
+                  >
+                    <SensitiveAssetImage
+                      :src="findProtectedField(item.fields, 'workId')!.asset.url"
+                      alt="工号"
+                      inline
+                    />
+                  </span>
+                  <span
+                    v-for="chip in item.chips ?? []"
+                    :key="`${item.id}-${chip.key}`"
+                    class="admin-row__pill"
+                    :class="protectedChipToneClass(chip.tone)"
+                  >
+                    <SensitiveAssetImage
+                      :src="chip.asset.url"
+                      :alt="chip.key"
+                      inline
+                    />
+                  </span>
+                </div>
+
+                <div class="admin-row__fact-list">
+                  <span
+                    v-for="detail in protectedFactEntries(item)"
+                    :key="`${item.id}-${detail.key || detail.label}`"
+                    class="admin-row__fact"
+                  >
+                    <span class="admin-row__fact-label">{{ detail.label }}</span>
+                    <strong class="admin-row__fact-value">
+                      <SensitiveAssetImage
+                        :src="detail.asset.url"
+                        :alt="detail.label"
+                        inline
+                      />
+                    </strong>
+                  </span>
+                </div>
+
+                <div v-if="protectedMeta(item).length" class="admin-row__tags">
+                  <span
+                    v-for="meta in protectedMeta(item)"
+                    :key="`${item.id}-${meta.key}`"
+                    class="admin-row__tag admin-row__tag--muted"
+                  >
+                    <SensitiveAssetImage
+                      :src="meta.asset.url"
+                      :alt="meta.key"
+                      inline
+                    />
+                  </span>
+                </div>
               </div>
               <div class="admin-row__actions">
                 <button
                   type="button"
-                  @click="editUser(filteredUsers[index] || users[index])"
+                  :disabled="!findUserRecord(item)"
+                  @click="findUserRecord(item) && editUser(findUserRecord(item)!)"
                 >
                   编辑
                 </button>
                 <button
                   type="button"
-                  :class="
-                    (filteredUsers[index] || users[index]).status === 'active'
-                      ? 'danger'
-                      : ''
-                  "
-                  @click="
-                    toggleUserStatus(filteredUsers[index] || users[index])
-                  "
+                  :disabled="!findUserRecord(item)"
+                  :class="findUserRecord(item)?.status === 'active' ? 'danger' : ''"
+                  @click="findUserRecord(item) && toggleUserStatus(findUserRecord(item)!)"
                 >
                   {{
-                    (filteredUsers[index] || users[index]).status === 'active'
+                    findUserRecord(item)?.status === 'active'
                       ? '停用'
                       : '启用'
                   }}
@@ -2539,6 +2927,40 @@ function stringifyDetail(value: unknown) {
       </div>
     </section>
   </Teleport>
+
+  <Teleport to="body">
+    <section
+      v-if="isAuditDetailVisible"
+      class="admin-dialog"
+      @click.self="closeAuditDetail"
+    >
+      <div class="admin-form-card admin-form-card--dialog admin-form-card--audit">
+        <div class="admin-form-card__header">
+          <div>
+            <h3>审计日志详情</h3>
+            <p>查看完整日志详情与上下文。</p>
+          </div>
+          <button type="button" class="ghost" @click="closeAuditDetail">
+            关闭窗口
+          </button>
+        </div>
+
+        <div v-if="selectedAuditLog" class="archive-detail">
+          <SensitiveAssetImage
+            :src="selectedAuditLog.asset.url"
+            alt="审计日志详情敏感图片"
+          />
+        </div>
+
+        <div v-else class="empty-panel empty-panel--compact">
+          <strong>{{
+            isLoadingAuditDetail ? '正在加载审计日志详情' : '暂时无法显示日志详情'
+          }}</strong>
+          <span>{{ auditDetailError || '请稍候。' }}</span>
+        </div>
+      </div>
+    </section>
+  </Teleport>
 </template>
 
 <style scoped lang="scss">
@@ -3035,6 +3457,16 @@ function stringifyDetail(value: unknown) {
   gap: 8px 10px;
 }
 
+.admin-inline-title {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+}
+
+.admin-inline-title :deep(.sensitive-image img) {
+  height: 28px;
+}
+
 .admin-row__identity {
   display: inline-flex;
   align-items: center;
@@ -3058,6 +3490,30 @@ function stringifyDetail(value: unknown) {
   color: #7a5c50;
   font-size: 0.78rem;
   font-weight: 700;
+}
+
+.admin-row__pill--alert {
+  background: rgba(199, 92, 71, 0.12);
+  border-color: rgba(199, 92, 71, 0.16);
+  color: #a24734;
+}
+
+.admin-row__pill--warning {
+  background: rgba(234, 204, 141, 0.28);
+  border-color: rgba(224, 206, 137, 0.52);
+  color: #996106;
+}
+
+.admin-row__pill--success {
+  background: rgba(35, 125, 77, 0.14);
+  border-color: rgba(35, 125, 77, 0.22);
+  color: #237d4d;
+}
+
+.admin-row__pill--identity {
+  background: rgba(243, 231, 222, 0.92);
+  border-color: rgba(208, 177, 158, 0.58);
+  color: #7a5142;
 }
 
 .admin-row__fact-list {
@@ -3085,6 +3541,8 @@ function stringifyDetail(value: unknown) {
 }
 
 .admin-row__fact-value {
+  display: inline-flex;
+  align-items: center;
   color: #1f282c;
   font-size: 0.84rem;
   font-weight: 700;
