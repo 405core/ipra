@@ -4,12 +4,15 @@ import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
 import { clearAuthSession, loadAuthSession } from '../auth';
 import { recordAuditEvent } from '../app/audit-service';
 import { ElMessage } from '../app/el-message';
+import SensitiveAssetImage from '../app/SensitiveAssetImage.vue';
 import {
   downloadImportTemplate,
+  getProtectedImportResult,
   importPassengerProfiles,
   type ImportBatchResult,
   type ImportType,
 } from '../app/profile-service';
+import type { ProtectedDetailResponse } from '../app/protected-service';
 
 type UserRouteName = 'home-data' | 'home-ask' | 'home-log';
 
@@ -47,6 +50,10 @@ const isImporting = ref(false);
 const isImportDragActive = ref(false);
 const defaultImportHint = '支持 CSV / XLSX';
 const importStatus = ref('');
+const importResult = ref<ImportBatchResult | null>(null);
+const importDetail = ref<ProtectedDetailResponse | null>(null);
+const isImportDetailVisible = ref(false);
+const isImportDetailLoading = ref(false);
 const importInput = ref<HTMLInputElement | null>(null);
 let importDragDepth = 0;
 
@@ -142,9 +149,12 @@ async function acceptImportFile(file: File | null) {
 
   isImporting.value = true;
   importStatus.value = `正在导入：${file.name}`;
+  importResult.value = null;
+  importDetail.value = null;
 
   try {
     const result = await importPassengerProfiles(file);
+    importResult.value = result;
     importStatus.value = buildImportStatus(file.name, result);
     if (result.status === 'success') {
       ElMessage.success('导入完成');
@@ -163,6 +173,29 @@ async function acceptImportFile(file: File | null) {
       importInput.value.value = '';
     }
   }
+}
+
+async function openImportDetail() {
+  if (!importResult.value?.batchId) {
+    return;
+  }
+
+  isImportDetailVisible.value = true;
+  isImportDetailLoading.value = true;
+  importDetail.value = null;
+  try {
+    importDetail.value = await getProtectedImportResult(importResult.value.batchId);
+  } catch (error) {
+    ElMessage.error(normalizeErrorMessage(error, '读取导入明细失败。'));
+    isImportDetailVisible.value = false;
+  } finally {
+    isImportDetailLoading.value = false;
+  }
+}
+
+function closeImportDetail() {
+  isImportDetailVisible.value = false;
+  importDetail.value = null;
 }
 
 async function handleImportChange(event: Event) {
@@ -222,25 +255,15 @@ async function logout() {
 }
 
 function buildImportStatus(fileName: string, result: ImportBatchResult) {
-  const firstError = result.errorDetails?.[0];
-
   if (result.status === 'success') {
     return `导入完成：${fileName}，成功 ${result.successCount}/${result.totalRows} 行。`;
   }
 
   if (result.status === 'partial_failed') {
-    return `部分成功：${result.successCount} 成功，${result.failedCount} 失败。${
-      firstError ? `第 ${firstError.rowNo} 行：${firstError.message}` : ''
-    }`;
+    return `部分成功：${result.successCount} 成功，${result.failedCount} 失败。可查看受保护明细。`;
   }
 
-  return `导入失败：${
-    firstError
-      ? firstError.rowNo
-        ? `第 ${firstError.rowNo} 行 ${firstError.message}`
-        : firstError.message
-      : '请检查文件格式和字段内容。'
-  }`;
+  return '导入失败：请检查文件格式和字段内容，可查看受保护明细。';
 }
 
 function normalizeErrorMessage(error: unknown, fallback: string) {
@@ -359,7 +382,17 @@ onBeforeUnmount(() => {
           <strong>{{ isImporting ? '正在处理导入文件...' : '导入画像文件' }}</strong>
           <span>{{ importBoxDetail }}</span>
         </button>
-        <p v-if="hasImportStatus" class="sidebar__status">{{ importStatus }}</p>
+        <div v-if="hasImportStatus" class="sidebar__status-block">
+          <p class="sidebar__status">{{ importStatus }}</p>
+          <button
+            v-if="importResult && importResult.failedCount > 0"
+            type="button"
+            class="sidebar-status__action"
+            @click="openImportDetail"
+          >
+            查看明细
+          </button>
+        </div>
         <div class="sidebar__divider"></div>
 
         <p class="sidebar__tools-label">模板下载</p>
@@ -384,6 +417,36 @@ onBeforeUnmount(() => {
       <RouterView />
     </main>
   </section>
+
+  <Teleport to="body">
+    <section
+      v-if="isImportDetailVisible"
+      class="import-detail-dialog"
+      @click.self="closeImportDetail"
+    >
+      <div class="import-detail-dialog__card">
+        <div class="import-detail-dialog__head">
+          <div>
+            <h3>导入明细</h3>
+          </div>
+          <button
+            type="button"
+            class="sidebar-status__action"
+            @click="closeImportDetail"
+          >
+            关闭
+          </button>
+        </div>
+
+        <div v-if="importDetail" class="import-detail-dialog__body">
+          <SensitiveAssetImage :src="importDetail.asset.url" alt="导入明细敏感图片" />
+        </div>
+        <div v-else class="import-detail-dialog__empty">
+          <strong>{{ isImportDetailLoading ? '正在加载导入明细' : '暂无导入明细' }}</strong>
+        </div>
+      </div>
+    </section>
+  </Teleport>
 </template>
 
 <style scoped lang="scss">
@@ -646,6 +709,25 @@ onBeforeUnmount(() => {
   margin: 0;
 }
 
+.sidebar__status-block {
+  display: grid;
+  gap: 8px;
+}
+
+.sidebar-status__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 12px;
+  background: rgba(11, 114, 136, 0.08);
+  border: 1px solid rgba(11, 114, 136, 0.16);
+  color: var(--accent-strong);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
 .sidebar__divider {
   height: 1px;
   background: rgba(157, 189, 202, 0.32);
@@ -710,6 +792,50 @@ onBeforeUnmount(() => {
   min-height: 100vh;
   padding: 106px 20px 24px;
   transition: padding-left 0.24s ease;
+}
+
+.import-detail-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(10, 24, 30, 0.42);
+}
+
+.import-detail-dialog__card {
+  width: min(920px, 100%);
+  max-height: min(86vh, 920px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 16px;
+  padding: 20px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.98);
+  overflow: auto;
+}
+
+.import-detail-dialog__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.import-detail-dialog__head h3 {
+  margin: 0;
+}
+
+.import-detail-dialog__body,
+.import-detail-dialog__empty {
+  display: grid;
+  min-height: 240px;
+}
+
+.import-detail-dialog__empty {
+  place-items: center;
+  color: var(--text-muted);
 }
 
 .fade-enter-active,

@@ -11,19 +11,13 @@ import SensitiveAssetImage from '../app/SensitiveAssetImage.vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
   resolveAiServiceWebSocketUrl,
-  type AgentMemoryContextPayload,
-  type AgentMemoryReferencePayload,
-  type AgentMemoryUpdatePayload,
   type ActionObservationPayload,
   type AsrPayload,
   type FollowupGuidanceResponse,
   type HumanOmniWindowSummaryPayload,
   type MultimodalAssessmentPayload,
-  type PassengerProfilePayload,
-  type QuestionAnswerPayload,
   type RealtimeAsrEvent,
   type RiskAssessmentPayload,
-  type TripProfilePayload,
   type UploadedWindowFilePayload,
 } from '../app/ai-service';
 import { recordAuditEvent } from '../app/audit-service';
@@ -49,15 +43,10 @@ import {
   type CreateInquiryArchivePayload,
   type CreateInquiryArchiveRoundPayload,
   type CreateInquiryArchiveVideoPayload,
+  type UploadedArchiveVideoFilePayload,
 } from '../app/archive-service';
 import {
-  fetchMemoryContext,
-  persistMemoryUpdates,
-} from '../app/memory-service';
-import {
-  searchPassengerProfilesProtected,
-  searchPassengerProfiles,
-  type PassengerProfileRecord,
+  getProtectedProfileById,
 } from '../app/profile-service';
 import {
   createIdleRealtimeDetectionState,
@@ -150,7 +139,7 @@ interface InterviewRound {
   humanOmniWindow: HumanOmniWindowSummaryPayload | null;
   actionObservations: ActionObservationPayload[];
   recordedFileName: string;
-  uploadedFile: UploadedWindowFilePayload | null;
+  uploadedFile: UploadedArchiveVideoFilePayload | null;
   asrText: string;
 }
 
@@ -206,25 +195,6 @@ interface JudgementBriefing {
   operatorNote: string;
   warnings: string[];
   generatedAt: string;
-}
-
-interface MemoryPanelItem {
-  key: string;
-  title: string;
-  content: string;
-  scopeLabel: string;
-  typeLabel: string;
-  source: string;
-  confidence?: number | null;
-  updatedAt?: string | null;
-}
-
-interface MemoryReferenceViewItem {
-  key: string;
-  title: string;
-  scopeLabel: string;
-  typeLabel: string;
-  count: number;
 }
 
 const session = loadAuthSession();
@@ -380,11 +350,9 @@ const isEndingSampling = ref(false);
 const isRequestingGuidance = ref(false);
 const strategyRequestError = ref('');
 const roundServiceError = ref('');
-const memoryContext = ref<AgentMemoryContextPayload | null>(null);
 const memoryLoadState = ref<MemoryLoadState>('idle');
 const memoryErrorMessage = ref('');
 const memoryLastSyncedAt = ref('');
-const latestMemoryReferences = ref<AgentMemoryReferencePayload[]>([]);
 const rounds = ref<InterviewRound[]>([]);
 const currentRoundId = ref<string | null>(null);
 const selectedJudgement = ref<FinalJudgement | null>(null);
@@ -399,7 +367,6 @@ const stageLoadingPhraseIndex = ref(0);
 const videoWatermarkTimestamp = ref(Date.now());
 const speechRecognitionPhase = ref<SpeechRecognitionPhase>('idle');
 const speechRecognitionMessage = ref('等待开始采样。');
-const selectedProfile = ref<PassengerProfileRecord | null>(null);
 const profileLoadState = ref<ProfileLoadState>('idle');
 const profileLoadError = ref('');
 
@@ -652,99 +619,6 @@ const memoryStatusLabel = computed(() => {
   }
 });
 
-function formatMemoryScopeLabel(scopeType: string) {
-  switch (scopeType) {
-    case 'session':
-      return '会话';
-    case 'passenger':
-      return '旅客';
-    case 'rule':
-      return '规则';
-    default:
-      return scopeType || '未知';
-  }
-}
-
-function formatMemoryTypeLabel(memoryType: string) {
-  switch (memoryType) {
-    case 'fact':
-      return '事实';
-    case 'gap':
-      return '缺口';
-    case 'inconsistency':
-      return '矛盾';
-    case 'evidence':
-      return '证据';
-    case 'procedure':
-      return '流程';
-    default:
-      return memoryType || '未知';
-  }
-}
-
-const groupedMemoryReferences = computed<MemoryReferenceViewItem[]>(() => {
-  const grouped = new Map<string, MemoryReferenceViewItem>();
-
-  for (const reference of latestMemoryReferences.value) {
-    const scopeLabel = formatMemoryScopeLabel(reference.scopeType);
-    const typeLabel = formatMemoryTypeLabel(reference.memoryType);
-    const key = [
-      reference.scopeType,
-      reference.scopeId,
-      reference.memoryType,
-      reference.title,
-      reference.content,
-    ].join('::');
-    const existing = grouped.get(key);
-    if (existing) {
-      existing.count += 1;
-      continue;
-    }
-    grouped.set(key, {
-      key,
-      title: reference.title,
-      scopeLabel,
-      typeLabel,
-      count: 1,
-    });
-  }
-
-  return [...grouped.values()];
-});
-
-const memoryPanelItems = computed<MemoryPanelItem[]>(() => {
-  const context = memoryContext.value;
-  if (!context) {
-    return [];
-  }
-
-  const items = [
-    ...(context.sessionMemories ?? []).map((item) => ({
-      ...item,
-      scopeType: 'session',
-    })),
-    ...(context.passengerMemories ?? []).map((item) => ({
-      ...item,
-      scopeType: 'passenger',
-    })),
-    ...(context.ruleMemories ?? []).map((item) => ({
-      ...item,
-      scopeType: 'rule',
-    })),
-  ];
-
-  return items.map((item, index) => ({
-    key: `${item.scopeType}-${item.scopeId}-${item.memoryType}-${item.id ?? index}`,
-    title: item.title,
-    content: item.content,
-    scopeLabel: formatMemoryScopeLabel(item.scopeType),
-    typeLabel: formatMemoryTypeLabel(item.memoryType),
-    source: item.source || '',
-    confidence: item.confidence ?? null,
-    updatedAt: item.updatedAt ?? null,
-  }));
-});
-
 const speechRecognitionLabel = computed(() => {
   switch (speechRecognitionPhase.value) {
     case 'connecting':
@@ -868,72 +742,8 @@ function formatGenderLabel(value: string) {
   }
 }
 
-function buildRouteLabel(tripInfo: Record<string, unknown>) {
-  const route = asString(tripInfo.route);
-  if (route) {
-    return route;
-  }
-
-  const flightNo = asString(tripInfo.flightNo);
-  const origin = asString(tripInfo.origin);
-  const destination = asString(tripInfo.destination);
-  if (flightNo && origin && destination) {
-    return `${flightNo} (${origin} -> ${destination})`;
-  }
-  if (origin && destination) {
-    return `${origin} -> ${destination}`;
-  }
-  if (destination) {
-    return `目的地 ${destination}`;
-  }
-  return '未填写';
-}
-
-function buildProfileTags(profile: PassengerProfileRecord) {
-  const profileData = asRecord(profile.profileData);
-  const riskInfo = asRecord(profileData.riskInfo);
-  const tags = asStringArray(riskInfo.riskTags);
-
-  if (profile.isHighRisk) {
-    tags.unshift('高风险名单');
-  }
-  if (asString(riskInfo.type)) {
-    tags.push(asString(riskInfo.type));
-  }
-  if (asString(riskInfo.controlLevel)) {
-    tags.push(asString(riskInfo.controlLevel));
-  }
-
-  return [...new Set(tags.filter(Boolean))].slice(0, 4);
-}
-
-function buildTravelHistory(profile: PassengerProfileRecord) {
-  const profileData = asRecord(profile.profileData);
-  const travelHistory = asRecord(profileData.travelHistory);
-  const values: string[] = [];
-
-  const recentDestinations = asStringArray(travelHistory.recentDestinations);
-  if (recentDestinations.length) {
-    values.push(`主要去往：${recentDestinations.join('、')}`);
-  }
-  if (asString(travelHistory.travelHistorySummary)) {
-    values.push(asString(travelHistory.travelHistorySummary));
-  }
-  if (asString(travelHistory.lastDepartureDate)) {
-    values.push(`最近出境：${asString(travelHistory.lastDepartureDate)}`);
-  }
-  if (asString(travelHistory.abnormalOverstayRecord)) {
-    values.push(`异常滞留：${asString(travelHistory.abnormalOverstayRecord)}`);
-  }
-  if (asString(travelHistory.visaRefusalRecord)) {
-    values.push(`拒签/遣返：${asString(travelHistory.visaRefusalRecord)}`);
-  }
-
-  return values;
-}
-
 function buildPassengerProfileView(
-  profile: PassengerProfileRecord | null,
+  profile: ProtectedListItem | null,
 ): PassengerProfileViewModel {
   if (!profile) {
     return {
@@ -951,57 +761,36 @@ function buildPassengerProfileView(
       tags: [],
     };
   }
-
-  const profileData = asRecord(profile.profileData);
-  const basicInfo = asRecord(profileData.basicInfo);
-  const tripInfo = asRecord(profileData.tripInfo);
-  const occupation = asRecord(profileData.occupation);
-  const riskInfo = asRecord(profileData.riskInfo);
-  const tags = buildProfileTags(profile);
-  const summary = firstNonEmpty(
-    asString(profile.riskReason),
-    asString(riskInfo.note),
-    asString(riskInfo.criminalRecord),
-    profile.isHighRisk
-      ? '命中高风险名单，需要优先核验证件、行程与同行关系。'
-      : '',
-    '基础画像已载入，等待生成首轮策略。',
-  );
-  const observation = [
-    asString(tripInfo.purposeDeclared)
-      ? `目的：${asString(tripInfo.purposeDeclared)}`
-      : '',
-    asString(tripInfo.returnTicketStatus)
-      ? `返程：${asString(tripInfo.returnTicketStatus)}`
-      : '',
-    asString(occupation.fundingSource)
-      ? `资金：${asString(occupation.fundingSource)}`
-      : '',
-  ]
-    .filter(Boolean)
-    .join(' · ');
+  const nameField = findProtectedField(profile.fields, 'fullName');
+  const documentField = findProtectedChip(profile.chips, 'documentNum');
+  const tags = [
+    ...(profile.meta ?? []).map((item) => item.key || 'tag'),
+    ...(profile.notes ?? []).map((item) => item.key || 'note'),
+  ].slice(0, 4);
 
   return {
-    name: profile.fullName || '未填写',
-    alias: profile.fullName || '未填写',
-    documentId: profile.documentNum,
-    pnr: asString(tripInfo.pnr) || '未填写',
-    route: buildRouteLabel(tripInfo),
-    seat: asString(tripInfo.seat) || '未填写',
-    eta: asString(tripInfo.departureDate) || '未填写',
-    riskLevel: profile.isHighRisk ? 'high' : 'medium',
-    riskLabel: profile.isHighRisk ? '高风险预警' : '画像已载入',
-    summary,
-    observation: observation || '暂无重点观察项',
+    name: nameField?.key || '旅客画像',
+    alias: nameField?.key || '旅客画像',
+    documentId: documentField?.key || '',
+    pnr: '已受保护',
+    route: '已受保护',
+    seat: '已受保护',
+    eta: '已受保护',
+    riskLevel: profile.flags?.isHighRisk ? 'high' : 'medium',
+    riskLabel: profile.flags?.isHighRisk ? '高风险预警' : '画像已载入',
+    summary: profile.flags?.isHighRisk
+      ? '命中高风险名单，需要优先核验证件、行程与同行关系。'
+      : '基础画像已载入，等待生成首轮策略。',
+    observation: '敏感画像内容已通过受保护资产展示。',
     tags: tags.length ? tags : ['待策略生成'],
   };
 }
 
 const passengerProfile = computed(() =>
-  buildPassengerProfileView(selectedProfile.value),
+  buildPassengerProfileView(protectedProfile.value),
 );
 const hasSelectedProfile = computed(
-  () => profileLoadState.value === 'ready' && Boolean(selectedProfile.value),
+  () => profileLoadState.value === 'ready' && Boolean(protectedProfile.value),
 );
 const isProfileLoading = computed(() => profileLoadState.value === 'loading');
 const isStrategyLocked = computed(() => !hasSelectedProfile.value);
@@ -1014,8 +803,11 @@ const profileLockMessage = computed(() => {
 const profileHeaderStatusLabel = computed(() =>
   hasSelectedProfile.value ? '画像已载入' : '画像未载入',
 );
+const selectedProfileId = computed(() =>
+  normalizeRouteQueryValue(route.query.profileId).trim(),
+);
 const selectedPassengerId = computed(
-  () => selectedProfile.value?.documentNum.trim() || '',
+  () => findProtectedChip(protectedProfile.value?.chips, 'documentNum')?.key?.trim() || '',
 );
 
 function resetProfileDependentState() {
@@ -1029,11 +821,9 @@ function resetProfileDependentState() {
   strategyGenerationCount.value = 0;
   strategyRequestError.value = '';
   roundServiceError.value = '';
-  memoryContext.value = null;
   memoryLoadState.value = 'idle';
   memoryErrorMessage.value = '';
   memoryLastSyncedAt.value = '';
-  latestMemoryReferences.value = [];
   rounds.value = [];
   currentRoundId.value = null;
   judgementReason.value = '';
@@ -1041,11 +831,10 @@ function resetProfileDependentState() {
   selectedJudgement.value = null;
 }
 
-async function loadSelectedProfile(documentNum: string) {
+async function loadSelectedProfile(profileId: string) {
   resetProfileDependentState();
-  const trimmedDocumentNum = documentNum.trim();
-  if (!trimmedDocumentNum) {
-    selectedProfile.value = null;
+  const trimmedProfileId = profileId.trim();
+  if (!trimmedProfileId) {
     profileLoadState.value = 'locked';
     profileLoadError.value = '请先在数据检索中选择旅客后发起辅助问询。';
     return;
@@ -1053,31 +842,18 @@ async function loadSelectedProfile(documentNum: string) {
 
   profileLoadState.value = 'loading';
   profileLoadError.value = '';
-  selectedProfile.value = null;
   protectedProfile.value = null;
 
   try {
-    const [profiles, protectedResult] = await Promise.all([
-      searchPassengerProfiles(trimmedDocumentNum),
-      searchPassengerProfilesProtected(trimmedDocumentNum),
-    ]);
-    const matchedProfile =
-      profiles.find((item) => item.documentNum === trimmedDocumentNum) ??
-      profiles[0] ??
-      null;
-    protectedProfile.value =
-      protectedResult.items.find((item) => item.id === String(matchedProfile?.id ?? '')) ??
-      protectedResult.items[0] ??
-      null;
+    protectedProfile.value = await getProtectedProfileById(trimmedProfileId);
 
-    if (!matchedProfile || matchedProfile.id === 0) {
+    if (!protectedProfile.value) {
       profileLoadState.value = 'locked';
       profileLoadError.value =
-        '未查询到该证件号的基础画像，请先完成数据检索或导入。';
+        '未查询到对应的基础画像，请返回数据检索页后重新发起辅助问询。';
       return;
     }
 
-    selectedProfile.value = matchedProfile;
     profileLoadState.value = 'ready';
     profileLoadError.value = '';
   } catch (error) {
@@ -1307,8 +1083,6 @@ function findProtectedRoundSnapshot(
 
 async function refreshMemoryContext() {
   if (!selectedPassengerId.value) {
-    memoryContext.value = null;
-    latestMemoryReferences.value = [];
     memoryLoadState.value = 'idle';
     return null;
   }
@@ -1319,7 +1093,7 @@ async function refreshMemoryContext() {
   try {
     if (!sessionId.value || !protectedSession.value) {
       memoryLoadState.value = 'idle';
-      return memoryContext.value;
+      return null;
     }
 
     const { asset } = await refreshProtectedInquiryMemory(sessionId.value);
@@ -1328,115 +1102,19 @@ async function refreshMemoryContext() {
       memoryAsset: asset,
     };
     syncMemoryStatus(true);
-    const context = await fetchMemoryContext(
-      sessionId.value,
-      selectedPassengerId.value,
-    );
-    memoryContext.value = context;
     memoryLoadState.value = 'ready';
     memoryLastSyncedAt.value = new Date().toLocaleTimeString('zh-CN', {
       hour12: false,
     });
-    return context;
+    return null;
   } catch (error) {
     memoryLoadState.value = 'error';
     memoryErrorMessage.value = normalizeErrorMessage(
       error,
       '智能体记忆读取失败，本次问询将继续执行。',
     );
-    return memoryContext.value;
+    return null;
   }
-}
-
-async function saveMemoryUpdates(
-  updates: AgentMemoryUpdatePayload[] = [],
-  references: AgentMemoryReferencePayload[] = [],
-) {
-  try {
-    if (!updates.length && !references.length) {
-      return;
-    }
-    latestMemoryReferences.value = references;
-    if (updates.length) {
-      await persistMemoryUpdates(updates);
-    }
-    await refreshMemoryContext();
-  } catch (error) {
-    memoryLoadState.value = 'error';
-    memoryErrorMessage.value = normalizeErrorMessage(
-      error,
-      '智能体记忆保存失败，本次问询结果不会中断。',
-    );
-  }
-}
-
-function requireSelectedProfile() {
-  const profile = selectedProfile.value;
-  if (!profile) {
-    throw new Error('请先进行数据检索并选择旅客画像。');
-  }
-  return profile;
-}
-
-function buildPassengerPayload(
-  profile: PassengerProfileRecord,
-): PassengerProfilePayload {
-  const profileData = asRecord(profile.profileData);
-  const basicInfo = asRecord(profileData.basicInfo);
-  const tripInfo = asRecord(profileData.tripInfo);
-  const occupation = asRecord(profileData.occupation);
-
-  return {
-    passengerId: profile.documentNum,
-    name: profile.fullName,
-    gender: asString(basicInfo.gender) || null,
-    nationality: asString(basicInfo.nationality) || null,
-    occupation: asString(occupation.occupation) || null,
-    monthlyIncome: asString(occupation.monthlyIncome) || null,
-    travelHistory: buildTravelHistory(profile),
-    documents: {
-      documentType: asString(basicInfo.documentType) || null,
-      issuingRegion: asString(basicInfo.issuingRegion) || null,
-      documentNumber: profile.documentNum,
-      birthDate: asString(basicInfo.birthDate) || null,
-      pnr: asString(tripInfo.pnr) || null,
-      flightNo: asString(tripInfo.flightNo) || null,
-      seat: asString(tripInfo.seat) || null,
-    },
-  };
-}
-
-function buildTripPayload(profile: PassengerProfileRecord): TripProfilePayload {
-  const profileData = asRecord(profile.profileData);
-  const tripInfo = asRecord(profileData.tripInfo);
-  const occupation = asRecord(profileData.occupation);
-
-  return {
-    destination: asString(tripInfo.destination) || null,
-    purposeDeclared: asString(tripInfo.purposeDeclared) || null,
-    stayDays: asOptionalNumber(tripInfo.stayDays),
-    ticketType: asString(tripInfo.ticketType) || null,
-    returnTicketStatus: asString(tripInfo.returnTicketStatus) || null,
-    companions: asStringArray(tripInfo.companions),
-    accommodation: asString(tripInfo.accommodation) || null,
-    fundingSource: asString(occupation.fundingSource) || null,
-  };
-}
-
-function buildKnownFacts(profile: PassengerProfileRecord) {
-  const profileData = asRecord(profile.profileData);
-  const riskInfo = asRecord(profileData.riskInfo);
-  return [
-    profile.isHighRisk ? '命中高风险名单' : '',
-    asString(profile.riskReason)
-      ? `高风险原因：${asString(profile.riskReason)}`
-      : '',
-    ...buildProfileTags(profile).map((tag) => `风险标签：${tag}`),
-    asString(riskInfo.criminalRecord)
-      ? `违法犯罪记录：${asString(riskInfo.criminalRecord)}`
-      : '',
-    asString(riskInfo.note) ? `备注：${asString(riskInfo.note)}` : '',
-  ].filter(Boolean);
 }
 
 function buildOutputConstraints(questionCount: number) {
@@ -1651,28 +1329,6 @@ function collectSubjectTranscript(round: InterviewRound) {
     .trim();
 }
 
-function buildQaHistory() {
-  return rounds.value
-    .filter((round) => round.completed && round.uploadState === 'uploaded')
-    .map((round) => {
-      const answerText = collectSubjectTranscript(round);
-      const questionList = round.questions
-        .map(
-          (question, index) =>
-            `${index + 1}. ${question.title}：${question.prompt}`,
-        )
-        .join('\n');
-      return {
-        questionId: round.id,
-        roundNo: round.roundNumber,
-        question: questionList || round.title,
-        answerText,
-        answerStartSeconds: 0,
-        answerEndSeconds: Math.max(1, round.durationSeconds),
-      } satisfies QuestionAnswerPayload;
-    });
-}
-
 function buildRoundAsrPayload(round: InterviewRound): AsrPayload {
   const text = collectSubjectTranscript(round);
   if (!text) {
@@ -1762,22 +1418,6 @@ function buildHumanOmniWindows() {
 
 function buildActionObservationHistory() {
   return rounds.value.flatMap((round) => round.actionObservations);
-}
-
-function buildFollowupPayload(roundNumber: number, round: InterviewRound) {
-  const profile = requireSelectedProfile();
-  return {
-    sessionId: sessionId.value,
-    roundNo: roundNumber,
-    passengerProfile: buildPassengerPayload(profile),
-    tripProfile: buildTripPayload(profile),
-    qaHistory: buildQaHistory(),
-    humanOmniWindows: buildHumanOmniWindows(),
-    actionObservations: buildActionObservationHistory(),
-    asr: buildRoundAsrPayload(round),
-    memoryContext: memoryContext.value,
-    constraints: buildOutputConstraints(3),
-  };
 }
 
 function buildSummarizeWindowFormData(
@@ -2220,12 +1860,11 @@ async function generateStrategy() {
   if (isGeneratingStrategy.value) {
     return;
   }
-  if (isStrategyLocked.value || !selectedProfile.value) {
+  if (isStrategyLocked.value || !selectedPassengerId.value) {
     strategyRequestError.value = profileLockMessage.value;
     return;
   }
 
-  const profile = requireSelectedProfile();
   isGeneratingStrategy.value = true;
   strategyRequestError.value = '';
   openStageLoading('strategy');
@@ -2238,21 +1877,12 @@ async function generateStrategy() {
       path: '/home/ask',
       detail: {
         sessionId: sessionId.value,
-        documentNum: profile.documentNum,
+        documentNum: selectedPassengerId.value,
       },
     });
     const response = await generateProtectedInquiryStrategy({
       sessionId: sessionId.value,
-      passengerId: profile.documentNum,
-      passengerProfile: buildPassengerPayload(profile) as unknown as Record<
-        string,
-        unknown
-      >,
-      tripProfile: buildTripPayload(profile) as unknown as Record<
-        string,
-        unknown
-      >,
-      knownFacts: buildKnownFacts(profile),
+      passengerId: selectedPassengerId.value,
       constraints: buildOutputConstraints(6),
     });
     syncProtectedSessionState(response);
@@ -2643,29 +2273,10 @@ async function archiveCase() {
 }
 
 function buildArchivePayload(): CreateInquiryArchivePayload {
-  const profile = requireSelectedProfile();
   return {
     sessionId: sessionId.value,
-    passengerProfileId: profile.id || null,
-    passengerDocumentNum: profile.documentNum,
-    passengerName: profile.fullName,
-    passengerSnapshot: {
-      profile,
-      passengerProfile: buildPassengerPayload(profile),
-      tripProfile: buildTripPayload(profile),
-      riskLevel: passengerProfile.value.riskLevel,
-      riskLabel: passengerProfile.value.riskLabel,
-    },
     finalJudgement: selectedJudgement.value || '',
     judgementReason: judgementReason.value.trim(),
-    judgementBriefing: judgementBriefing.value
-      ? {
-          ...judgementBriefing.value,
-        }
-      : {},
-    multimodalAssessment: judgementBriefing.value?.multimodalAssessment || {},
-    totalDurationSeconds: totalSampleDuration.value,
-    transcriptCount: totalTranscriptCount.value,
     rounds: completedRounds.value.map(buildArchiveRoundPayload),
   };
 }
@@ -2673,25 +2284,9 @@ function buildArchivePayload(): CreateInquiryArchivePayload {
 function buildArchiveRoundPayload(
   round: InterviewRound,
 ): CreateInquiryArchiveRoundPayload {
-  const riskHints = [
-    round.signal,
-    ...(round.humanOmniWindow?.rawSummary ? ['HumanOmni 摘要已生成'] : []),
-  ].filter(Boolean);
-
   return {
     roundNo: round.roundNumber,
     roundClientId: round.id,
-    title: round.title,
-    focus: round.focus,
-    strategyNote: round.strategyNote,
-    questions: round.questions,
-    transcripts: round.transcripts,
-    answerText: collectSubjectTranscript(round),
-    roundSummary: round.summary,
-    humanOmniSummary: round.humanOmniWindow?.rawSummary || '',
-    actionObservations: round.actionObservations,
-    riskHints,
-    durationSeconds: round.durationSeconds,
     videos: buildArchiveVideos(round),
   };
 }
@@ -2700,64 +2295,17 @@ function buildArchiveVideos(
   round: InterviewRound,
 ): CreateInquiryArchiveVideoPayload[] {
   const uploadedFile = round.uploadedFile;
-  const objectInfo = resolveMinioObjectInfo(uploadedFile);
-  if (!uploadedFile || !objectInfo) {
+  if (!uploadedFile) {
     return [];
   }
 
   return [
     {
-      videoKind: 'round_clip',
-      windowId: round.humanOmniWindow?.windowId || null,
-      questionId:
-        round.humanOmniWindow?.questionId || round.questions[0]?.id || null,
-      videoUrl: uploadedFile.storedPath,
-      minioBucket: objectInfo.bucket,
-      minioObjectKey: objectInfo.objectKey,
       fileName: uploadedFile.filename,
       contentType: uploadedFile.contentType || 'video/mp4',
       sizeBytes: uploadedFile.sizeBytes,
-      modal: round.humanOmniWindow?.modal || 'video_audio',
-      startSeconds: round.humanOmniWindow?.startSeconds ?? 0,
-      endSeconds:
-        round.humanOmniWindow?.endSeconds ?? Math.max(1, round.durationSeconds),
-      humanOmniModel: round.humanOmniWindow?.modelName || null,
-      humanOmniRawSummary: round.humanOmniWindow?.rawSummary || null,
-      uploadPayload: {
-        ...uploadedFile,
-      },
     },
   ];
-}
-
-function resolveMinioObjectInfo(
-  uploadedFile: UploadedWindowFilePayload | null,
-) {
-  if (!uploadedFile) {
-    return null;
-  }
-  if (uploadedFile.bucket && uploadedFile.objectKey) {
-    return {
-      bucket: uploadedFile.bucket,
-      objectKey: uploadedFile.objectKey,
-    };
-  }
-
-  const storedPath = uploadedFile.storedPath.trim();
-  if (!storedPath.startsWith('minio://')) {
-    return null;
-  }
-
-  const withoutScheme = storedPath.slice('minio://'.length);
-  const slashIndex = withoutScheme.indexOf('/');
-  if (slashIndex <= 0 || slashIndex === withoutScheme.length - 1) {
-    return null;
-  }
-
-  return {
-    bucket: withoutScheme.slice(0, slashIndex),
-    objectKey: withoutScheme.slice(slashIndex + 1),
-  };
 }
 
 function formatArchiveTimestamp(value: string) {
@@ -3393,17 +2941,17 @@ onMounted(() => {
 useProtectedPage('/home/ask');
 
 watch(
-  () => route.query.documentNum,
+  () => route.query.profileId,
   (value, previousValue) => {
-    const nextDocumentNum = normalizeRouteQueryValue(value);
-    const previousDocumentNum = normalizeRouteQueryValue(previousValue);
+    const nextProfileId = normalizeRouteQueryValue(value);
+    const previousProfileId = normalizeRouteQueryValue(previousValue);
     if (
-      nextDocumentNum === previousDocumentNum &&
+      nextProfileId === previousProfileId &&
       profileLoadState.value !== 'idle'
     ) {
       return;
     }
-    void loadSelectedProfile(nextDocumentNum);
+    void loadSelectedProfile(nextProfileId);
   },
   { immediate: true },
 );

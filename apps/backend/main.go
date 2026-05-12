@@ -63,6 +63,7 @@ func main() {
 		}
 	}
 	inquiryHandler.SetMemoryStore(memoryStore)
+	inquiryHandler.SetProfileLookup(profileHandler.Service())
 	inquiryHandler.SetAIServiceBaseURL(cfg.AIService.BaseURL)
 
 	r := newRouter(

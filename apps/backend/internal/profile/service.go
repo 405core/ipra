@@ -60,6 +60,20 @@ type profileRecord struct {
 	RiskReason  string
 }
 
+type ImportBatchDetail struct {
+	BatchID      uint64
+	BatchNo      string
+	FileName     string
+	ImportType   string
+	Status       string
+	TotalRows    int
+	SuccessCount int
+	FailedCount  int
+	ErrorDetails []ImportError
+	StartedAt    *time.Time
+	FinishedAt   *time.Time
+}
+
 func NewService(db *gorm.DB) *Service {
 	return &Service{db: db}
 }
@@ -124,6 +138,32 @@ func (s *Service) SearchProfilesByDocumentExact(
 			ProfileData: map[string]any{},
 			UpdatedAt:   watchItem.UpdatedAt,
 		},
+	}, nil
+}
+
+func (s *Service) GetProfileByID(
+	ctx context.Context,
+	id uint64,
+) (SearchProfileResponse, error) {
+	var profile dbschema.PassengerProfile
+	if err := s.db.WithContext(ctx).First(&profile, id).Error; err != nil {
+		return SearchProfileResponse{}, err
+	}
+
+	watchlistMap, err := s.loadWatchlistMap(ctx, []dbschema.PassengerProfile{profile})
+	if err != nil {
+		return SearchProfileResponse{}, err
+	}
+
+	watchItem, inWatchlist := watchlistMap[profile.DocumentNum]
+	return SearchProfileResponse{
+		ID:          profile.ID,
+		FullName:    profile.FullName,
+		DocumentNum: profile.DocumentNum,
+		IsHighRisk:  inWatchlist,
+		RiskReason:  watchItem,
+		ProfileData: decodeJSONMap(profile.ProfileData),
+		UpdatedAt:   profile.UpdatedAt,
 	}, nil
 }
 
@@ -530,6 +570,33 @@ func (s *Service) finishBatch(ctx context.Context, batchID uint64, result Import
 			"error_details": errorDetails,
 			"finished_at":   finishedAt,
 		}).Error
+}
+
+func (s *Service) GetImportBatchDetail(
+	ctx context.Context,
+	batchID uint64,
+) (ImportBatchDetail, error) {
+	var batch dbschema.ImportBatchLog
+	if err := s.db.WithContext(ctx).First(&batch, batchID).Error; err != nil {
+		return ImportBatchDetail{}, err
+	}
+
+	result := ImportBatchDetail{
+		BatchID:      batch.ID,
+		BatchNo:      batch.BatchNo,
+		FileName:     batch.FileName,
+		ImportType:   batch.ImportType,
+		Status:       batch.Status,
+		TotalRows:    batch.TotalRows,
+		SuccessCount: batch.SuccessCount,
+		FailedCount:  batch.FailedCount,
+		StartedAt:    batch.StartedAt,
+		FinishedAt:   batch.FinishedAt,
+	}
+	if len(batch.ErrorDetails) > 0 {
+		_ = json.Unmarshal(batch.ErrorDetails, &result.ErrorDetails)
+	}
+	return result, nil
 }
 
 func decodeJSONMap(raw json.RawMessage) map[string]any {

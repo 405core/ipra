@@ -25,9 +25,8 @@ func TestValidateCreateArchiveRequest(t *testing.T) {
 				RoundNo: 1,
 				Videos: []archiveVideoRequest{
 					{
-						MinIOBucket:    "ipra-videos",
-						MinIOObjectKey: "humanomni-windows/2026/05/11/round-1.mp4",
-						Modal:          "video_audio",
+						FileName: "round-1.mp4",
+						Modal:    "video_audio",
 					},
 				},
 			},
@@ -67,11 +66,11 @@ func TestValidateCreateArchiveRequestRejectsInvalidPayload(t *testing.T) {
 			message: "视频",
 		},
 		{
-			name: "missing object key",
+			name: "missing file name",
 			mutate: func(req *createArchiveRequest) {
-				req.Rounds[0].Videos[0].MinIOObjectKey = ""
+				req.Rounds[0].Videos[0].FileName = ""
 			},
-			message: "minioObjectKey",
+			message: "fileName",
 		},
 	}
 
@@ -86,9 +85,8 @@ func TestValidateCreateArchiveRequestRejectsInvalidPayload(t *testing.T) {
 						RoundNo: 1,
 						Videos: []archiveVideoRequest{
 							{
-								MinIOBucket:    "ipra-videos",
-								MinIOObjectKey: "humanomni-windows/2026/05/11/round-1.mp4",
-								Modal:          "video_audio",
+								FileName: "round-1.mp4",
+								Modal:    "video_audio",
 							},
 						},
 					},
@@ -174,8 +172,8 @@ func TestUploadVideoStoresObjectInConfiguredBucket(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.UploadedFile.StoredPath != "minio://ipra-videos/humanomni-windows/2026/05/12/inq-20260512-abc123-window-1.mp4" {
-		t.Fatalf("storedPath = %q", got.UploadedFile.StoredPath)
+	if got.UploadedFile.Filename != "round-1.mp4" {
+		t.Fatalf("filename = %q", got.UploadedFile.Filename)
 	}
 }
 

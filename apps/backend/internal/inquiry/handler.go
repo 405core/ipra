@@ -2,6 +2,7 @@ package inquiry
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"ipra/backend/internal/auth"
 	"ipra/backend/internal/memory"
+	"ipra/backend/internal/profile"
 	"ipra/backend/internal/sensitive"
 )
 
@@ -32,8 +34,13 @@ type Handler struct {
 	protectedSessions map[string]*ProtectedSession
 	sensitive         *sensitive.Manager
 	memoryStore       memory.Store
+	profileLookup     profileLookup
 	aiServiceBaseURL  string
 	httpClient        *http.Client
+}
+
+type profileLookup interface {
+	SearchProfilesByDocumentExact(ctx context.Context, documentNum string) ([]profile.SearchProfileResponse, error)
 }
 
 type Passenger struct {
@@ -77,6 +84,9 @@ type ProtectedSession struct {
 	SessionID       string
 	OwnerUserID     uint64
 	PassengerID     string
+	PassengerName   string
+	PassengerDocNum string
+	PassengerRowID  uint64
 	PassengerProfile map[string]any
 	TripProfile     map[string]any
 	KnownFacts      []string
@@ -230,6 +240,13 @@ func (h *Handler) SetMemoryStore(store memory.Store) {
 	h.memoryStore = store
 }
 
+func (h *Handler) SetProfileLookup(lookup profileLookup) {
+	if h == nil {
+		return
+	}
+	h.profileLookup = lookup
+}
+
 func (h *Handler) SetAIServiceBaseURL(baseURL string) {
 	if h == nil {
 		return
@@ -238,12 +255,9 @@ func (h *Handler) SetAIServiceBaseURL(baseURL string) {
 }
 
 type protectedStrategyRequest struct {
-	SessionID        string         `json:"sessionId"`
-	PassengerProfile map[string]any `json:"passengerProfile"`
-	TripProfile      map[string]any `json:"tripProfile"`
-	KnownFacts       []string       `json:"knownFacts"`
-	Constraints      map[string]any `json:"constraints"`
-	PassengerID      string         `json:"passengerId"`
+	SessionID   string         `json:"sessionId"`
+	Constraints map[string]any `json:"constraints"`
+	PassengerID string         `json:"passengerId"`
 }
 
 type protectedWindowSummaryRequest struct {
@@ -272,6 +286,10 @@ func (h *Handler) handleProtectedStrategy(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"message": "敏感图片服务未启用"})
 		return
 	}
+	if h.profileLookup == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"message": "旅客画像服务未启用"})
+		return
+	}
 	claims, ok := auth.ClaimsFromContext(c)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"message": "未授权"})
@@ -286,13 +304,33 @@ func (h *Handler) handleProtectedStrategy(c *gin.Context) {
 	if strings.TrimSpace(req.SessionID) == "" {
 		req.SessionID = h.newSessionID()
 	}
+	passengerID := strings.TrimSpace(req.PassengerID)
+	if passengerID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "passengerId 不能为空"})
+		return
+	}
 
-	memoryContext := h.loadMemoryContext(req.SessionID, req.PassengerID)
+	profiles, err := h.profileLookup.SearchProfilesByDocumentExact(c.Request.Context(), passengerID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "读取旅客画像失败"})
+		return
+	}
+	if len(profiles) == 0 || profiles[0].ID == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"message": "未查询到可用旅客画像"})
+		return
+	}
+	profileRecord := profiles[0]
+	passengerProfile := buildInquiryPassengerProfile(profileRecord)
+	tripProfile := buildInquiryTripProfile(profileRecord)
+	knownFacts := buildInquiryKnownFacts(profileRecord)
+	profileBlock := h.buildProtectedProfileBlock(c, claims, profileRecord)
+
+	memoryContext := h.loadMemoryContext(req.SessionID, passengerID)
 	aiPayload := map[string]any{
 		"sessionId":        req.SessionID,
-		"passengerProfile": req.PassengerProfile,
-		"tripProfile":      req.TripProfile,
-		"knownFacts":       req.KnownFacts,
+		"passengerProfile": passengerProfile,
+		"tripProfile":      tripProfile,
+		"knownFacts":       knownFacts,
 		"memoryContext":    memoryContext,
 		"constraints":      req.Constraints,
 	}
@@ -303,19 +341,23 @@ func (h *Handler) handleProtectedStrategy(c *gin.Context) {
 	}
 
 	strategyAsset := h.renderStrategyAsset(c, claims, aiResponse)
-	memoryAsset := h.renderMemoryAsset(c, claims, req.SessionID, req.PassengerID, memoryContext)
+	memoryAsset := h.renderMemoryAsset(c, claims, req.SessionID, passengerID, memoryContext)
 	round := h.buildOpeningRound(c, claims, aiResponse)
 	strategyBlock := h.buildStrategyBlock(c, claims, aiResponse, strategyAsset)
-	memoryBlock := h.buildMemoryBlock(c, claims, req.SessionID, req.PassengerID, memoryContext, memoryAsset)
+	memoryBlock := h.buildMemoryBlock(c, claims, req.SessionID, passengerID, memoryContext, memoryAsset)
 
 	h.mu.Lock()
 	h.protectedSessions[req.SessionID] = &ProtectedSession{
 		SessionID:        req.SessionID,
 		OwnerUserID:      claims.UserID,
-		PassengerID:      strings.TrimSpace(req.PassengerID),
-		PassengerProfile: cloneMap(req.PassengerProfile),
-		TripProfile:      cloneMap(req.TripProfile),
-		KnownFacts:       append([]string(nil), req.KnownFacts...),
+		PassengerID:      passengerID,
+		PassengerName:    strings.TrimSpace(profileRecord.FullName),
+		PassengerDocNum:  strings.TrimSpace(profileRecord.DocumentNum),
+		PassengerRowID:   profileRecord.ID,
+		PassengerProfile: cloneMap(passengerProfile),
+		TripProfile:      cloneMap(tripProfile),
+		KnownFacts:       append([]string(nil), knownFacts...),
+		ProfileBlock:     profileBlock,
 		StrategyBlock:    strategyBlock,
 		MemoryBlock:      memoryBlock,
 		StrategyAsset:    &strategyAsset,
@@ -554,6 +596,8 @@ func (h *Handler) handleHealth(c *gin.Context) {
 }
 
 func (h *Handler) handleASRTranscribe(c *gin.Context) {
+	c.Header("X-IPRA-Deprecated", "true")
+	c.Header("Warning", `299 - "legacy plaintext inquiry endpoint is deprecated; use protected inquiry flow"`)
 	if err := c.Request.ParseMultipartForm(16 << 20); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "expected multipart form data"})
 		return
@@ -606,6 +650,8 @@ func (h *Handler) handleASRTranscribe(c *gin.Context) {
 }
 
 func (h *Handler) handleCreateSession(c *gin.Context) {
+	c.Header("X-IPRA-Deprecated", "true")
+	c.Header("Warning", `299 - "legacy plaintext inquiry endpoint is deprecated; use protected inquiry flow"`)
 	var req createSessionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid JSON body"})
@@ -647,6 +693,8 @@ func (h *Handler) handleCreateSession(c *gin.Context) {
 }
 
 func (h *Handler) handleGetSession(c *gin.Context) {
+	c.Header("X-IPRA-Deprecated", "true")
+	c.Header("Warning", `299 - "legacy plaintext inquiry endpoint is deprecated; use protected inquiry flow"`)
 	session, ok := h.sessionSnapshot(c.Param("sessionId"))
 	if !ok {
 		c.JSON(http.StatusNotFound, gin.H{"message": "session not found"})
@@ -657,6 +705,8 @@ func (h *Handler) handleGetSession(c *gin.Context) {
 }
 
 func (h *Handler) handleSubmitTurn(c *gin.Context) {
+	c.Header("X-IPRA-Deprecated", "true")
+	c.Header("Warning", `299 - "legacy plaintext inquiry endpoint is deprecated; use protected inquiry flow"`)
 	var req submitTurnRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid JSON body"})
@@ -1317,6 +1367,150 @@ func (h *Handler) buildJudgementBlock(
 	}
 }
 
+func (h *Handler) buildProtectedProfileBlock(
+	c *gin.Context,
+	claims auth.Claims,
+	record profile.SearchProfileResponse,
+) *sensitive.ListItem {
+	meta := h.buildInlineTags(
+		c,
+		claims,
+		compactInquiryStrings(buildInquiryKnownFacts(record)),
+		sensitive.TagToneAccent,
+		"home:ask:profile:meta",
+	)
+
+	chips := []sensitive.FieldRef{
+		{
+			Key:   "documentNum",
+			Asset: putInquiryInlineTextAsset(h, c, claims, firstNonEmptyInquiry(strings.TrimSpace(record.DocumentNum), "-"), "home:ask:profile:chip"),
+			Tone:  sensitive.TagToneIdentity,
+		},
+	}
+	if record.IsHighRisk {
+		chips = append(chips, sensitive.FieldRef{
+			Key:   "highRisk",
+			Asset: putInquiryInlineTextAsset(h, c, claims, "高风险预警", "home:ask:profile:chip"),
+			Tone:  sensitive.TagToneAlert,
+		})
+	}
+
+	return &sensitive.ListItem{
+		ID: "profile",
+		Fields: []sensitive.FieldRef{
+			{
+				Key:   "fullName",
+				Asset: putInquiryInlineTextAsset(h, c, claims, firstNonEmptyInquiry(strings.TrimSpace(record.FullName), "旅客画像"), "home:ask:profile:field"),
+			},
+		},
+		Chips: chips,
+		Facts: []sensitive.FactRef{
+			h.buildInlineFact(c, claims, "证件号", firstNonEmptyInquiry(strings.TrimSpace(record.DocumentNum), "-"), "home:ask:profile:fact"),
+			h.buildInlineFact(c, claims, "画像状态", "已载入", "home:ask:profile:fact"),
+		},
+		Meta: meta,
+		Notes: h.buildInlineTags(
+			c,
+			claims,
+			compactInquiryStrings([]string{
+				strings.TrimSpace(record.RiskReason),
+			}),
+			sensitive.TagToneMuted,
+			"home:ask:profile:note",
+		),
+		Flags: map[string]bool{
+			"isHighRisk": record.IsHighRisk,
+		},
+	}
+}
+
+func buildInquiryPassengerProfile(record profile.SearchProfileResponse) map[string]any {
+	profileData := cloneMap(record.ProfileData)
+	basicInfo := cloneMap(asInquiryRecord(profileData["basicInfo"]))
+	occupation := cloneMap(asInquiryRecord(profileData["occupation"]))
+	tripInfo := cloneMap(asInquiryRecord(profileData["tripInfo"]))
+
+	return map[string]any{
+		"passengerId":   strings.TrimSpace(record.DocumentNum),
+		"name":          strings.TrimSpace(record.FullName),
+		"gender":        firstNonEmptyInquiry(extractInquiryString(basicInfo["gender"])),
+		"nationality":   firstNonEmptyInquiry(extractInquiryString(basicInfo["nationality"])),
+		"occupation":    firstNonEmptyInquiry(extractInquiryString(occupation["occupation"])),
+		"monthlyIncome": firstNonEmptyInquiry(extractInquiryString(occupation["monthlyIncome"])),
+		"travelHistory": buildInquiryTravelHistory(record),
+		"documents": map[string]any{
+			"documentType":   nilIfEmpty(extractInquiryString(basicInfo["documentType"])),
+			"issuingRegion":  nilIfEmpty(extractInquiryString(basicInfo["issuingRegion"])),
+			"documentNumber": strings.TrimSpace(record.DocumentNum),
+			"birthDate":      nilIfEmpty(extractInquiryString(basicInfo["birthDate"])),
+			"pnr":            nilIfEmpty(extractInquiryString(tripInfo["pnr"])),
+			"flightNo":       nilIfEmpty(extractInquiryString(tripInfo["flightNo"])),
+			"seat":           nilIfEmpty(extractInquiryString(tripInfo["seat"])),
+		},
+	}
+}
+
+func buildInquiryTripProfile(record profile.SearchProfileResponse) map[string]any {
+	profileData := cloneMap(record.ProfileData)
+	tripInfo := cloneMap(asInquiryRecord(profileData["tripInfo"]))
+	occupation := cloneMap(asInquiryRecord(profileData["occupation"]))
+	return map[string]any{
+		"destination":        nilIfEmpty(extractInquiryString(tripInfo["destination"])),
+		"purposeDeclared":    nilIfEmpty(extractInquiryString(tripInfo["purposeDeclared"])),
+		"stayDays":           asInquiryInt(tripInfo["stayDays"]),
+		"ticketType":         nilIfEmpty(extractInquiryString(tripInfo["ticketType"])),
+		"returnTicketStatus": nilIfEmpty(extractInquiryString(tripInfo["returnTicketStatus"])),
+		"companions":         asInquiryStringSlice(tripInfo["companions"]),
+		"accommodation":      nilIfEmpty(extractInquiryString(tripInfo["accommodation"])),
+		"fundingSource":      nilIfEmpty(extractInquiryString(occupation["fundingSource"])),
+	}
+}
+
+func buildInquiryKnownFacts(record profile.SearchProfileResponse) []string {
+	profileData := cloneMap(record.ProfileData)
+	riskInfo := cloneMap(asInquiryRecord(profileData["riskInfo"]))
+	values := []string{}
+	if record.IsHighRisk {
+		values = append(values, "命中高风险名单")
+	}
+	if value := strings.TrimSpace(record.RiskReason); value != "" {
+		values = append(values, "高风险原因："+value)
+	}
+	for _, tag := range asInquiryStringSlice(riskInfo["riskTags"]) {
+		values = append(values, "风险标签："+tag)
+	}
+	if value := extractInquiryString(riskInfo["criminalRecord"]); value != "" {
+		values = append(values, "违法犯罪记录："+value)
+	}
+	if value := extractInquiryString(riskInfo["note"]); value != "" {
+		values = append(values, "备注："+value)
+	}
+	return compactInquiryStrings(values)
+}
+
+func buildInquiryTravelHistory(record profile.SearchProfileResponse) []string {
+	profileData := cloneMap(record.ProfileData)
+	travelHistory := cloneMap(asInquiryRecord(profileData["travelHistory"]))
+	values := []string{}
+	destinations := asInquiryStringSlice(travelHistory["recentDestinations"])
+	if len(destinations) > 0 {
+		values = append(values, "主要去往："+strings.Join(destinations, "、"))
+	}
+	if value := extractInquiryString(travelHistory["travelHistorySummary"]); value != "" {
+		values = append(values, value)
+	}
+	if value := extractInquiryString(travelHistory["lastDepartureDate"]); value != "" {
+		values = append(values, "最近出境："+value)
+	}
+	if value := extractInquiryString(travelHistory["abnormalOverstayRecord"]); value != "" {
+		values = append(values, "异常滞留："+value)
+	}
+	if value := extractInquiryString(travelHistory["visaRefusalRecord"]); value != "" {
+		values = append(values, "拒签/遣返："+value)
+	}
+	return compactInquiryStrings(values)
+}
+
 func (h *Handler) buildInlineFact(
 	c *gin.Context,
 	claims auth.Claims,
@@ -1428,6 +1622,69 @@ func optionalAsset(asset sensitive.AssetRef) *sensitive.AssetRef {
 		return nil
 	}
 	return &asset
+}
+
+func asInquiryRecord(value any) map[string]any {
+	record, ok := value.(map[string]any)
+	if !ok || len(record) == 0 {
+		return map[string]any{}
+	}
+	return record
+}
+
+func extractInquiryString(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	default:
+		return ""
+	}
+}
+
+func asInquiryStringSlice(value any) []string {
+	raw, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	result := make([]string, 0, len(raw))
+	for _, item := range raw {
+		if text := extractInquiryString(item); text != "" {
+			result = append(result, text)
+		}
+	}
+	return result
+}
+
+func asInquiryInt(value any) any {
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int32:
+		return int(typed)
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		if trimmed == "" {
+			return nil
+		}
+		parsed, err := strconv.Atoi(trimmed)
+		if err != nil {
+			return nil
+		}
+		return parsed
+	default:
+		return nil
+	}
+}
+
+func nilIfEmpty(value string) any {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return strings.TrimSpace(value)
 }
 
 func cloneMap(input map[string]any) map[string]any {
