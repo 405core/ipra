@@ -140,6 +140,16 @@ const archiveOperatorWorkId = ref('');
 const auditQuery = ref('');
 const auditActorWorkId = ref('');
 const touchInputHint = '单击正常输入，双击打开触控键盘';
+let profileReloadTimer: number | null = null;
+let watchlistReloadTimer: number | null = null;
+let userReloadTimer: number | null = null;
+let archiveReloadTimer: number | null = null;
+let auditReloadTimer: number | null = null;
+let profileLoadRequestId = 0;
+let watchlistLoadRequestId = 0;
+let userLoadRequestId = 0;
+let archiveLoadRequestId = 0;
+let auditLoadRequestId = 0;
 
 const protectedProfiles = ref<ProtectedListItem[]>([]);
 const protectedWatchlist = ref<ProtectedListItem[]>([]);
@@ -245,21 +255,79 @@ const archiveJudgementOptions: FilterOption[] = [
   { value: 'clear', label: '无异常' },
 ];
 const filteredAuditLogs = computed(() => protectedAuditLogs.value);
-const filteredProtectedProfiles = computed(() => protectedProfiles.value);
-const filteredProtectedWatchlist = computed(() => protectedWatchlist.value);
-const filteredProtectedUsers = computed(() => protectedUsers.value);
-const filteredArchives = computed(() =>
-  archives.value.filter((item) =>
-    matchesSearch(
-      [
-        item.archiveCode,
-        item.sessionId,
-        formatArchiveJudgementLabel(item.finalJudgement),
-      ],
-      archiveQuery.value,
-    ),
-  ),
+const filteredProtectedProfiles = computed(() =>
+  protectedProfiles.value.filter((item) => {
+    const documentTypeField = findProtectedField(item.chips, 'documentType');
+    const genderField = findProtectedField(item.chips, 'gender');
+    const nationalityField = findProtectedField(item.fields, 'nationality');
+
+    if (
+      profileFilters.value.documentType &&
+      !protectedAssetTextMatches(
+        documentTypeField,
+        profileFilters.value.documentType,
+        formatDocumentTypeLabel(profileFilters.value.documentType),
+      )
+    ) {
+      return false;
+    }
+
+    if (
+      profileFilters.value.gender &&
+      !protectedAssetTextMatches(
+        genderField,
+        profileFilters.value.gender,
+        formatGenderLabel(profileFilters.value.gender),
+      )
+    ) {
+      return false;
+    }
+
+    if (
+      profileFilters.value.nationality &&
+      !protectedAssetTextMatches(
+        nationalityField,
+        profileFilters.value.nationality,
+      )
+    ) {
+      return false;
+    }
+
+    return true;
+  }),
 );
+const filteredProtectedWatchlist = computed(() => protectedWatchlist.value);
+const filteredProtectedUsers = computed(() =>
+  protectedUsers.value.filter((item) => {
+    const roleField = findProtectedChip(item, 'role');
+    const statusField = findProtectedChip(item, 'status');
+
+    if (
+      userFilters.value.role &&
+      !protectedAssetTextMatches(
+        roleField,
+        userFilters.value.role,
+        formatUserRoleLabel(userFilters.value.role),
+      )
+    ) {
+      return false;
+    }
+
+    if (
+      userFilters.value.status &&
+      !protectedAssetTextMatches(
+        statusField,
+        userFilters.value.status,
+        formatUserStatusLabel(userFilters.value.status),
+      )
+    ) {
+      return false;
+    }
+
+    return true;
+  }),
+);
+const filteredArchives = computed(() => archives.value);
 const selectedProfileDocumentTypeLabel = computed(() =>
   describeFilterLabel(
     '证件类型',
@@ -340,6 +408,11 @@ useProtectedPage('/admin/home');
 onBeforeUnmount(() => {
   revokeArchiveVideoUrls();
   stopVideoWatermarkTimer();
+  clearScheduledReload(profileReloadTimer);
+  clearScheduledReload(watchlistReloadTimer);
+  clearScheduledReload(userReloadTimer);
+  clearScheduledReload(archiveReloadTimer);
+  clearScheduledReload(auditReloadTimer);
   if (typeof document !== 'undefined') {
     document.removeEventListener('click', handleDocumentClick);
     document.removeEventListener('keydown', handleDocumentKeydown);
@@ -354,6 +427,26 @@ watch(isAnyFormVisible, (visible) => {
   document.body.style.overflow = visible ? 'hidden' : '';
 });
 
+watch(profileQuery, () => {
+  scheduleProfilesReload();
+});
+
+watch(watchlistQuery, () => {
+  scheduleWatchlistReload();
+});
+
+watch(userQuery, () => {
+  scheduleUsersReload();
+});
+
+watch([archiveQuery, archiveDocumentNum, archiveOperatorWorkId], () => {
+  scheduleArchivesReload();
+});
+
+watch([auditQuery, auditActorWorkId], () => {
+  scheduleAuditLogsReload();
+});
+
 async function refreshAll() {
   await Promise.all([
     loadProfiles(),
@@ -365,47 +458,183 @@ async function refreshAll() {
   ]);
 }
 
+function clearScheduledReload(timerId: number | null) {
+  if (timerId != null && typeof window !== 'undefined') {
+    window.clearTimeout(timerId);
+  }
+}
+
+function scheduleProfilesReload(immediate = false) {
+  clearScheduledReload(profileReloadTimer);
+  if (immediate || typeof window === 'undefined') {
+    profileReloadTimer = null;
+    void loadProfiles();
+    return;
+  }
+  profileReloadTimer = window.setTimeout(() => {
+    profileReloadTimer = null;
+    void loadProfiles();
+  }, 240);
+}
+
+function scheduleWatchlistReload(immediate = false) {
+  clearScheduledReload(watchlistReloadTimer);
+  if (immediate || typeof window === 'undefined') {
+    watchlistReloadTimer = null;
+    void loadWatchlist();
+    return;
+  }
+  watchlistReloadTimer = window.setTimeout(() => {
+    watchlistReloadTimer = null;
+    void loadWatchlist();
+  }, 240);
+}
+
+function scheduleUsersReload(immediate = false) {
+  clearScheduledReload(userReloadTimer);
+  if (immediate || typeof window === 'undefined') {
+    userReloadTimer = null;
+    void loadUsers();
+    return;
+  }
+  userReloadTimer = window.setTimeout(() => {
+    userReloadTimer = null;
+    void loadUsers();
+  }, 240);
+}
+
+function scheduleArchivesReload(immediate = false) {
+  clearScheduledReload(archiveReloadTimer);
+  if (immediate || typeof window === 'undefined') {
+    archiveReloadTimer = null;
+    void loadArchives();
+    return;
+  }
+  archiveReloadTimer = window.setTimeout(() => {
+    archiveReloadTimer = null;
+    void loadArchives();
+  }, 240);
+}
+
+function scheduleAuditLogsReload(immediate = false) {
+  clearScheduledReload(auditReloadTimer);
+  if (immediate || typeof window === 'undefined') {
+    auditReloadTimer = null;
+    void loadAuditLogs();
+    return;
+  }
+  auditReloadTimer = window.setTimeout(() => {
+    auditReloadTimer = null;
+    void loadAuditLogs();
+  }, 240);
+}
+
 async function loadProfiles() {
-  const protectedResult = await listAdminProfilesProtected(profileQuery.value);
-  protectedProfiles.value = protectedResult.items;
-  statusMessages.value.profiles = `已加载基础画像 ${protectedResult.total} 条。`;
+  const requestId = ++profileLoadRequestId;
+  try {
+    const protectedResult = await listAdminProfilesProtected(profileQuery.value);
+    if (requestId !== profileLoadRequestId) {
+      return;
+    }
+    protectedProfiles.value = protectedResult.items;
+    statusMessages.value.profiles = `已加载基础画像 ${protectedResult.total} 条。`;
+  } catch (error) {
+    if (requestId !== profileLoadRequestId) {
+      return;
+    }
+    protectedProfiles.value = [];
+    statusMessages.value.profiles =
+      error instanceof Error ? error.message : '查询基础画像失败。';
+  }
 }
 
 async function loadWatchlist() {
-  const protectedResult = await listAdminWatchlistProtected(
-    watchlistQuery.value,
-  );
-  protectedWatchlist.value = protectedResult.items;
-  statusMessages.value.watchlist = `已加载高风险名单 ${protectedResult.total} 条。`;
+  const requestId = ++watchlistLoadRequestId;
+  try {
+    const protectedResult = await listAdminWatchlistProtected(
+      watchlistQuery.value,
+    );
+    if (requestId !== watchlistLoadRequestId) {
+      return;
+    }
+    protectedWatchlist.value = protectedResult.items;
+    statusMessages.value.watchlist = `已加载高风险名单 ${protectedResult.total} 条。`;
+  } catch (error) {
+    if (requestId !== watchlistLoadRequestId) {
+      return;
+    }
+    protectedWatchlist.value = [];
+    statusMessages.value.watchlist =
+      error instanceof Error ? error.message : '查询高风险名单失败。';
+  }
 }
 
 async function loadUsers() {
-  const protectedResult = await listAdminUsersProtected(userQuery.value);
-  protectedUsers.value = protectedResult.items;
-  statusMessages.value.users = `已加载用户 ${protectedResult.total} 条。`;
+  const requestId = ++userLoadRequestId;
+  try {
+    const protectedResult = await listAdminUsersProtected(userQuery.value);
+    if (requestId !== userLoadRequestId) {
+      return;
+    }
+    protectedUsers.value = protectedResult.items;
+    statusMessages.value.users = `已加载用户 ${protectedResult.total} 条。`;
+  } catch (error) {
+    if (requestId !== userLoadRequestId) {
+      return;
+    }
+    protectedUsers.value = [];
+    statusMessages.value.users =
+      error instanceof Error ? error.message : '查询用户失败。';
+  }
 }
 
 async function loadArchives() {
-  const result = await listInquiryArchives({
-    query: archiveQuery.value,
-    documentNum: archiveDocumentNum.value,
-    operatorWorkId: archiveOperatorWorkId.value,
-    judgement: archiveFilters.value.judgement,
-    limit: 500,
-  });
-  archives.value = result.items;
-  statusMessages.value.archives = `已加载问询归档 ${result.total} 条。`;
+  const requestId = ++archiveLoadRequestId;
+  try {
+    const result = await listInquiryArchives({
+      query: archiveQuery.value,
+      documentNum: archiveDocumentNum.value,
+      operatorWorkId: archiveOperatorWorkId.value,
+      judgement: archiveFilters.value.judgement,
+      limit: 500,
+    });
+    if (requestId !== archiveLoadRequestId) {
+      return;
+    }
+    archives.value = result.items;
+    statusMessages.value.archives = `已加载问询归档 ${result.total} 条。`;
+  } catch (error) {
+    if (requestId !== archiveLoadRequestId) {
+      return;
+    }
+    archives.value = [];
+    statusMessages.value.archives =
+      error instanceof Error ? error.message : '查询问询归档失败。';
+  }
 }
 
 async function loadAuditLogs() {
-  const result = await listAdminAuditLogsProtected({
-    query: auditQuery.value,
-    actorWorkId: auditActorWorkId.value,
-    result: auditFilters.value.result,
-    limit: 500,
-  });
-  protectedAuditLogs.value = result.items;
-  statusMessages.value.audit = `已加载审计日志 ${result.total} 条。`;
+  const requestId = ++auditLoadRequestId;
+  try {
+    const result = await listAdminAuditLogsProtected({
+      query: auditQuery.value,
+      actorWorkId: auditActorWorkId.value,
+      result: auditFilters.value.result,
+      limit: 500,
+    });
+    if (requestId !== auditLoadRequestId) {
+      return;
+    }
+    protectedAuditLogs.value = result.items;
+    statusMessages.value.audit = `已加载审计日志 ${result.total} 条。`;
+  } catch (error) {
+    if (requestId !== auditLoadRequestId) {
+      return;
+    }
+    protectedAuditLogs.value = [];
+    statusMessages.value.audit =
+      error instanceof Error ? error.message : '查询审计日志失败。';
+  }
 }
 
 async function loadInquirySettings() {
@@ -807,6 +1036,7 @@ function applyArchiveJudgementFilter(value: string) {
 function applyAuditResultFilter(value: string) {
   auditFilters.value.result = value;
   openFilterPicker.value = null;
+  scheduleAuditLogsReload(true);
 }
 
 async function openArchiveDetail(item: InquiryArchiveListItem) {
@@ -899,6 +1129,43 @@ async function openFormFieldInput(options: {
   });
 
   if (nextValue == null) {
+    return;
+  }
+
+  options.assign(nextValue);
+}
+
+async function openToolbarSearchInput(options: {
+  title: string;
+  description?: string;
+  placeholder: string;
+  value: string;
+  inputMode?:
+    | 'text'
+    | 'search'
+    | 'tel'
+    | 'url'
+    | 'email'
+    | 'numeric'
+    | 'decimal';
+  assign: (value: string) => void;
+  reload?: () => void;
+}) {
+  const nextValue = await openTouchInput({
+    title: options.title,
+    description: options.description,
+    placeholder: options.placeholder,
+    value: options.value,
+    inputMode: options.inputMode ?? 'search',
+    confirmText: '确认筛选',
+  });
+
+  if (nextValue == null) {
+    return;
+  }
+
+  if (nextValue === options.value) {
+    options.reload?.();
     return;
   }
 
@@ -1338,6 +1605,30 @@ function protectedChipToneClass(tone?: string) {
   }
 }
 
+function protectedAssetTextMatches(
+  field: ProtectedFieldRef | null | undefined,
+  ...keywords: string[]
+) {
+  if (!field?.asset) {
+    return false;
+  }
+
+  const haystack = [
+    field.key,
+    field.asset.context,
+    field.asset.id,
+    field.asset.url,
+  ]
+    .map((value) => String(value ?? '').trim().toLowerCase())
+    .filter(Boolean)
+    .join(' ');
+
+  return keywords
+    .map((keyword) => keyword.trim().toLowerCase())
+    .filter(Boolean)
+    .some((keyword) => haystack.includes(keyword));
+}
+
 function asArray(value: unknown) {
   return Array.isArray(value) ? value : [];
 }
@@ -1390,10 +1681,21 @@ function stringifyDetail(value: unknown) {
           <div class="admin-toolbar__search-block">
             <input
               v-model="profileQuery"
+              :title="touchInputHint"
               class="admin-toolbar__search-input"
               type="text"
               inputmode="search"
               placeholder="输入要筛选的内容"
+              @dblclick.stop.prevent="
+                openToolbarSearchInput({
+                  title: '筛选基础画像',
+                  description: '输入后将立即按关键字重新加载基础画像。',
+                  placeholder: '输入要筛选的内容',
+                  value: profileQuery,
+                  assign: (value) => (profileQuery = value),
+                  reload: () => scheduleProfilesReload(true),
+                })
+              "
             />
           </div>
           <div class="admin-toolbar__actions">
@@ -1622,10 +1924,21 @@ function stringifyDetail(value: unknown) {
           <div class="admin-toolbar__search-block">
             <input
               v-model="watchlistQuery"
+              :title="touchInputHint"
               class="admin-toolbar__search-input"
               type="text"
               inputmode="search"
               placeholder="输入要筛选的内容"
+              @dblclick.stop.prevent="
+                openToolbarSearchInput({
+                  title: '筛选高风险名单',
+                  description: '输入后将立即按关键字重新加载高风险名单。',
+                  placeholder: '输入要筛选的内容',
+                  value: watchlistQuery,
+                  assign: (value) => (watchlistQuery = value),
+                  reload: () => scheduleWatchlistReload(true),
+                })
+              "
             />
           </div>
           <div class="admin-toolbar__actions">
@@ -1731,29 +2044,62 @@ function stringifyDetail(value: unknown) {
           <div class="admin-toolbar__search-block">
             <input
               v-model="archiveQuery"
+              :title="touchInputHint"
               class="admin-toolbar__search-input"
               type="text"
               inputmode="search"
               placeholder="输入归档编号、姓名、证件号或会话 ID"
               @keyup.enter="loadArchives"
+              @dblclick.stop.prevent="
+                openToolbarSearchInput({
+                  title: '筛选问询归档',
+                  description: '输入后将立即按关键字重新加载问询归档。',
+                  placeholder: '输入归档编号、姓名、证件号或会话 ID',
+                  value: archiveQuery,
+                  assign: (value) => (archiveQuery = value),
+                  reload: () => scheduleArchivesReload(true),
+                })
+              "
             />
           </div>
           <div class="admin-toolbar__actions">
             <input
               v-model="archiveDocumentNum"
+              :title="touchInputHint"
               class="admin-toolbar__search-input admin-toolbar__search-input--compact"
               type="text"
               inputmode="search"
               placeholder="按证件号"
               @keyup.enter="loadArchives"
+              @dblclick.stop.prevent="
+                openToolbarSearchInput({
+                  title: '按证件号筛选归档',
+                  description: '输入后将立即按证件号重新加载问询归档。',
+                  placeholder: '按证件号',
+                  value: archiveDocumentNum,
+                  assign: (value) => (archiveDocumentNum = value),
+                  reload: () => scheduleArchivesReload(true),
+                })
+              "
             />
             <input
               v-model="archiveOperatorWorkId"
+              :title="touchInputHint"
               class="admin-toolbar__search-input admin-toolbar__search-input--compact"
               type="text"
               inputmode="search"
               placeholder="按工号"
               @keyup.enter="loadArchives"
+              @dblclick.stop.prevent="
+                openToolbarSearchInput({
+                  title: '按工号筛选归档',
+                  description: '输入后将立即按工号重新加载问询归档。',
+                  placeholder: '按工号',
+                  value: archiveOperatorWorkId,
+                  assign: (value) => (archiveOperatorWorkId = value),
+                  reload: () => scheduleArchivesReload(true),
+                })
+              "
             />
             <div class="filter-picker">
               <button
@@ -1881,19 +2227,41 @@ function stringifyDetail(value: unknown) {
             <div class="admin-toolbar__search-block">
               <input
                 v-model="auditQuery"
+                :title="touchInputHint"
                 class="admin-toolbar__search-input"
                 type="text"
                 inputmode="search"
                 placeholder="输入操作人、动作、资源或路径"
+                @dblclick.stop.prevent="
+                  openToolbarSearchInput({
+                    title: '筛选审计日志',
+                    description: '输入后将立即按关键字重新加载审计日志。',
+                    placeholder: '输入操作人、动作、资源或路径',
+                    value: auditQuery,
+                    assign: (value) => (auditQuery = value),
+                    reload: () => scheduleAuditLogsReload(true),
+                  })
+                "
               />
             </div>
             <div class="admin-toolbar__actions">
               <input
                 v-model="auditActorWorkId"
+                :title="touchInputHint"
                 class="admin-toolbar__search-input admin-toolbar__search-input--compact"
                 type="text"
                 inputmode="search"
                 placeholder="按工号筛选"
+                @dblclick.stop.prevent="
+                  openToolbarSearchInput({
+                    title: '按工号筛选审计日志',
+                    description: '输入后将立即按工号重新加载审计日志。',
+                    placeholder: '按工号筛选',
+                    value: auditActorWorkId,
+                    assign: (value) => (auditActorWorkId = value),
+                    reload: () => scheduleAuditLogsReload(true),
+                  })
+                "
               />
               <div class="filter-picker">
                 <button
@@ -2027,11 +2395,22 @@ function stringifyDetail(value: unknown) {
                 <span>轮次上限</span>
                 <input
                   v-model.number="inquiryMaxRoundsInput"
+                  :title="touchInputHint"
                   type="number"
                   min="1"
                   max="10"
                   step="1"
                   inputmode="numeric"
+                  @dblclick.stop.prevent="
+                    openFormFieldInput({
+                      title: '输入轮次上限',
+                      placeholder: '输入 1 到 10 之间的整数',
+                      value: String(inquiryMaxRoundsInput),
+                      inputMode: 'numeric',
+                      assign: (value) =>
+                        (inquiryMaxRoundsInput = Number(value) || 0),
+                    })
+                  "
                 />
               </label>
             </div>
@@ -2055,10 +2434,21 @@ function stringifyDetail(value: unknown) {
             <div class="admin-toolbar__search-block">
               <input
                 v-model="userQuery"
+                :title="touchInputHint"
                 class="admin-toolbar__search-input"
                 type="text"
                 inputmode="search"
                 placeholder="输入要筛选的内容"
+                @dblclick.stop.prevent="
+                  openToolbarSearchInput({
+                    title: '筛选用户',
+                    description: '输入后将立即按关键字重新加载用户列表。',
+                    placeholder: '输入要筛选的内容',
+                    value: userQuery,
+                    assign: (value) => (userQuery = value),
+                    reload: () => scheduleUsersReload(true),
+                  })
+                "
               />
             </div>
             <div class="admin-toolbar__actions">

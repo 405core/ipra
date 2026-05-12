@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
+import { openTouchInput } from '../app/touch-input';
 import { loginWithCredentials, resolveRoleHome, saveAuthSession } from '../auth';
 
 type FieldKey = 'workId' | 'password';
@@ -14,6 +15,7 @@ const feedback = ref('请选择输入框后使用触控键盘，或直接键入�
 const feedbackTone = ref<FeedbackTone>('neutral');
 const isSubmitting = ref(false);
 const router = useRouter();
+const touchInputHint = '单击正常输入，双击打开触控键盘';
 
 const numberKeys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
 const topLetterKeys = ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'];
@@ -68,6 +70,31 @@ function backspace() {
 function clearActiveField() {
   updateActiveField(() => '');
   setFeedback(`已清空${activeFieldLabel.value}输入。`);
+}
+
+async function openLoginFieldKeyboard(field: FieldKey) {
+  focusField(field);
+  const currentValue = field === 'workId' ? workId.value : password.value;
+  const value = await openTouchInput({
+    title: field === 'workId' ? '输入工号' : '输入密码',
+    placeholder: field === 'workId' ? '输入登录工号' : '输入通行密码',
+    value: currentValue,
+    inputMode: 'text',
+    masked: field === 'password',
+    confirmText: '确认输入',
+  });
+
+  if (value == null) {
+    return;
+  }
+
+  if (field === 'workId') {
+    workId.value = value;
+  } else {
+    password.value = value;
+  }
+
+  setFeedback(`已更新${field === 'workId' ? '工号' : '密码'}输入。`);
 }
 
 function insertSpace() {
@@ -127,11 +154,13 @@ async function submitLogin() {
               <span class="field-card__icon">AC</span>
               <input
                 v-model="workId"
+                :title="touchInputHint"
                 type="text"
                 inputmode="text"
                 autocomplete="username"
                 placeholder="输入登录工号"
                 @focus="focusField('workId')"
+                @dblclick.stop.prevent="openLoginFieldKeyboard('workId')"
               />
             </div>
           </label>
@@ -145,10 +174,12 @@ async function submitLogin() {
               <span class="field-card__icon">PW</span>
               <input
                 v-model="password"
+                :title="touchInputHint"
                 type="password"
                 autocomplete="current-password"
                 placeholder="输入通行密码"
                 @focus="focusField('password')"
+                @dblclick.stop.prevent="openLoginFieldKeyboard('password')"
               />
             </div>
           </label>

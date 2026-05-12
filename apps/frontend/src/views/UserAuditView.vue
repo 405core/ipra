@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import SensitiveAssetImage from '../app/SensitiveAssetImage.vue';
 import {
   getProtectedAuditLogDetail,
   listProtectedAuditLogs,
 } from '../app/audit-service';
+import { openTouchInput } from '../app/touch-input';
 import { useProtectedPage } from '../app/use-protected-page';
 import type {
   ProtectedDetailResponse,
@@ -24,15 +25,9 @@ const isLoading = ref(false);
 const selectedLog = ref<ProtectedDetailResponse | null>(null);
 const detailLoading = ref(false);
 const detailError = ref('');
-
-const filteredLogs = computed(() => {
-  const keyword = query.value.trim().toLowerCase();
-  if (!keyword) {
-    return logs.value;
-  }
-
-  return logs.value.filter((item) => item.id.toLowerCase().includes(keyword));
-});
+const touchInputHint = '单击正常输入，双击打开触控键盘';
+let logReloadTimer: number | null = null;
+let logLoadRequestId = 0;
 
 onMounted(() => {
   void loadLogs();
@@ -40,22 +35,84 @@ onMounted(() => {
 
 useProtectedPage('/home/log');
 
+onBeforeUnmount(() => {
+  if (logReloadTimer != null && typeof window !== 'undefined') {
+    window.clearTimeout(logReloadTimer);
+  }
+});
+
+watch(query, () => {
+  scheduleLogsReload();
+});
+
 async function loadLogs() {
+  const requestId = ++logLoadRequestId;
   isLoading.value = true;
   try {
-    const result = await listProtectedAuditLogs({ limit: 200 });
+    const result = await listProtectedAuditLogs({
+      query: query.value,
+      limit: 200,
+    });
+    if (requestId !== logLoadRequestId) {
+      return;
+    }
     logs.value = result.items;
     total.value = result.total;
     statusMessage.value = `已加载审计日志 ${result.total} 条`;
   } catch (error) {
+    if (requestId !== logLoadRequestId) {
+      return;
+    }
     logs.value = [];
     total.value = 0;
     statusMessage.value =
       error instanceof Error ? error.message : '查询审计日志失败';
   } finally {
-    isLoading.value = false;
+    if (requestId === logLoadRequestId) {
+      isLoading.value = false;
+    }
   }
 }
+
+function scheduleLogsReload(immediate = false) {
+  if (logReloadTimer != null && typeof window !== 'undefined') {
+    window.clearTimeout(logReloadTimer);
+  }
+
+  if (immediate || typeof window === 'undefined') {
+    logReloadTimer = null;
+    void loadLogs();
+    return;
+  }
+
+  logReloadTimer = window.setTimeout(() => {
+    logReloadTimer = null;
+    void loadLogs();
+  }, 240);
+}
+
+async function openAuditFilterKeyboard() {
+  const value = await openTouchInput({
+    title: '筛选审计日志',
+    description: '输入后将立即按操作、资源或路径重新加载审计日志。',
+    placeholder: '筛选操作、资源、路径',
+    value: query.value,
+    inputMode: 'search',
+    confirmText: '确认筛选',
+  });
+
+  if (value == null) {
+    return;
+  }
+
+  if (value === query.value) {
+    await loadLogs();
+    return;
+  }
+
+  query.value = value;
+}
+
 async function openLogDetail(item: ProtectedListItem) {
   detailLoading.value = true;
   detailError.value = '';
@@ -118,12 +175,14 @@ function protectedNotes(item: ProtectedListItem) {
         <template v-if="activeTab === 'log'">
           <input
             v-model="query"
+            :title="touchInputHint"
             class="audit-topbar__input"
             type="text"
             inputmode="search"
             placeholder="筛选操作、资源、路径"
+            @dblclick.stop.prevent="openAuditFilterKeyboard"
           />
-          <span class="audit-topbar__meta">当前展示 {{ filteredLogs.length }} / {{ total }} 条</span>
+          <span class="audit-topbar__meta">当前展示 {{ logs.length }} / {{ total }} 条</span>
           <button type="button" class="audit-refresh" :disabled="isLoading" @click="loadLogs">
             {{ isLoading ? '刷新中...' : '刷新' }}
           </button>
@@ -139,7 +198,7 @@ function protectedNotes(item: ProtectedListItem) {
 
       <section v-else class="audit-card">
         <div class="audit-list">
-          <article v-for="item in filteredLogs" :key="item.id" class="audit-item">
+          <article v-for="item in logs" :key="item.id" class="audit-item">
             <div class="audit-item__head">
               <div class="audit-item__title">
                 <strong>
@@ -216,7 +275,7 @@ function protectedNotes(item: ProtectedListItem) {
             </div>
           </article>
 
-          <div v-if="!filteredLogs.length" class="audit-empty">
+          <div v-if="!logs.length" class="audit-empty">
             <strong>当前没有可显示的审计日志</strong>
             <span>{{ statusMessage }}</span>
           </div>
