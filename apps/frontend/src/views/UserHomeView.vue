@@ -614,6 +614,7 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
                   <SensitiveAssetImage
                     :src="record.asset.url"
                     alt="检索结果敏感图片"
+                    eager
                   />
                 </div>
 
@@ -1059,12 +1060,16 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 
 .results-list {
   display: grid;
-  gap: 14px;
+  gap: 12px;
   height: 100%;
-  margin-top: 16px;
+  margin-top: 12px;
   min-height: 0;
   align-content: start;
-  overflow: auto;
+  padding-right: 6px;
+  padding-bottom: 8px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .surface-card--results .empty-state {
@@ -1078,9 +1083,9 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 .result-strip {
   position: relative;
   display: flex;
-  align-items: stretch;
-  gap: 18px;
-  padding: 16px 18px 16px 24px;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px 16px 16px 20px;
   border-radius: 24px;
   background: rgba(255, 255, 255, 0.94);
   border: 1px solid rgba(157, 189, 202, 0.36);
@@ -1102,114 +1107,35 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 
 .result-strip__content {
   min-width: 0;
-  flex: 1 1 auto;
-  display: grid;
-  gap: 10px;
+  display: block;
+  position: relative;
+  z-index: 1;
 }
 
-.result-strip__headline {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 10px;
+.result-strip :deep(.sensitive-image) {
+  min-height: 0;
+  pointer-events: none;
+  border-radius: 20px;
 }
 
-.result-strip__headline strong {
-  color: #15252b;
+.result-strip :deep(.sensitive-image img) {
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+  object-position: top center;
+  vertical-align: top;
 }
 
-.result-strip__pill,
-.result-strip__identity,
-.result-strip__tag {
-  display: inline-flex;
-  align-items: center;
-  min-height: 30px;
-  padding: 0 10px;
-  border-radius: 999px;
-  font-size: 0.78rem;
-  font-weight: 700;
-}
-
-.result-strip__pill {
-  background: rgba(255, 255, 255, 0.94);
-  border: 1px solid rgba(157, 189, 202, 0.48);
-  color: #43646e;
-}
-
-.result-strip__pill.is-imported {
-  background: rgba(11, 114, 136, 0.12);
-  border-color: rgba(11, 114, 136, 0.18);
-  color: #09596c;
-}
-
-.result-strip__pill.is-high-risk {
-  background: rgba(199, 92, 71, 0.12);
-  border-color: rgba(199, 92, 71, 0.16);
-  color: #a24734;
-}
-
-.result-strip__identity {
-  background: rgba(217, 238, 244, 0.92);
-  color: #09596c;
-}
-
-.result-strip__fact-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 10px;
-}
-
-.result-strip__fact {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 34px;
-  padding: 0 10px;
-  border-radius: 12px;
-  background: #fbfeff;
-  border: 1px solid rgba(157, 189, 202, 0.36);
-}
-
-.result-strip__fact-label {
-  color: #6c8790;
-  font-size: 0.74rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-}
-
-.result-strip__fact-value {
-  color: #15252b;
-  font-size: 0.84rem;
-  font-weight: 700;
-}
-
-.result-strip__summary {
-  margin: 0;
-  color: #5b7179;
-  line-height: 1.6;
-}
-
-.result-strip__tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.result-strip__tag {
-  background: rgba(11, 114, 136, 0.12);
-  color: #09596c;
-}
-
-.result-strip__tag--muted {
-  background: rgba(91, 113, 121, 0.12);
-  color: #5b7179;
+.result-strip :deep(.sensitive-image__placeholder) {
+  width: 100%;
+  min-height: 280px;
 }
 
 .result-strip__actions {
-  display: flex;
-  flex: 0 0 240px;
-  width: 240px;
-  align-items: stretch;
+  display: block;
+  width: 100%;
+  position: relative;
+  z-index: 2;
 }
 
 .result-strip__actions .primary-action {
@@ -1217,8 +1143,8 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
   align-items: center;
   justify-content: center;
   width: 100%;
-  min-height: 100%;
-  padding: 18px 20px;
+  min-height: 52px;
+  padding: 14px 20px;
   border-radius: 18px;
   font-size: 1.04rem;
   letter-spacing: 0.04em;
@@ -1398,6 +1324,10 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 
   .result-strip__actions {
     width: 100%;
+  }
+
+  .result-strip :deep(.sensitive-image__placeholder) {
+    min-height: 260px;
   }
 
   .search-box {

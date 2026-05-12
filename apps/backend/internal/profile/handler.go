@@ -491,7 +491,6 @@ func (h *Handler) putProfileAsset(
 		tags = append(tags, riskTags...)
 
 		if summaryLines := compactStrings([]string{
-			formatProfileFieldLabel("证件号码", profile.DocumentNum),
 			formatProfileFieldLabel("单位", company),
 		}); len(summaryLines) > 0 {
 			sections = append(sections, sensitive.Section{
