@@ -17,6 +17,7 @@ import (
 	"ipra/backend/internal/auth"
 	"ipra/backend/internal/config"
 	dbschema "ipra/backend/internal/database"
+	"ipra/backend/internal/displaytime"
 	"ipra/backend/internal/inquiry"
 	"ipra/backend/internal/sensitive"
 )
@@ -1222,10 +1223,7 @@ func formatDuration(seconds int) string {
 }
 
 func formatTime(value time.Time) string {
-	if value.IsZero() {
-		return "-"
-	}
-	return value.Local().Format("2006-01-02 15:04:05")
+	return displaytime.Format(value, "2006-01-02 15:04:05")
 }
 
 func formatArchiveLine(label string, value string) string {

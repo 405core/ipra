@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	dbschema "ipra/backend/internal/database"
+	"ipra/backend/internal/displaytime"
 	"ipra/backend/internal/sensitive"
 )
 
@@ -195,7 +196,7 @@ func (h *Handler) buildProtectedUserItem(
 			{Label: "状态", Value: status},
 		},
 		Footer: []string{
-			"更新时间 " + user.UpdatedAt.Local().Format("2006-01-02 15:04:05"),
+			"更新时间 " + displaytime.Format(user.UpdatedAt, "2006-01-02 15:04:05"),
 		},
 	}
 
@@ -253,7 +254,7 @@ func (h *Handler) buildProtectedUserItem(
 		Meta: []sensitive.FieldRef{
 			{
 				Key:   "updatedAt",
-				Asset: inlineText("更新时间 " + user.UpdatedAt.Local().Format("2006-01-02 15:04:05")),
+				Asset: inlineText("更新时间 " + displaytime.Format(user.UpdatedAt, "2006-01-02 15:04:05")),
 				Tone:  sensitive.TagToneMuted,
 			},
 		},

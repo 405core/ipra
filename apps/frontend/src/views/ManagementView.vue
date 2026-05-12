@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
+import { formatChinaDateTime } from '../app/display-time';
 import {
   clearAuthSession,
   loadAuthSession,
@@ -1288,19 +1289,7 @@ function formatDuration(seconds: number) {
 }
 
 function formatAuditTime(value: string) {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-
-  return parsed.toLocaleString('zh-CN', {
-    hour12: false,
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
+  return formatChinaDateTime(value);
 }
 
 function formatArchiveTime(value: string) {

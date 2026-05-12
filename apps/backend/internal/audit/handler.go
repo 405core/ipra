@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	dbschema "ipra/backend/internal/database"
+	"ipra/backend/internal/displaytime"
 	"ipra/backend/internal/sensitive"
 )
 
@@ -474,10 +475,7 @@ func stringifyAuditDetail(value json.RawMessage) string {
 }
 
 func formatAuditTime(value time.Time) string {
-	if value.IsZero() {
-		return "-"
-	}
-	return value.Local().Format("2006-01-02 15:04:05")
+	return displaytime.Format(value, "2006-01-02 15:04:05")
 }
 
 func formatAuditResult(value string) string {

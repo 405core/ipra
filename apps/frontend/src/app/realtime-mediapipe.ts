@@ -9,6 +9,7 @@ import {
   type NormalizedLandmark,
   type PoseLandmarkerResult,
 } from '@mediapipe/tasks-vision';
+import { formatChinaTime } from './display-time';
 
 export type LandmarkerKind = 'face' | 'hand' | 'pose';
 export type LandmarkerState = 'idle' | 'loading' | 'ready' | 'failed' | 'unavailable';
@@ -986,9 +987,7 @@ function cloneState(state: RealtimeDetectionState): RealtimeDetectionState {
 }
 
 function formatClockTime(timestamp: number) {
-  return new Date(timestamp).toLocaleTimeString('zh-CN', {
-    hour12: false,
-  });
+  return formatChinaTime(timestamp);
 }
 
 function resolveInitializationError(error: unknown) {

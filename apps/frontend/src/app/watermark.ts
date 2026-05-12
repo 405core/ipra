@@ -1,4 +1,5 @@
 import type { AuthSession } from '../auth';
+import { formatChinaDateTime } from './display-time';
 
 export const WATERMARK_REFRESH_INTERVAL_MS = 1000;
 
@@ -89,20 +90,8 @@ export const VIDEO_ARCHIVE_WATERMARK_TILE_LAYOUTS: WatermarkTileLayout[] = [
   },
 ];
 
-const WATERMARK_TIMESTAMP_FORMAT: Intl.DateTimeFormatOptions = {
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
-  second: '2-digit',
-  hour12: false,
-};
-
 export function formatWatermarkTimestamp(timestamp: number) {
-  return new Intl.DateTimeFormat('zh-CN', WATERMARK_TIMESTAMP_FORMAT).format(
-    timestamp,
-  );
+  return formatChinaDateTime(timestamp);
 }
 
 export function shouldDisplayWatermark(
