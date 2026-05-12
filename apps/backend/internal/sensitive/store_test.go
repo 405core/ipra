@@ -68,7 +68,7 @@ func TestBuildWatermarkTextMatchesFrontendRule(t *testing.T) {
 		Timestamp: time.Date(2026, 5, 11, 12, 0, 0, 0, time.Local),
 	})
 
-	want := "IPRA · 页面 智能旅客风险评估系统 · 姓名 Alice · 工号 EMP-0001 · 时间 2026/05/11 12:00:00"
+	want := "IPRA · 页面 智能旅客风险评估系统 · 姓名 Alice · 工号 EMP-0001 · 时间 2026/05/11 20:00:00"
 	if text != want {
 		t.Fatalf("watermark text = %q, want %q", text, want)
 	}

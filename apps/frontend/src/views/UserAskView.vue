@@ -8,6 +8,7 @@ import {
   watch,
 } from 'vue';
 import SensitiveAssetImage from '../app/SensitiveAssetImage.vue';
+import { formatChinaDateTime, formatChinaTime } from '../app/display-time';
 import { useRoute, useRouter } from 'vue-router';
 import {
   resolveAiServiceWebSocketUrl,
@@ -949,12 +950,15 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
+function formatCurrentChinaTime() {
+  const formatted = formatChinaDateTime(new Date().toISOString());
+  return formatted.slice(-8);
+}
+
 function syncMemoryStatus(hasAsset: boolean) {
   memoryLoadState.value = hasAsset ? 'ready' : 'idle';
   if (hasAsset) {
-    memoryLastSyncedAt.value = new Date().toLocaleTimeString('zh-CN', {
-      hour12: false,
-    });
+    memoryLastSyncedAt.value = formatCurrentChinaTime();
   }
 }
 
@@ -1084,9 +1088,7 @@ async function refreshMemoryContext() {
     };
     syncMemoryStatus(true);
     memoryLoadState.value = 'ready';
-    memoryLastSyncedAt.value = new Date().toLocaleTimeString('zh-CN', {
-      hour12: false,
-    });
+    memoryLastSyncedAt.value = formatCurrentChinaTime();
     return null;
   } catch (error) {
     memoryLoadState.value = 'error';
@@ -2284,13 +2286,7 @@ function buildArchiveVideos(
 }
 
 function formatArchiveTimestamp(value: string) {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return parsed.toLocaleString('zh-CN', {
-    hour12: false,
-  });
+  return formatChinaDateTime(value);
 }
 
 function strategyRiskToneClass(level: RiskAssessmentPayload['level']) {
@@ -2366,9 +2362,7 @@ function formatRealtimeClock(timestamp: number | null) {
     return '暂无';
   }
 
-  return new Date(timestamp).toLocaleTimeString('zh-CN', {
-    hour12: false,
-  });
+  return formatChinaTime(timestamp);
 }
 
 function formatCuePercent(value: number) {

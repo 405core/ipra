@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm"
 	"ipra/backend/internal/auth"
 	"ipra/backend/internal/config"
+	"ipra/backend/internal/displaytime"
 	"ipra/backend/internal/sensitive"
 )
 
@@ -1307,10 +1308,7 @@ func formatGenderLabel(value string) string {
 }
 
 func formatTime(value time.Time) string {
-	if value.IsZero() {
-		return "-"
-	}
-	return value.Local().Format("2006-01-02 15:04:05")
+	return displaytime.Format(value, "2006-01-02 15:04:05")
 }
 
 func (h *Handler) putImportDetailAsset(

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"ipra/backend/internal/displaytime"
 )
 
 func BuildDisplayWatermarkContext(ctx WatermarkContext) WatermarkContext {
@@ -34,7 +36,7 @@ func formatWatermarkTimestamp(timestamp time.Time) string {
 	if timestamp.IsZero() {
 		timestamp = nowUTC()
 	}
-	return timestamp.In(time.Local).Format("2006/01/02 15:04:05")
+	return displaytime.Format(timestamp, "2006/01/02 15:04:05")
 }
 
 func resolveWatermarkPageTitle(page string) string {
