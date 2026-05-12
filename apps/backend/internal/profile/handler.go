@@ -128,6 +128,29 @@ func (h *Handler) handleProtectedSearch(c *gin.Context) {
 	})
 }
 
+func (h *Handler) buildProtectedProfileSearchResponse(
+	c *gin.Context,
+	claims auth.Claims,
+	query string,
+) (sensitive.ListResponse, error) {
+	profiles, err := h.service.SearchProfilesByDocumentExact(c.Request.Context(), query)
+	if err != nil {
+		return sensitive.ListResponse{}, err
+	}
+
+	items := make([]sensitive.ListItem, 0, len(profiles))
+	for _, profile := range profiles {
+		items = append(items, h.buildProtectedProfileListItem(c, claims, profile, "home:data"))
+	}
+
+	return sensitive.ListResponse{
+		Items:    items,
+		Total:    int64(len(items)),
+		Page:     1,
+		PageSize: len(items),
+	}, nil
+}
+
 func (h *Handler) handleProtectedProfileByID(c *gin.Context) {
 	if h.sensitive == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"message": "敏感图片服务未启用"})

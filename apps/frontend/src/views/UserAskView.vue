@@ -339,11 +339,6 @@ const maxInteractionRounds = ref(3);
 const inquirySettingsMessage = ref('');
 const hasLoadedInquirySettings = ref(false);
 const roundLimitDialogVisible = ref(false);
-const strategySummary = ref('');
-const generatedQuestions = ref<StrategyQuestion[]>([]);
-const strategyFocusAreas = ref<string[]>([]);
-const strategyOperatorNote = ref('');
-const strategyRiskAssessment = ref<RiskAssessmentPayload | null>(null);
 const strategyGenerationCount = ref(0);
 const isGeneratingStrategy = ref(false);
 const isEndingSampling = ref(false);
@@ -357,7 +352,6 @@ const rounds = ref<InterviewRound[]>([]);
 const currentRoundId = ref<string | null>(null);
 const selectedJudgement = ref<FinalJudgement | null>(null);
 const judgementReason = ref('');
-const judgementBriefing = ref<JudgementBriefing | null>(null);
 const isArchived = ref(false);
 const isArchiving = ref(false);
 const archivedAt = ref('');
@@ -451,13 +445,6 @@ const historicalRounds = computed(() => {
     .slice()
     .reverse();
 });
-
-const totalTranscriptCount = computed(() =>
-  completedRounds.value.reduce(
-    (count, round) => count + round.transcripts.length,
-    0,
-  ),
-);
 
 const totalSampleDuration = computed(
   () =>
@@ -807,17 +794,12 @@ const selectedProfileId = computed(() =>
   normalizeRouteQueryValue(route.query.profileId).trim(),
 );
 const selectedPassengerId = computed(
-  () => findProtectedChip(protectedProfile.value?.chips, 'documentNum')?.key?.trim() || '',
+  () => selectedProfileId.value,
 );
 
 function resetProfileDependentState() {
   currentStage.value = 'strategy';
   protectedProfile.value = null;
-  strategySummary.value = '';
-  generatedQuestions.value = [];
-  strategyFocusAreas.value = [];
-  strategyOperatorNote.value = '';
-  strategyRiskAssessment.value = null;
   strategyGenerationCount.value = 0;
   strategyRequestError.value = '';
   roundServiceError.value = '';
@@ -827,7 +809,6 @@ function resetProfileDependentState() {
   rounds.value = [];
   currentRoundId.value = null;
   judgementReason.value = '';
-  judgementBriefing.value = null;
   selectedJudgement.value = null;
 }
 
@@ -1166,17 +1147,10 @@ function buildOpeningRound() {
     summaryBlock: null,
     promptAsset: null,
     summaryAsset: null,
-    focus: strategyFocusAreas.value.length
-      ? strategyFocusAreas.value.join(' / ')
-      : '首轮关注：出境目的与行程一致性',
-    strategyNote:
-      strategyOperatorNote.value ||
-      strategySummary.value ||
-      '系统已基于旅客画像启动首轮事实核验。',
-    signal:
-      strategyRiskAssessment.value?.summary ||
-      '对象需先对出境目的、行程安排和资金来源给出稳定说明。',
-    questions: generatedQuestions.value.map((question) => ({ ...question })),
+    focus: '首轮关注：出境目的与行程一致性',
+    strategyNote: '系统已基于旅客画像启动首轮事实核验。',
+    signal: '对象需先对出境目的、行程安排和资金来源给出稳定说明。',
+    questions: [],
     transcripts: [],
     completed: false,
     durationSeconds: 0,
@@ -2089,6 +2063,10 @@ async function endSampling() {
     uploadedRound.uploadState = 'uploaded';
     uploadedRound.uploadErrorMessage = '';
     updateCurrentRoundSummary(uploadedRound);
+    uploadedRound.transcripts = [];
+    uploadedRound.asrText = '';
+    uploadedRound.actionObservations = [];
+    uploadedRound.humanOmniWindow = null;
     void recordAuditEvent({
       action: 'end_sampling',
       resource: '辅助问询',
@@ -2135,14 +2113,12 @@ async function enterNextRound() {
     const nextRoundNumber = round.roundNumber + 1;
     const response = await requestProtectedInquiryFollowup(sessionId.value, {
       roundNumber: nextRoundNumber,
-      recordedFileName: round.recordedFileName,
-      durationSeconds: round.durationSeconds,
-      answerText: collectSubjectTranscript(round),
-      humanOmniWindow: round.humanOmniWindow ?? {},
-      actionObservations: round.actionObservations,
-      asr: buildRoundAsrPayload(round),
     });
     syncProtectedSessionState(response);
+    round.transcripts = [];
+    round.asrText = '';
+    round.actionObservations = [];
+    round.humanOmniWindow = null;
     resetSamplingIndicators();
     resetRealtimeDetectionViewState();
     void recordAuditEvent({
@@ -2191,7 +2167,6 @@ async function enterJudgementStage() {
 
   if (hasReachedInteractionLimit.value) {
     currentStage.value = 'judgement';
-    judgementBriefing.value = null;
     void recordAuditEvent({
       action: 'enter_judgement_stage',
       resource: '辅助问询',
@@ -3708,31 +3683,25 @@ onBeforeUnmount(() => {
                   alt="当前轮问题包敏感图片"
                 />
                 <div class="panel-subhead">
-                  <strong>实时转写</strong>
-                  <span>{{ currentRound.transcripts.length }} 条</span>
+                  <strong>受保护摘要</strong>
+                  <span>{{
+                    currentRound.summaryBlock?.asset || currentRound.summaryAsset
+                      ? '已生成'
+                      : '待生成'
+                  }}</span>
                 </div>
 
-                <div class="transcript-stream transcript-stream--compact">
-                  <article
-                    v-for="entry in currentRound.transcripts"
-                    :key="entry.id"
-                    class="transcript-entry"
-                    :class="`transcript-entry--${entry.role}`"
-                  >
-                    <div class="transcript-entry__meta">
-                      <strong>{{ entry.speaker }}</strong>
-                      <span>{{ entry.time }}</span>
-                    </div>
-                    <p>{{ entry.text }}</p>
-                  </article>
-
-                  <div
-                    v-if="!currentRound.transcripts.length"
-                    class="empty-panel empty-panel--compact"
-                  >
-                    <strong>尚无实时转写记录</strong>
-                    <span>开始采样后，这里会显示问询对象的实时回答文本。</span>
-                  </div>
+                <SensitiveAssetImage
+                  v-if="currentRound.summaryBlock?.asset || currentRound.summaryAsset"
+                  :src="
+                    currentRound.summaryBlock?.asset?.url ||
+                    currentRound.summaryAsset!.url
+                  "
+                  alt="当前轮摘要敏感图片"
+                />
+                <div v-else class="empty-panel empty-panel--compact">
+                  <strong>尚未生成本轮摘要</strong>
+                  <span>完成采样并上传后，这里会展示带水印的受保护摘要。</span>
                 </div>
 
                 <div v-if="samplingState.errorMessage" class="inline-alert">
@@ -3976,7 +3945,7 @@ onBeforeUnmount(() => {
               <div class="completion-panel">
                 <span class="meta-label">采样轮次</span>
                 <strong>{{ completedRoundCount }} 轮</strong>
-                <p>累计转写 {{ totalTranscriptCount }} 条</p>
+                <p>累计采样 {{ formatDuration(totalSampleDuration) }}</p>
               </div>
 
               <div class="completion-panel">

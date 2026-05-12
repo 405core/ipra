@@ -60,11 +60,13 @@ func main() {
 			auditHandler.SetSensitiveManager(manager)
 			authHandler.SetSensitiveManager(manager)
 			inquiryHandler.SetSensitiveManager(manager)
+			archiveHandler.SetSensitiveManager(manager)
 		}
 	}
 	inquiryHandler.SetMemoryStore(memoryStore)
 	inquiryHandler.SetProfileLookup(profileHandler.Service())
 	inquiryHandler.SetAIServiceBaseURL(cfg.AIService.BaseURL)
+	archiveHandler.SetInquirySessionProvider(inquiryHandler)
 
 	r := newRouter(
 		authHandler,

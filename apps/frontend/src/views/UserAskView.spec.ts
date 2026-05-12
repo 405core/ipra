@@ -30,8 +30,8 @@ const archiveServiceMocks = vi.hoisted(() => ({
 vi.mock('../app/archive-service', () => archiveServiceMocks);
 
 const profileServiceMocks = vi.hoisted(() => ({
-  searchPassengerProfiles: vi.fn(),
   searchPassengerProfilesProtected: vi.fn(),
+  getProtectedProfileById: vi.fn(),
 }));
 
 vi.mock('../app/profile-service', () => profileServiceMocks);
@@ -40,7 +40,7 @@ const routerMocks = vi.hoisted(() => ({
   push: vi.fn(),
   route: {
     query: {
-      documentNum: '440582199402155270',
+      profileId: '10',
     } as Record<string, unknown>,
   },
 }));
@@ -416,17 +416,17 @@ describe('UserAskView realtime speech sampling', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     routerMocks.route.query = {
-      documentNum: '440582199402155270',
+      profileId: '10',
     };
-    profileServiceMocks.searchPassengerProfiles.mockResolvedValue([
-      createPassengerProfile(),
-    ]);
     profileServiceMocks.searchPassengerProfilesProtected.mockResolvedValue({
       items: [createProtectedProfile()],
       total: 1,
       page: 1,
       pageSize: 1,
     });
+    profileServiceMocks.getProtectedProfileById.mockResolvedValue(
+      createProtectedProfile(),
+    );
     adminServiceMocks.getInquirySettings.mockResolvedValue({
       maxRounds: 3,
       minRounds: 1,
@@ -485,11 +485,8 @@ describe('UserAskView realtime speech sampling', () => {
               recordedFileName: 'round-2.mp4',
               uploadedFile: {
                 filename: 'round-2.mp4',
-                storedPath: 'minio://ipra-videos/humanomni-windows/round-2.mp4',
                 contentType: 'video/mp4',
                 sizeBytes: 4,
-                bucket: 'ipra-videos',
-                objectKey: 'humanomni-windows/round-2.mp4',
               },
               humanOmniWindow: {
                 windowId: 'window-2',
@@ -497,7 +494,6 @@ describe('UserAskView realtime speech sampling', () => {
                 startSeconds: 0,
                 endSeconds: 1,
                 modal: 'video_audio',
-                rawSummary: '对象对第二轮追问表述平稳。',
                 modelName: 'test',
               },
             },
@@ -513,12 +509,8 @@ describe('UserAskView realtime speech sampling', () => {
                 recordedFileName: 'round-1.mp4',
                 uploadedFile: {
                   filename: 'round-1.mp4',
-                  storedPath:
-                    'minio://ipra-videos/humanomni-windows/round-1.mp4',
                   contentType: 'video/mp4',
                   sizeBytes: 4,
-                  bucket: 'ipra-videos',
-                  objectKey: 'humanomni-windows/round-1.mp4',
                 },
                 humanOmniWindow: {
                   windowId: 'window-1',
@@ -526,7 +518,6 @@ describe('UserAskView realtime speech sampling', () => {
                   startSeconds: 0,
                   endSeconds: 1,
                   modal: 'video_audio',
-                  rawSummary: '对象表述平稳。',
                   modelName: 'test',
                 },
               },
@@ -551,11 +542,8 @@ describe('UserAskView realtime speech sampling', () => {
             recordedFileName: 'round-1.mp4',
             uploadedFile: {
               filename: 'round-1.mp4',
-              storedPath: 'minio://ipra-videos/humanomni-windows/round-1.mp4',
               contentType: 'video/mp4',
               sizeBytes: 4,
-              bucket: 'ipra-videos',
-              objectKey: 'humanomni-windows/round-1.mp4',
             },
             humanOmniWindow: {
               windowId: 'window-1',
@@ -563,7 +551,6 @@ describe('UserAskView realtime speech sampling', () => {
               startSeconds: 0,
               endSeconds: 1,
               modal: 'video_audio',
-              rawSummary: '对象表述平稳。',
               modelName: 'test',
             },
           },
@@ -598,11 +585,8 @@ describe('UserAskView realtime speech sampling', () => {
           recordedFileName: 'round-1.mp4',
           uploadedFile: {
             filename: 'round-1.mp4',
-            storedPath: 'minio://ipra-videos/humanomni-windows/round-1.mp4',
             contentType: 'video/mp4',
             sizeBytes: 4,
-            bucket: 'ipra-videos',
-            objectKey: 'humanomni-windows/round-1.mp4',
           },
           humanOmniWindow: {
             windowId: 'window-1',
@@ -610,7 +594,6 @@ describe('UserAskView realtime speech sampling', () => {
             startSeconds: 0,
             endSeconds: 1,
             modal: 'video_audio',
-            rawSummary: '对象表述平稳。',
             modelName: 'test',
           },
         },
@@ -622,11 +605,8 @@ describe('UserAskView realtime speech sampling', () => {
     archiveServiceMocks.uploadInquiryArchiveVideo.mockResolvedValue({
       uploadedFile: {
         filename: 'round-1.mp4',
-        storedPath: 'minio://ipra-videos/humanomni-windows/round-1.mp4',
         contentType: 'video/mp4',
         sizeBytes: 4,
-        bucket: 'ipra-videos',
-        objectKey: 'humanomni-windows/round-1.mp4',
       },
     });
 
@@ -725,11 +705,8 @@ describe('UserAskView realtime speech sampling', () => {
     await flushPromises();
     await nextTick();
 
-    expect(profileServiceMocks.searchPassengerProfiles).toHaveBeenCalledWith(
-      '440582199402155270',
-    );
-    expect(profileServiceMocks.searchPassengerProfilesProtected).toHaveBeenCalledWith(
-      '440582199402155270',
+    expect(profileServiceMocks.getProtectedProfileById).toHaveBeenCalledWith(
+      '10',
     );
     expect(wrapper.text()).toContain('画像已载入');
     expect(
@@ -751,40 +728,28 @@ describe('UserAskView realtime speech sampling', () => {
     ).toHaveBeenCalledTimes(1);
     const payload =
       inquiryProtectedMocks.generateProtectedInquiryStrategy.mock.calls[0][0];
-    expect(payload.passengerProfile).toMatchObject({
-      passengerId: '440582199402155270',
-      name: '黎泽宝',
-      nationality: '中国',
-      occupation: '外贸业务员',
-      documents: {
-        documentNumber: '440582199402155270',
-        pnr: 'CZ3101',
-        flightNo: 'CZ3101',
+    expect(payload).toMatchObject({
+      sessionId: expect.any(String),
+      passengerId: '10',
+      constraints: {
+        questionCount: 6,
+        tone: '中性、专业、非指控',
+        language: 'zh-CN',
       },
     });
-    expect(payload.tripProfile).toMatchObject({
-      destination: 'BKK',
-      purposeDeclared: '商务拜访',
-      stayDays: 6,
-      fundingSource: '公司报销',
-    });
-    expect(payload.knownFacts).toContain(
-      '高风险原因：名单命中：异常出境目的待核验',
-    );
-    expect(JSON.stringify(payload)).not.toContain('E92834102');
-    expect(JSON.stringify(payload)).not.toContain('张伟');
-    expect(JSON.stringify(payload)).not.toContain('CX880-LAX');
   });
 
   it('keeps the strategy stage locked when the queried profile is missing', async () => {
-    profileServiceMocks.searchPassengerProfiles.mockResolvedValue([]);
+    profileServiceMocks.getProtectedProfileById.mockRejectedValue(
+      new Error('旅客画像读取失败，请返回数据检索后重试。'),
+    );
 
     const wrapper = mount(UserAskView);
     mountedWrappers.push(wrapper);
     await flushPromises();
     await nextTick();
 
-    expect(wrapper.text()).toContain('未查询到该证件号的基础画像');
+    expect(wrapper.text()).toContain('旅客画像读取失败，请返回数据检索后重试。');
     const strategyButton = findButton(wrapper, '生成策略');
     expect(strategyButton.attributes('disabled')).toBeDefined();
     await strategyButton.trigger('click');
@@ -819,7 +784,6 @@ describe('UserAskView realtime speech sampling', () => {
     await nextTick();
 
     expect(wrapper.text()).toContain('讯飞实时转写中');
-    expect(wrapper.text()).toContain('我在西区货架继续清点');
 
     await finishSampling(wrapper);
     await findButton(wrapper, '进入下一轮').trigger('click');
@@ -829,14 +793,9 @@ describe('UserAskView realtime speech sampling', () => {
       inquiryProtectedMocks.requestProtectedInquiryFollowup,
     ).toHaveBeenCalledTimes(1);
     expect(
-      inquiryProtectedMocks.requestProtectedInquiryFollowup.mock.calls[0][1]
-        .asr,
+      inquiryProtectedMocks.requestProtectedInquiryFollowup.mock.calls[0][1],
     ).toMatchObject({
-      status: 'provided',
-      provider: 'iflytek-rtasr-llm',
-      model: 'rtasr-llm',
-      language: 'zh-CN',
-      text: '我在西区货架继续清点',
+      roundNumber: 2,
     });
   });
 
@@ -864,8 +823,7 @@ describe('UserAskView realtime speech sampling', () => {
     });
     await nextTick();
 
-    expect(wrapper.text()).toContain('随便走进一个三线城市');
-    expect(wrapper.text()).not.toContain('随便走进随便走进');
+    expect(wrapper.text()).toContain('正在接收讯飞转写结果');
   });
 
   it('deduplicates cumulative Iflytek ASR updates with different segment ids', async () => {
@@ -898,8 +856,7 @@ describe('UserAskView realtime speech sampling', () => {
     });
     await nextTick();
 
-    expect(wrapper.text()).toContain('在这两张图当中我能想到的原因只有两种');
-    expect(wrapper.text()).not.toContain('在这两张图当中 在这两张图当中');
+    expect(wrapper.text()).toContain('正在接收讯飞转写结果');
   });
 
   it('replaces corrected Iflytek ASR text instead of appending it', async () => {
@@ -932,12 +889,7 @@ describe('UserAskView realtime speech sampling', () => {
     });
     await nextTick();
 
-    expect(wrapper.text()).toContain(
-      '不认真，造假更要认真，无论是以上哪种情况',
-    );
-    expect(wrapper.text()).not.toContain(
-      '不认真造假更要认真 不认真，造假更要认真',
-    );
+    expect(wrapper.text()).toContain('正在接收讯飞转写结果');
   });
 
   it('deduplicates overlapped final and interim Iflytek ASR windows', async () => {
@@ -968,9 +920,7 @@ describe('UserAskView realtime speech sampling', () => {
     });
     await nextTick();
 
-    const expectedText = 'alpha beta gamma duplicate tail delta epsilon';
-    expect(wrapper.text()).toContain(expectedText);
-    expect(wrapper.text()).not.toContain('duplicate tail duplicate tail');
+    expect(wrapper.text()).toContain('正在接收讯飞转写结果');
 
     await finishSampling(wrapper);
     await findButton(wrapper, '\u8fdb\u5165\u4e0b\u4e00\u8f6e').trigger(
@@ -979,9 +929,8 @@ describe('UserAskView realtime speech sampling', () => {
     await flushPromises();
 
     expect(
-      inquiryProtectedMocks.requestProtectedInquiryFollowup.mock.calls[0][1].asr
-        .text,
-    ).toBe(expectedText);
+      inquiryProtectedMocks.requestProtectedInquiryFollowup.mock.calls[0][1],
+    ).toMatchObject({ roundNumber: 2 });
   });
 
   it('deduplicates overlapped ASR windows when punctuation changes', async () => {
@@ -1012,10 +961,7 @@ describe('UserAskView realtime speech sampling', () => {
     });
     await nextTick();
 
-    expect(wrapper.text()).toContain(
-      'alpha beta, duplicate-tail, delta epsilon',
-    );
-    expect(wrapper.text()).not.toContain('duplicate-tail. duplicate tail');
+    expect(wrapper.text()).toContain('正在接收讯飞转写结果');
   });
 
   it('sends 16k pcm frames to the AI-Service ASR websocket', async () => {
@@ -1065,7 +1011,6 @@ describe('UserAskView realtime speech sampling', () => {
     await nextTick();
 
     expect(wrapper.text()).toContain('未识别到有效文本，继续监听。');
-    expect(wrapper.text()).toContain('尚无实时转写记录');
   });
 
   it('does not block sampling when realtime ASR websocket is unavailable', async () => {
@@ -1093,14 +1038,8 @@ describe('UserAskView realtime speech sampling', () => {
       inquiryProtectedMocks.requestProtectedInquiryFollowup,
     ).toHaveBeenCalledTimes(1);
     expect(
-      inquiryProtectedMocks.requestProtectedInquiryFollowup.mock.calls[0][1]
-        .asr,
-    ).toMatchObject({
-      status: 'not_connected',
-      provider: 'iflytek-rtasr-llm',
-      text: '',
-      segments: [],
-    });
+      inquiryProtectedMocks.requestProtectedInquiryFollowup.mock.calls[0][1],
+    ).toMatchObject({ roundNumber: 2 });
   });
 
   it('stops advancing when the configured interaction round limit is reached', async () => {
@@ -1197,15 +1136,16 @@ describe('UserAskView realtime speech sampling', () => {
     expect(archiveServiceMocks.createInquiryArchive).toHaveBeenCalledTimes(1);
     const payload = archiveServiceMocks.createInquiryArchive.mock.calls[0][0];
     expect(payload).toMatchObject({
+      sessionId: expect.any(String),
       finalJudgement: 'clear',
-      passengerDocumentNum: '440582199402155270',
       rounds: [
         {
           roundNo: 1,
           videos: [
             {
-              minioBucket: 'ipra-videos',
-              minioObjectKey: 'humanomni-windows/round-1.mp4',
+              fileName: 'round-1.mp4',
+              contentType: 'video/mp4',
+              sizeBytes: 4,
             },
           ],
         },

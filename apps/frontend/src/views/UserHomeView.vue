@@ -395,6 +395,10 @@ function handleOCRResult(
     payload.documentNumberRecognized
   ) {
     ocrStatus.value = '扫描成功';
+    if (result.results) {
+      applyProtectedOCRResults(result.results);
+      return;
+    }
     const recognizedNumber = query.value.trim();
     if (recognizedNumber) {
       syncOCRNumberToSearch(recognizedNumber, options?.forceSearch === true);
@@ -414,6 +418,20 @@ function handleOCRResult(
   if (options?.manual) {
     cameraStatus.value = '当前证件画面信息不足，请保持身份证完整入框。';
   }
+}
+
+function applyProtectedOCRResults(response: {
+  items: ProtectedListItem[];
+  total: number;
+}) {
+  results.value = response.items;
+  protectedResultError.value = '';
+  searchStatus.value = response.items.length
+    ? `已检索到 ${response.items.length} 条匹配记录。`
+    : '未检索到匹配记录。';
+  stopCameraStream(false);
+  cameraStatus.value = defaultCameraStatus;
+  ocrStatus.value = '扫描成功';
 }
 
 function syncOCRNumberToSearch(number: string, forceSearch = false) {

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"ipra/backend/internal/auth"
 	"ipra/backend/internal/config"
 )
 
@@ -38,10 +39,11 @@ type IDCardOCRResponse struct {
 }
 
 type IDCardOCRData struct {
-	Result   int               `json:"result"`
-	Side     string            `json:"side"`
-	Info     map[string]string `json:"info,omitempty"`
-	Validity map[string]bool   `json:"validity,omitempty"`
+	Result                   int    `json:"result"`
+	Side                     string `json:"side"`
+	DocumentNumberRecognized bool   `json:"documentNumberRecognized,omitempty"`
+	Info                     map[string]string `json:"info,omitempty"`
+	Validity                 map[string]bool   `json:"validity,omitempty"`
 }
 
 func NewIDCardOCRClient(cfg config.OCRConfig) *IDCardOCRClient {
@@ -173,7 +175,44 @@ func (h *Handler) handleRecognizeIDCard(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, result)
+	response := IDCardOCRResponse{
+		Code:   result.Code,
+		Msg:    result.Msg,
+		TaskNo: result.TaskNo,
+	}
+	if result.Data != nil {
+		response.Data = &IDCardOCRData{
+			Result: result.Data.Result,
+			Side:   strings.TrimSpace(result.Data.Side),
+		}
+		if response.Data.Side == "front" {
+			number := strings.TrimSpace(result.Data.Info["number"])
+			valid := true
+			if result.Data.Validity != nil {
+				if flag, ok := result.Data.Validity["number"]; ok {
+					valid = flag
+				}
+			}
+			response.Data.DocumentNumberRecognized = number != "" && valid
+			if response.Data.DocumentNumberRecognized && h.sensitive != nil {
+				if claims, ok := auth.ClaimsFromContext(c); ok {
+					protectedResults, buildErr := h.buildProtectedProfileSearchResponse(c, claims, number)
+					if buildErr == nil {
+						c.JSON(http.StatusOK, gin.H{
+							"code":   response.Code,
+							"msg":    response.Msg,
+							"taskNo": response.TaskNo,
+							"data":   response.Data,
+							"results": protectedResults,
+						})
+						return
+					}
+				}
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, response)
 }
 
 func normalizePhotoBase64(value string) string {

@@ -38,6 +38,7 @@ export interface IDCardOCRResponse {
     side?: 'front' | 'back' | string;
     documentNumberRecognized?: boolean;
   };
+  results?: ProtectedListResponse;
   detailAsset?: ProtectedAssetRef;
 }
 
