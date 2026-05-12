@@ -2586,7 +2586,7 @@ function stringifyDetail(value: unknown) {
 
 .admin-nav {
   display: grid;
-  gap: 12px;
+  gap: 14px;
 }
 
 .admin-nav__item,
@@ -2595,17 +2595,21 @@ function stringifyDetail(value: unknown) {
 .admin-form-actions button,
 .admin-row__actions button,
 .admin-user-table__actions button {
-  min-height: 44px;
+  min-height: 48px;
   border: 0;
-  border-radius: 14px;
+  border-radius: 16px;
   cursor: pointer;
 }
 
 .admin-nav__item {
   text-align: left;
-  padding: 0 14px;
+  height: 72px;
+  min-height: 72px;
+  padding: 0 18px;
   background: rgba(255, 255, 255, 0.08);
   color: inherit;
+  font-size: 1rem;
+  font-weight: 700;
 }
 
 .admin-nav__item.is-active {
@@ -2994,6 +2998,27 @@ function stringifyDetail(value: unknown) {
 
 .admin-row--profile {
   align-items: stretch;
+}
+
+.admin-row--profile :deep(.sensitive-image) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 0;
+  max-height: 132px;
+}
+
+.admin-row--profile :deep(.sensitive-image img) {
+  width: 100%;
+  max-width: 100%;
+  max-height: 132px;
+  object-fit: fill;
+  object-position: center center;
+}
+
+.admin-row--profile :deep(.sensitive-image__placeholder) {
+  min-height: 120px;
 }
 
 .admin-row__profile-content {

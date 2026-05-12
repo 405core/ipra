@@ -33,6 +33,10 @@ func NewManager(fontCandidates []string) (*Manager, error) {
 }
 
 func (m *Manager) Put(ownerUserID uint64, document Document, preset RenderPreset, format RenderFormat, watermark WatermarkContext) AssetRef {
+	return m.PutWithStyle(ownerUserID, document, preset, format, RenderStyle{}, watermark)
+}
+
+func (m *Manager) PutWithStyle(ownerUserID uint64, document Document, preset RenderPreset, format RenderFormat, style RenderStyle, watermark WatermarkContext) AssetRef {
 	if m == nil {
 		return AssetRef{}
 	}
@@ -45,6 +49,7 @@ func (m *Manager) Put(ownerUserID uint64, document Document, preset RenderPreset
 		Document:    document,
 		Preset:      preset,
 		Format:      format,
+		Style:       style,
 		Watermark:   watermark,
 		CreatedAt:   nowUTC(),
 		ExpiresAt:   nowUTC().Add(m.ttl),

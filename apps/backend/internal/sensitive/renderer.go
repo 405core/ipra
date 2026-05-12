@@ -110,10 +110,16 @@ func (r *Renderer) Render(spec AssetSpec) (EncodedImage, error) {
 
 	lines, totalHeight := measureDocument(layout, spec.Document, titleFace, bodyFace, tagFace)
 	canvas := image.NewRGBA(image.Rect(0, 0, layout.Width, totalHeight))
-	stddraw.Draw(canvas, canvas.Bounds(), image.NewUniform(color.RGBA{250, 252, 254, 255}), image.Point{}, stddraw.Src)
+	background := color.RGBA{250, 252, 254, 255}
+	if spec.Style.Transparent {
+		background = color.RGBA{0, 0, 0, 0}
+	}
+	stddraw.Draw(canvas, canvas.Bounds(), image.NewUniform(background), image.Point{}, stddraw.Src)
 
-	drawAccent(canvas, layout, spec.Preset)
-	drawWatermark(canvas, layout, watermarkFace, spec.Watermark)
+	if !spec.Style.HideAccent {
+		drawAccent(canvas, layout, spec.Preset)
+	}
+	drawWatermark(canvas, layout, watermarkFace, spec.Watermark, spec.Style)
 	drawDocument(canvas, lines)
 
 	format := spec.Format
@@ -133,6 +139,26 @@ func (r *Renderer) newFace(size float64) (font.Face, error) {
 
 func resolveLayout(preset RenderPreset) presetLayout {
 	switch preset {
+	case PresetInline:
+		return presetLayout{
+			Width:         720,
+			Padding:       0,
+			TitleSize:     24,
+			BodySize:      18,
+			TagSize:       16,
+			WatermarkSize: 14,
+			Quality:       80,
+		}
+	case PresetCompactList:
+		return presetLayout{
+			Width:         1320,
+			Padding:       28,
+			TitleSize:     26,
+			BodySize:      18,
+			TagSize:       15,
+			WatermarkSize: 15,
+			Quality:       80,
+		}
 	case PresetDialog:
 		return presetLayout{
 			Width:         1480,
@@ -177,6 +203,9 @@ func measureDocument(
 	x := layout.Padding
 	maxWidth := layout.Width - layout.Padding*2
 	y := layout.Padding
+	if layout.Padding == 0 {
+		y = 0
+	}
 
 	if eyebrow := strings.TrimSpace(doc.Eyebrow); eyebrow != "" {
 		lines, y = appendWrappedText(
@@ -215,22 +244,22 @@ func measureDocument(
 	}
 
 	if len(doc.Tags) > 0 {
-		y += 14
+		y += resolveBlockSpacing(layout, 14, 10)
 		lines, y = appendTags(lines, tagFace, x, y, maxWidth, doc.Tags)
 	}
 
 	if len(doc.TagItems) > 0 {
-		y += 14
+		y += resolveBlockSpacing(layout, 14, 10)
 		lines, y = appendStructuredTagItems(lines, tagFace, x, y, maxWidth, doc.TagItems)
 	}
 
 	if len(doc.FactItems) > 0 {
-		y += 14
+		y += resolveBlockSpacing(layout, 14, 10)
 		lines, y = appendFactItems(lines, bodyFace, x, y, maxWidth, doc.FactItems)
 	}
 
 	if len(doc.MetaItems) > 0 {
-		y += 14
+		y += resolveBlockSpacing(layout, 14, 10)
 		lines, y = appendStructuredTagItems(lines, tagFace, x, y, maxWidth, doc.MetaItems)
 	}
 
@@ -241,7 +270,7 @@ func measureDocument(
 		}
 
 		if heading := strings.TrimSpace(section.Heading); heading != "" {
-			y += 18
+			y += resolveBlockSpacing(layout, 18, 12)
 			lines, y = appendWrappedText(
 				lines,
 				bodyFace,
@@ -254,7 +283,7 @@ func measureDocument(
 		}
 
 		for _, rawLine := range sectionLines {
-			y += 4
+			y += resolveBlockSpacing(layout, 4, 2)
 			lines, y = appendWrappedText(
 				lines,
 				bodyFace,
@@ -268,7 +297,7 @@ func measureDocument(
 	}
 
 	if len(doc.Footer) > 0 {
-		y += 18
+		y += resolveBlockSpacing(layout, 18, 12)
 		for _, rawLine := range compactValues(doc.Footer) {
 			lines, y = appendWrappedText(
 				lines,
@@ -283,11 +312,21 @@ func measureDocument(
 	}
 
 	if len(doc.FooterTags) > 0 {
-		y += 14
+		y += resolveBlockSpacing(layout, 14, 10)
 		lines, y = appendStructuredTagItems(lines, tagFace, x, y, maxWidth, doc.FooterTags)
 	}
 
+	if layout.Padding == 0 {
+		return lines, y
+	}
 	return lines, y + layout.Padding
+}
+
+func resolveBlockSpacing(layout presetLayout, regular int, compact int) int {
+	if layout.Width >= 1200 && layout.TitleSize <= 26 && layout.BodySize <= 18 {
+		return compact
+	}
+	return regular
 }
 
 func appendWrappedText(
@@ -576,7 +615,7 @@ func drawAccent(dst *image.RGBA, layout presetLayout, preset RenderPreset) {
 	stddraw.Draw(dst, header, image.NewUniform(color.RGBA{223, 238, 244, 255}), image.Point{}, stddraw.Src)
 }
 
-func drawWatermark(dst *image.RGBA, layout presetLayout, face font.Face, wm WatermarkContext) {
+func drawWatermark(dst *image.RGBA, layout presetLayout, face font.Face, wm WatermarkContext, style RenderStyle) {
 	display := BuildDisplayWatermarkContext(wm)
 	text := BuildWatermarkText(display)
 	if strings.TrimSpace(text) == "" {
@@ -584,14 +623,14 @@ func drawWatermark(dst *image.RGBA, layout presetLayout, face font.Face, wm Wate
 	}
 
 	for _, tile := range defaultWatermarkTiles {
-		stamp := newWatermarkStamp(face, text, tile.opacity)
+		stamp := newWatermarkStamp(face, text, tile.opacity, style)
 		centerX := int(math.Round(float64(dst.Bounds().Dx()) * tile.left))
 		centerY := int(math.Round(float64(dst.Bounds().Dy()) * tile.top))
 		drawRotatedStamp(dst, stamp, centerX, centerY, tile.rotation)
 	}
 }
 
-func newWatermarkStamp(face font.Face, text string, opacity float64) *image.RGBA {
+func newWatermarkStamp(face font.Face, text string, opacity float64, style RenderStyle) *image.RGBA {
 	lines := wrapSingleLine(face, strings.TrimSpace(text), 420)
 	if len(lines) == 0 {
 		return image.NewRGBA(image.Rect(0, 0, 1, 1))
@@ -617,6 +656,10 @@ func newWatermarkStamp(face font.Face, text string, opacity float64) *image.RGBA
 	stamp := image.NewRGBA(image.Rect(0, 0, maxWidth+paddingX*2, height))
 	shadowFill := color.RGBA{255, 255, 255, uint8(math.Round(82 * opacity))}
 	textFill := color.RGBA{12, 34, 42, uint8(math.Round(51 * opacity))}
+	if style.Transparent {
+		shadowFill = color.RGBA{255, 255, 255, uint8(math.Round(62 * opacity))}
+		textFill = color.RGBA{12, 34, 42, uint8(math.Round(40 * opacity))}
+	}
 	y := paddingTop + face.Metrics().Ascent.Ceil()
 
 	for _, line := range lines {

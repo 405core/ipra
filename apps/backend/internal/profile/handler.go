@@ -229,7 +229,7 @@ func (h *Handler) handleAdminProtectedProfiles(c *gin.Context) {
 	for _, profile := range result.Items {
 		items = append(items, sensitive.ListItem{
 			ID:          strconv.FormatUint(profile.ID, 10),
-			Asset:       h.putProfileAsset(c, claims, profile, sensitive.PresetList, "admin:profiles"),
+			Asset:       h.putProfileAsset(c, claims, profile, sensitive.PresetCompactList, "admin:profiles"),
 			DetailAsset: h.putProfileAsset(c, claims, profile, sensitive.PresetDialog, "admin:profiles:detail"),
 			Actions:     []string{"edit", "delete"},
 		})
@@ -456,9 +456,14 @@ func (h *Handler) putProfileAsset(
 	factItems := []sensitive.FactItem{}
 	tagItems := []sensitive.TagItem{}
 	metaItems := make([]sensitive.TagItem, 0, len(riskTags)+4)
+	footerTags := []sensitive.TagItem{}
 
-	if preset == sensitive.PresetList {
-		subtitle = buildProfileListSubtitle(profile)
+	if preset == sensitive.PresetList || preset == sensitive.PresetCompactList {
+		if preset == sensitive.PresetCompactList {
+			subtitle = buildProfileCompactSubtitle(profile)
+		} else {
+			subtitle = buildProfileListSubtitle(profile)
+		}
 		if documentType != "" {
 			tagItems = append(tagItems, sensitive.TagItem{
 				Text: documentType,
@@ -475,21 +480,28 @@ func (h *Handler) putProfileAsset(
 			Text: profile.DocumentNum,
 			Tone: sensitive.TagToneIdentity,
 		})
-		factItems = buildProfileFactItems(profile)
-		if profile.IsHighRisk {
-			metaItems = append(metaItems, sensitive.TagItem{
-				Text: formatRiskTag(profile.IsHighRisk),
-				Tone: sensitive.TagToneAlert,
-			})
+		if preset == sensitive.PresetCompactList {
+			tagItems = append(tagItems, buildProfileCompactStatusTags(profile, riskTags)...)
+			factItems = buildProfileCompactFactItems(profile)
+			metaItems = append(metaItems, buildCompactProfileMetaItems(profile)...)
+			footerTags = append(footerTags, buildProfileCompactFooterTags(profile)...)
+		} else {
+			if profile.IsHighRisk {
+				metaItems = append(metaItems, sensitive.TagItem{
+					Text: formatRiskTag(profile.IsHighRisk),
+					Tone: sensitive.TagToneAlert,
+				})
+			}
+			if profile.ID == 0 {
+				metaItems = append(metaItems, sensitive.TagItem{
+					Text: "基础画像未导入",
+					Tone: sensitive.TagToneWarning,
+				})
+			}
+			metaItems = append(metaItems, buildRiskTagItems(riskTags, sensitive.TagToneAccent)...)
+			factItems = buildProfileFactItems(profile)
+			sections = append(sections, buildProfileListSections(profile)...)
 		}
-		if profile.ID == 0 {
-			metaItems = append(metaItems, sensitive.TagItem{
-				Text: "基础画像未导入",
-				Tone: sensitive.TagToneWarning,
-			})
-		}
-		metaItems = append(metaItems, buildRiskTagItems(riskTags, sensitive.TagToneAccent)...)
-		sections = append(sections, buildProfileListSections(profile)...)
 	} else {
 		subtitle = "证件号 " + firstNonEmptyText(strings.TrimSpace(profile.DocumentNum), "-")
 		tagItems = append(tagItems, sensitive.TagItem{
@@ -530,16 +542,22 @@ func (h *Handler) putProfileAsset(
 	}
 
 	document := sensitive.Document{
-		Eyebrow:   "",
-		Title:     title,
-		Subtitle:  subtitle,
-		TagItems:  tagItems,
-		FactItems: factItems,
-		MetaItems: metaItems,
-		Sections:  sections,
-		Footer: []string{
+		Eyebrow:    "",
+		Title:      title,
+		Subtitle:   subtitle,
+		TagItems:   tagItems,
+		FactItems:  factItems,
+		MetaItems:  metaItems,
+		FooterTags: footerTags,
+		Sections:   sections,
+	}
+
+	if preset == sensitive.PresetCompactList {
+		document.Footer = nil
+	} else {
+		document.Footer = []string{
 			"更新时间 " + formatTime(profile.UpdatedAt),
-		},
+		}
 	}
 
 	return h.sensitive.Put(
@@ -741,6 +759,10 @@ func buildProfileListSubtitle(profile SearchProfileResponse) string {
 	return strings.Join(values, " · ")
 }
 
+func buildProfileCompactSubtitle(profile SearchProfileResponse) string {
+	return ""
+}
+
 func buildProfileListSections(profile SearchProfileResponse) []sensitive.Section {
 	sections := make([]sensitive.Section, 0, 2)
 
@@ -768,6 +790,83 @@ func buildProfileListSections(profile SearchProfileResponse) []sensitive.Section
 	}
 
 	return sections
+}
+
+func buildProfileCompactFactItems(profile SearchProfileResponse) []sensitive.FactItem {
+	return compactFactItems([]sensitive.FactItem{
+		{Label: "国籍", Value: profileField(profile, "basicInfo", "nationality")},
+		{Label: "航班", Value: profileField(profile, "tripInfo", "flightNo")},
+		{Label: "行程", Value: buildRouteValue(profile)},
+		{Label: "目的", Value: profileField(profile, "tripInfo", "purposeDeclared")},
+		{Label: "职业 / 单位", Value: buildOccupationValue(profile)},
+	})
+}
+
+func buildCompactProfileMetaItems(profile SearchProfileResponse) []sensitive.TagItem {
+	return nil
+}
+
+func buildProfileCompactFooterTags(profile SearchProfileResponse) []sensitive.TagItem {
+	items := []sensitive.TagItem{}
+
+	if value := strings.TrimSpace(profile.RiskReason); value != "" {
+		items = append(items, sensitive.TagItem{
+			Text: "风险原因 " + value,
+			Tone: sensitive.TagToneAlert,
+		})
+	}
+	if value := strings.TrimSpace(profileField(profile, "riskInfo", "criminalRecord")); value != "" {
+		items = append(items, sensitive.TagItem{
+			Text: "违法记录 " + value,
+			Tone: sensitive.TagToneMuted,
+		})
+	}
+	if value := strings.TrimSpace(profileField(profile, "riskInfo", "note")); value != "" {
+		items = append(items, sensitive.TagItem{
+			Text: "备注 " + value,
+			Tone: sensitive.TagToneMuted,
+		})
+	}
+
+	return items
+}
+
+func buildProfileCompactStatusTags(profile SearchProfileResponse, riskTags []string) []sensitive.TagItem {
+	items := make([]sensitive.TagItem, 0, 5)
+
+	if profile.IsHighRisk {
+		items = append(items, sensitive.TagItem{
+			Text: formatRiskTag(profile.IsHighRisk),
+			Tone: sensitive.TagToneAlert,
+		})
+	}
+	if profile.ID == 0 {
+		items = append(items, sensitive.TagItem{
+			Text: "基础画像未导入",
+			Tone: sensitive.TagToneWarning,
+		})
+	}
+
+	for _, value := range compactStrings(riskTags) {
+		items = append(items, sensitive.TagItem{
+			Text: value,
+			Tone: sensitive.TagToneAccent,
+		})
+		if len(items) >= 5 {
+			break
+		}
+	}
+
+	return items
+}
+
+func buildOccupationValue(profile SearchProfileResponse) string {
+	return firstNonEmptyText(
+		strings.Join(compactStrings([]string{
+			profileField(profile, "occupation", "occupation"),
+			profileField(profile, "occupation", "company"),
+		}), " · "),
+	)
 }
 
 func buildRiskTagItems(values []string, tone sensitive.TagTone) []sensitive.TagItem {

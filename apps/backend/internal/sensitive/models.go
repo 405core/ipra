@@ -5,9 +5,11 @@ import "time"
 type RenderPreset string
 
 const (
-	PresetList   RenderPreset = "list"
-	PresetDetail RenderPreset = "detail"
-	PresetDialog RenderPreset = "dialog"
+	PresetCompactList RenderPreset = "compact_list"
+	PresetInline      RenderPreset = "inline"
+	PresetList        RenderPreset = "list"
+	PresetDetail      RenderPreset = "detail"
+	PresetDialog      RenderPreset = "dialog"
 )
 
 type RenderFormat string
@@ -80,9 +82,15 @@ type AssetSpec struct {
 	Document    Document
 	Preset      RenderPreset
 	Format      RenderFormat
+	Style       RenderStyle
 	Watermark   WatermarkContext
 	CreatedAt   time.Time
 	ExpiresAt   time.Time
+}
+
+type RenderStyle struct {
+	Transparent bool
+	HideAccent  bool
 }
 
 type AssetRef struct {
@@ -91,11 +99,30 @@ type AssetRef struct {
 	Context string `json:"context"`
 }
 
+type FieldRef struct {
+	Key   string   `json:"key"`
+	Asset AssetRef `json:"asset"`
+	Tone  TagTone  `json:"tone,omitempty"`
+}
+
+type FactRef struct {
+	Key   string   `json:"key,omitempty"`
+	Label string   `json:"label"`
+	Asset AssetRef `json:"asset"`
+}
+
 type ListItem struct {
 	ID          string   `json:"id"`
 	Asset       AssetRef `json:"asset"`
 	DetailAsset AssetRef `json:"detailAsset,omitempty"`
 	Actions     []string `json:"actions,omitempty"`
+	Kind        string   `json:"kind,omitempty"`
+	Fields      []FieldRef `json:"fields,omitempty"`
+	Chips       []FieldRef `json:"chips,omitempty"`
+	Facts       []FactRef  `json:"facts,omitempty"`
+	Meta        []FieldRef `json:"meta,omitempty"`
+	Notes       []FieldRef `json:"notes,omitempty"`
+	Flags       map[string]bool `json:"flags,omitempty"`
 }
 
 type ListResponse struct {
