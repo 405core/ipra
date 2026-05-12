@@ -20,6 +20,8 @@ const activeTab = ref<HistoryTabKey>('log');
 const query = ref('');
 const logs = ref<ProtectedListItem[]>([]);
 const total = ref(0);
+const page = ref(1);
+const pageSize = 10;
 const statusMessage = ref('正在加载审计日志...');
 const isLoading = ref(false);
 const selectedLog = ref<ProtectedDetailResponse | null>(null);
@@ -42,6 +44,7 @@ onBeforeUnmount(() => {
 });
 
 watch(query, () => {
+  page.value = 1;
   scheduleLogsReload();
 });
 
@@ -142,8 +145,24 @@ function protectedFactEntries(item: ProtectedListItem) {
   return (item.facts ?? []) as ProtectedFactRef[];
 }
 
-function protectedNotes(item: ProtectedListItem) {
-  return (item.notes ?? []) as ProtectedFieldRef[];
+function pageCount() {
+  return Math.max(1, Math.ceil(logs.value.length / pageSize));
+}
+
+function pagedLogs() {
+  const safePage = Math.min(Math.max(page.value, 1), pageCount());
+  const start = (safePage - 1) * pageSize;
+  return logs.value.slice(start, start + pageSize);
+}
+
+function paginationSummary() {
+  if (!logs.value.length) {
+    return '当前没有数据';
+  }
+  const safePage = Math.min(Math.max(page.value, 1), pageCount());
+  const start = (safePage - 1) * pageSize + 1;
+  const end = Math.min(logs.value.length, start + pageSize - 1);
+  return `第 ${safePage} / ${pageCount()} 页，显示 ${start}-${end} 条，共 ${logs.value.length} 条`;
 }
 </script>
 
@@ -182,7 +201,7 @@ function protectedNotes(item: ProtectedListItem) {
             placeholder="筛选操作、资源、路径"
             @dblclick.stop.prevent="openAuditFilterKeyboard"
           />
-          <span class="audit-topbar__meta">当前展示 {{ logs.length }} / {{ total }} 条</span>
+          <span class="audit-topbar__meta">{{ paginationSummary() }}，总计 {{ total }} 条</span>
           <button type="button" class="audit-refresh" :disabled="isLoading" @click="loadLogs">
             {{ isLoading ? '刷新中...' : '刷新' }}
           </button>
@@ -198,7 +217,7 @@ function protectedNotes(item: ProtectedListItem) {
 
       <section v-else class="audit-card">
         <div class="audit-list">
-          <article v-for="item in logs" :key="item.id" class="audit-item">
+          <article v-for="item in pagedLogs()" :key="item.id" class="audit-item">
             <div class="audit-item__head">
               <div class="audit-item__title">
                 <strong>
@@ -250,24 +269,6 @@ function protectedNotes(item: ProtectedListItem) {
                 </strong>
               </span>
             </div>
-
-            <div
-              v-if="protectedNotes(item).length"
-              class="audit-item__notes"
-            >
-              <span
-                v-for="note in protectedNotes(item)"
-                :key="`${item.id}-${note.key}`"
-                class="audit-item__note"
-              >
-                <SensitiveAssetImage
-                  :src="note.asset.url"
-                  :alt="note.key"
-                  inline
-                />
-              </span>
-            </div>
-
             <div class="audit-item__actions">
               <button type="button" class="audit-item__detail" @click="openLogDetail(item)">
                 详情
@@ -279,6 +280,26 @@ function protectedNotes(item: ProtectedListItem) {
             <strong>当前没有可显示的审计日志</strong>
             <span>{{ statusMessage }}</span>
           </div>
+        </div>
+
+        <div v-if="logs.length" class="audit-pagination">
+          <button
+            type="button"
+            class="audit-refresh"
+            :disabled="page <= 1"
+            @click="page = Math.max(1, page - 1)"
+          >
+            上一页
+          </button>
+          <span class="audit-topbar__meta">第 {{ page }} / {{ pageCount() }} 页</span>
+          <button
+            type="button"
+            class="audit-refresh"
+            :disabled="page >= pageCount()"
+            @click="page = Math.min(pageCount(), page + 1)"
+          >
+            下一页
+          </button>
         </div>
       </section>
     </section>
@@ -379,7 +400,10 @@ function protectedNotes(item: ProtectedListItem) {
 
 .audit-card {
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
+  height: 100%;
   padding: clamp(16px, 1.8vw, 24px);
   border-radius: clamp(20px, 1.8vw, 24px);
   background: rgba(255, 255, 255, 0.94);
@@ -394,11 +418,25 @@ function protectedNotes(item: ProtectedListItem) {
 
 .audit-list {
   display: grid;
+  flex: 1 1 auto;
   gap: clamp(12px, 1.2vw, 14px);
   height: 100%;
   min-height: 0;
+  align-content: start;
   overflow: auto;
   padding-right: 4px;
+}
+
+.audit-pagination {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: clamp(12px, 1.2vw, 16px);
+  padding-top: clamp(10px, 1vw, 12px);
+  border-top: 1px solid rgba(157, 189, 202, 0.28);
 }
 
 .audit-item,
@@ -643,9 +681,11 @@ function protectedNotes(item: ProtectedListItem) {
 
   .audit-card {
     min-height: 280px;
+    height: auto;
   }
 
   .audit-list {
+    flex: 1 1 auto;
     max-height: none;
   }
 

@@ -208,6 +208,12 @@ const archiveJudgementOptions: FilterOption[] = [
   { value: 'falseStatement', label: '虚假陈述' },
   { value: 'clear', label: '无异常' },
 ];
+const listPageSize = 10;
+const profilePage = ref(1);
+const watchlistPage = ref(1);
+const userPage = ref(1);
+const archivePage = ref(1);
+const auditPage = ref(1);
 const filteredAuditLogs = computed(() => protectedAuditLogs.value);
 const filteredProtectedProfiles = computed(() =>
   protectedProfiles.value.filter((item) => {
@@ -282,6 +288,32 @@ const filteredProtectedUsers = computed(() =>
   }),
 );
 const filteredArchives = computed(() => archives.value);
+const pagedProtectedProfiles = computed(() =>
+  sliceCurrentPage(filteredProtectedProfiles.value, profilePage.value),
+);
+const pagedProtectedWatchlist = computed(() =>
+  sliceCurrentPage(filteredProtectedWatchlist.value, watchlistPage.value),
+);
+const pagedProtectedUsers = computed(() =>
+  sliceCurrentPage(filteredProtectedUsers.value, userPage.value),
+);
+const pagedArchives = computed(() =>
+  sliceCurrentPage(filteredArchives.value, archivePage.value),
+);
+const pagedAuditLogs = computed(() =>
+  sliceCurrentPage(filteredAuditLogs.value, auditPage.value),
+);
+const profilePageCount = computed(() =>
+  computePageCount(filteredProtectedProfiles.value.length),
+);
+const watchlistPageCount = computed(() =>
+  computePageCount(filteredProtectedWatchlist.value.length),
+);
+const userPageCount = computed(() =>
+  computePageCount(filteredProtectedUsers.value.length),
+);
+const archivePageCount = computed(() => computePageCount(filteredArchives.value.length));
+const auditPageCount = computed(() => computePageCount(filteredAuditLogs.value.length));
 const selectedProfileDocumentTypeLabel = computed(() =>
   describeFilterLabel(
     '证件类型',
@@ -382,23 +414,80 @@ watch(isAnyFormVisible, (visible) => {
 });
 
 watch(profileQuery, () => {
+  profilePage.value = 1;
   scheduleProfilesReload();
 });
 
 watch(watchlistQuery, () => {
+  watchlistPage.value = 1;
   scheduleWatchlistReload();
 });
 
 watch(userQuery, () => {
+  userPage.value = 1;
   scheduleUsersReload();
 });
 
 watch([archiveQuery, archiveDocumentNum, archiveOperatorWorkId], () => {
+  archivePage.value = 1;
   scheduleArchivesReload();
 });
 
 watch([auditQuery, auditActorWorkId], () => {
+  auditPage.value = 1;
   scheduleAuditLogsReload();
+});
+
+watch(
+  () => [
+    profileFilters.value.documentType,
+    profileFilters.value.nationality,
+    profileFilters.value.gender,
+  ],
+  () => {
+    profilePage.value = 1;
+  },
+);
+
+watch(
+  () => [userFilters.value.role, userFilters.value.status],
+  () => {
+    userPage.value = 1;
+  },
+);
+
+watch(
+  () => archiveFilters.value.judgement,
+  () => {
+    archivePage.value = 1;
+  },
+);
+
+watch(
+  () => auditFilters.value.result,
+  () => {
+    auditPage.value = 1;
+  },
+);
+
+watch(profilePageCount, (count) => {
+  profilePage.value = clampPage(profilePage.value, count);
+});
+
+watch(watchlistPageCount, (count) => {
+  watchlistPage.value = clampPage(watchlistPage.value, count);
+});
+
+watch(userPageCount, (count) => {
+  userPage.value = clampPage(userPage.value, count);
+});
+
+watch(archivePageCount, (count) => {
+  archivePage.value = clampPage(archivePage.value, count);
+});
+
+watch(auditPageCount, (count) => {
+  auditPage.value = clampPage(auditPage.value, count);
 });
 
 async function refreshAll() {
@@ -870,6 +959,30 @@ function applyAuditResultFilter(value: string) {
   scheduleAuditLogsReload(true);
 }
 
+function computePageCount(totalItems: number) {
+  return Math.max(1, Math.ceil(totalItems / listPageSize));
+}
+
+function clampPage(page: number, pageCount: number) {
+  return Math.min(Math.max(page, 1), Math.max(pageCount, 1));
+}
+
+function sliceCurrentPage<T>(items: T[], page: number) {
+  const start = (clampPage(page, computePageCount(items.length)) - 1) * listPageSize;
+  return items.slice(start, start + listPageSize);
+}
+
+function buildPaginationSummary(totalItems: number, currentPage: number) {
+  if (!totalItems) {
+    return '当前没有数据';
+  }
+
+  const safePage = clampPage(currentPage, computePageCount(totalItems));
+  const start = (safePage - 1) * listPageSize + 1;
+  const end = Math.min(totalItems, start + listPageSize - 1);
+  return `第 ${safePage} / ${computePageCount(totalItems)} 页，显示 ${start}-${end} 条，共 ${totalItems} 条`;
+}
+
 async function openArchiveDetail(item: InquiryArchiveListItem) {
   isArchiveDetailVisible.value = true;
   selectedArchive.value = null;
@@ -1323,12 +1436,12 @@ function stringifyDetail(value: unknown) {
         </div>
 
         <p class="admin-filter-summary">
-          当前展示 {{ filteredProtectedProfiles.length }} 条基础画像。
+          {{ buildPaginationSummary(filteredProtectedProfiles.length, profilePage) }}
         </p>
 
         <div class="admin-table">
           <article
-            v-for="item in filteredProtectedProfiles"
+            v-for="item in pagedProtectedProfiles"
             :key="item.id"
             class="admin-row admin-row--profile"
           >
@@ -1440,6 +1553,28 @@ function stringifyDetail(value: unknown) {
             </div>
           </article>
         </div>
+
+        <div class="admin-pagination">
+          <button
+            type="button"
+            class="ghost"
+            :disabled="profilePage <= 1"
+            @click="profilePage = Math.max(1, profilePage - 1)"
+          >
+            上一页
+          </button>
+          <span class="admin-pagination__meta">
+            第 {{ profilePage }} / {{ profilePageCount }} 页
+          </span>
+          <button
+            type="button"
+            class="ghost"
+            :disabled="profilePage >= profilePageCount"
+            @click="profilePage = Math.min(profilePageCount, profilePage + 1)"
+          >
+            下一页
+          </button>
+        </div>
       </section>
 
       <section v-else-if="activeTab === 'watchlist'" class="admin-panel">
@@ -1472,12 +1607,12 @@ function stringifyDetail(value: unknown) {
         </div>
 
         <p class="admin-filter-summary">
-          当前展示 {{ filteredProtectedWatchlist.length }} 条高风险名单。
+          {{ buildPaginationSummary(filteredProtectedWatchlist.length, watchlistPage) }}
         </p>
 
         <div class="admin-table">
           <article
-            v-for="item in filteredProtectedWatchlist"
+            v-for="item in pagedProtectedWatchlist"
             :key="item.id"
             class="admin-row admin-row--watchlist"
           >
@@ -1537,6 +1672,28 @@ function stringifyDetail(value: unknown) {
               </div>
             </div>
           </article>
+        </div>
+
+        <div class="admin-pagination">
+          <button
+            type="button"
+            class="ghost"
+            :disabled="watchlistPage <= 1"
+            @click="watchlistPage = Math.max(1, watchlistPage - 1)"
+          >
+            上一页
+          </button>
+          <span class="admin-pagination__meta">
+            第 {{ watchlistPage }} / {{ watchlistPageCount }} 页
+          </span>
+          <button
+            type="button"
+            class="ghost"
+            :disabled="watchlistPage >= watchlistPageCount"
+            @click="watchlistPage = Math.min(watchlistPageCount, watchlistPage + 1)"
+          >
+            下一页
+          </button>
         </div>
       </section>
 
@@ -1640,14 +1797,14 @@ function stringifyDetail(value: unknown) {
         </div>
 
         <p class="admin-filter-summary">
-          当前筛选后 {{ filteredArchives.length }} 条问询归档。{{
+          {{ buildPaginationSummary(filteredArchives.length, archivePage) }}。{{
             statusMessages.archives
           }}
         </p>
 
         <div class="admin-table">
           <article
-            v-for="item in filteredArchives"
+            v-for="item in pagedArchives"
             :key="item.id"
             class="admin-row admin-row--archive"
           >
@@ -1719,6 +1876,28 @@ function stringifyDetail(value: unknown) {
               </button>
             </div>
           </article>
+        </div>
+
+        <div class="admin-pagination">
+          <button
+            type="button"
+            class="ghost"
+            :disabled="archivePage <= 1"
+            @click="archivePage = Math.max(1, archivePage - 1)"
+          >
+            上一页
+          </button>
+          <span class="admin-pagination__meta">
+            第 {{ archivePage }} / {{ archivePageCount }} 页
+          </span>
+          <button
+            type="button"
+            class="ghost"
+            :disabled="archivePage >= archivePageCount"
+            @click="archivePage = Math.min(archivePageCount, archivePage + 1)"
+          >
+            下一页
+          </button>
         </div>
       </section>
 
@@ -1802,12 +1981,12 @@ function stringifyDetail(value: unknown) {
           </div>
 
           <p class="admin-filter-summary">
-            当前展示 {{ filteredAuditLogs.length }} 条审计日志。
+            {{ buildPaginationSummary(filteredAuditLogs.length, auditPage) }}
           </p>
 
           <div class="admin-table">
             <article
-              v-for="item in filteredAuditLogs"
+              v-for="item in pagedAuditLogs"
               :key="item.id"
               class="admin-row admin-row--audit"
             >
@@ -1863,20 +2042,6 @@ function stringifyDetail(value: unknown) {
                     </strong>
                   </span>
                 </div>
-
-                <div v-if="protectedNotes(item).length" class="admin-row__tags">
-                  <span
-                    v-for="note in protectedNotes(item)"
-                    :key="`${item.id}-${note.key}`"
-                    class="admin-row__tag admin-row__tag--muted"
-                  >
-                    <SensitiveAssetImage
-                      :src="note.asset.url"
-                      :alt="note.key"
-                      inline
-                    />
-                  </span>
-                </div>
               </div>
               <div class="admin-row__actions">
                 <button type="button" @click="openAuditDetail(item)">
@@ -1884,6 +2049,28 @@ function stringifyDetail(value: unknown) {
                 </button>
               </div>
             </article>
+          </div>
+
+          <div class="admin-pagination">
+            <button
+              type="button"
+              class="ghost"
+              :disabled="auditPage <= 1"
+              @click="auditPage = Math.max(1, auditPage - 1)"
+            >
+              上一页
+            </button>
+            <span class="admin-pagination__meta">
+              第 {{ auditPage }} / {{ auditPageCount }} 页
+            </span>
+            <button
+              type="button"
+              class="ghost"
+              :disabled="auditPage >= auditPageCount"
+              @click="auditPage = Math.min(auditPageCount, auditPage + 1)"
+            >
+              下一页
+            </button>
           </div>
         </template>
 
@@ -2018,12 +2205,12 @@ function stringifyDetail(value: unknown) {
           </div>
 
           <p class="admin-filter-summary">
-            当前展示 {{ filteredProtectedUsers.length }} 个用户。
+            {{ buildPaginationSummary(filteredProtectedUsers.length, userPage) }}
           </p>
 
           <div class="admin-table">
             <article
-              v-for="item in filteredProtectedUsers"
+              v-for="item in pagedProtectedUsers"
               :key="item.id"
               class="admin-row admin-row--user"
             >
@@ -2106,6 +2293,28 @@ function stringifyDetail(value: unknown) {
                 </button>
               </div>
             </article>
+          </div>
+
+          <div class="admin-pagination">
+            <button
+              type="button"
+              class="ghost"
+              :disabled="userPage <= 1"
+              @click="userPage = Math.max(1, userPage - 1)"
+            >
+              上一页
+            </button>
+            <span class="admin-pagination__meta">
+              第 {{ userPage }} / {{ userPageCount }} 页
+            </span>
+            <button
+              type="button"
+              class="ghost"
+              :disabled="userPage >= userPageCount"
+              @click="userPage = Math.min(userPageCount, userPage + 1)"
+            >
+              下一页
+            </button>
           </div>
         </template>
       </section>
@@ -2551,6 +2760,7 @@ function stringifyDetail(value: unknown) {
   padding: var(--admin-page-pad);
   display: grid;
   grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   overflow-x: hidden;
   overflow-y: auto;
 }
@@ -2559,7 +2769,9 @@ function stringifyDetail(value: unknown) {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  min-height: calc(100dvh - (var(--admin-page-pad) * 2));
+  min-height: 0;
+  height: 100%;
+  max-height: calc(100dvh - (var(--admin-page-pad) * 2));
   border-radius: var(--admin-surface-radius);
   background: rgba(255, 255, 255, 0.86);
   border: 1px solid rgba(204, 179, 164, 0.5);
@@ -2570,7 +2782,7 @@ function stringifyDetail(value: unknown) {
 
 .admin-panel {
   padding: calc(var(--admin-scale) * 1.12);
-  overflow: visible;
+  overflow: hidden;
 }
 
 .admin-toolbar,
@@ -2655,6 +2867,54 @@ function stringifyDetail(value: unknown) {
   margin: 0 0 var(--admin-gap-lg);
   color: #7a5c50;
   font-size: var(--admin-font-sm);
+}
+
+.admin-pagination {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--admin-gap-sm);
+  margin-top: var(--admin-gap-lg);
+  padding-top: var(--admin-gap-sm);
+  border-top: 1px solid rgba(204, 179, 164, 0.35);
+}
+
+.admin-pagination button {
+  min-height: var(--admin-control-h-lg);
+  min-width: calc(var(--admin-scale) * 7.8);
+  padding: 0 calc(var(--admin-scale) * 1.15);
+  border: 0;
+  border-radius: var(--admin-card-radius);
+  background: linear-gradient(135deg, #b55339, #e27f55);
+  color: #fff;
+  font-size: var(--admin-font-md);
+  font-weight: 700;
+  box-shadow: 0 calc(var(--admin-scale) * 0.4) calc(var(--admin-scale) * 0.95)
+    rgba(181, 83, 57, 0.24);
+  cursor: pointer;
+}
+
+.admin-pagination button:disabled {
+  background: #f3e7de;
+  color: #b49485;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.admin-pagination__meta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--admin-control-h-lg);
+  padding: 0 calc(var(--admin-scale) * 1.15);
+  border-radius: var(--admin-card-radius);
+  background: rgba(243, 231, 222, 0.88);
+  border: 1px solid rgba(204, 179, 164, 0.42);
+  color: #7a5c50;
+  font-size: var(--admin-font-md);
+  font-weight: 700;
 }
 
 .admin-audit-list {
@@ -2893,7 +3153,12 @@ function stringifyDetail(value: unknown) {
 
 .admin-table {
   display: grid;
+  flex: 1 1 auto;
   gap: var(--admin-gap-md);
+  min-height: 0;
+  align-content: start;
+  overflow: auto;
+  padding-right: var(--admin-gap-xs);
 }
 
 .admin-row {
@@ -3498,7 +3763,9 @@ function stringifyDetail(value: unknown) {
   }
 
   .admin-panel {
-    min-height: auto;
+    min-height: 0;
+    height: auto;
+    max-height: none;
   }
 
   .admin-nav {
