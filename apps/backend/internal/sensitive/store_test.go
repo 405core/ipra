@@ -218,3 +218,30 @@ func TestRendererFormatsAndPayloadSize(t *testing.T) {
 		t.Fatalf("webp payload too large: %d bytes", len(webpImage.Bytes))
 	}
 }
+
+func TestRendererInlinePresetUsesContentWidth(t *testing.T) {
+	manager := newTestManager(t)
+
+	image, err := manager.renderer.Render(AssetSpec{
+		Document: Document{
+			Title: "男",
+		},
+		Preset: PresetInline,
+		Format: FormatWebP,
+		Style: RenderStyle{
+			Transparent: true,
+			HideAccent:  true,
+		},
+		Watermark: testWatermark("Alice", "rid-inline"),
+	})
+	if err != nil {
+		t.Fatalf("inline render error = %v", err)
+	}
+
+	if image.Width <= 0 {
+		t.Fatalf("expected positive inline width, got %d", image.Width)
+	}
+	if image.Width >= 240 {
+		t.Fatalf("expected compact inline width, got %d", image.Width)
+	}
+}

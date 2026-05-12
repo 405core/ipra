@@ -108,6 +108,10 @@ func (r *Renderer) Render(spec AssetSpec) (EncodedImage, error) {
 	}
 	defer closeFace(watermarkFace)
 
+	if spec.Preset == PresetInline {
+		layout.Width = resolveInlineWidth(layout, spec.Document, titleFace, bodyFace, tagFace)
+	}
+
 	lines, totalHeight := measureDocument(layout, spec.Document, titleFace, bodyFace, tagFace)
 	canvas := image.NewRGBA(image.Rect(0, 0, layout.Width, totalHeight))
 	background := color.RGBA{250, 252, 254, 255}
@@ -236,6 +240,122 @@ func resolveLayout(preset RenderPreset) presetLayout {
 			Quality:       82,
 		}
 	}
+}
+
+func resolveInlineWidth(
+	layout presetLayout,
+	doc Document,
+	titleFace font.Face,
+	bodyFace font.Face,
+	tagFace font.Face,
+) int {
+	const minWidth = 48
+
+	contentWidth := measureInlineContentWidth(doc, titleFace, bodyFace, tagFace)
+	if contentWidth <= 0 {
+		return minWidth
+	}
+
+	return maxInt(minWidth, minInt(contentWidth, layout.Width))
+}
+
+func measureInlineContentWidth(
+	doc Document,
+	titleFace font.Face,
+	bodyFace font.Face,
+	tagFace font.Face,
+) int {
+	maxWidth := 0
+
+	updateWidth := func(value int) {
+		if value > maxWidth {
+			maxWidth = value
+		}
+	}
+
+	if eyebrow := strings.TrimSpace(doc.Eyebrow); eyebrow != "" {
+		updateWidth(textWidth(bodyFace, strings.ToUpper(eyebrow)))
+	}
+
+	if title := strings.TrimSpace(doc.Title); title != "" {
+		updateWidth(textWidth(titleFace, title))
+	}
+
+	if subtitle := strings.TrimSpace(doc.Subtitle); subtitle != "" {
+		updateWidth(textWidth(bodyFace, subtitle))
+	}
+
+	for _, section := range doc.Sections {
+		if heading := strings.TrimSpace(section.Heading); heading != "" {
+			updateWidth(textWidth(bodyFace, heading))
+		}
+		for _, line := range compactValues(section.Lines) {
+			updateWidth(textWidth(bodyFace, line))
+		}
+	}
+
+	for _, line := range compactValues(doc.Footer) {
+		updateWidth(textWidth(bodyFace, line))
+	}
+
+	updateWidth(measureInlineTagWidth(doc.Tags, nil, tagFace))
+	updateWidth(measureInlineTagWidth(nil, doc.TagItems, tagFace))
+	updateWidth(measureInlineTagWidth(nil, doc.MetaItems, tagFace))
+	updateWidth(measureInlineTagWidth(nil, doc.FooterTags, tagFace))
+	updateWidth(measureInlineFactWidth(doc.FactItems, bodyFace))
+
+	return maxWidth
+}
+
+func measureInlineTagWidth(tags []string, items []TagItem, face font.Face) int {
+	const (
+		paddingX = 14
+		gapX     = 10
+	)
+
+	width := 0
+	appendTag := func(text string) {
+		text = strings.TrimSpace(text)
+		if text == "" {
+			return
+		}
+		if width > 0 {
+			width += gapX
+		}
+		width += textWidth(face, text) + paddingX*2
+	}
+
+	for _, tag := range compactValues(tags) {
+		appendTag(tag)
+	}
+	for _, item := range items {
+		appendTag(item.Text)
+	}
+
+	return width
+}
+
+func measureInlineFactWidth(facts []FactItem, face font.Face) int {
+	const (
+		paddingX = 12
+		labelGap = 10
+		gapX     = 10
+	)
+
+	width := 0
+	for _, fact := range facts {
+		label := strings.TrimSpace(fact.Label)
+		value := strings.TrimSpace(fact.Value)
+		if label == "" || value == "" {
+			continue
+		}
+		if width > 0 {
+			width += gapX
+		}
+		width += textWidth(face, label) + textWidth(face, value) + paddingX*2 + labelGap
+	}
+
+	return width
 }
 
 func measureDocument(
