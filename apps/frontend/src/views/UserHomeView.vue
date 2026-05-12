@@ -868,19 +868,20 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 }
 
 .user-page {
-  min-height: calc(100vh - 146px);
+  min-height: 0;
+  height: 100%;
   display: grid;
-  align-content: center;
 }
 
 .user-shell {
   box-sizing: border-box;
   display: grid;
-  width: min(1180px, 100%);
-  height: calc(100vh - 146px);
-  margin: 0 auto;
-  padding: 26px 28px;
-  border-radius: 28px;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  height: min(100%, var(--content-height, 100%));
+  padding: clamp(14px, 1.8vw, 26px);
+  border-radius: clamp(22px, 2vw, 28px);
   background: rgba(255, 255, 255, 0.92);
   border: 1px solid rgba(157, 189, 202, 0.36);
   box-shadow: 0 22px 46px rgba(14, 40, 48, 0.08);
@@ -946,7 +947,7 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 .panel-grid,
 .stats-grid {
   display: grid;
-  gap: 18px;
+  gap: clamp(12px, 1.4vw, 18px);
 }
 
 .panel-grid {
@@ -956,7 +957,7 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 
 .search-column {
   display: grid;
-  gap: 14px;
+  gap: clamp(10px, 1.2vw, 14px);
   min-height: 0;
   height: 100%;
   grid-template-rows: auto minmax(0, 1fr);
@@ -964,27 +965,28 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 
 .surface-card {
   min-height: 0;
-  padding: 18px 20px;
+  padding: clamp(14px, 1.5vw, 20px);
+  border-radius: clamp(22px, 2vw, 28px);
 }
 
 .surface-card--search {
   display: grid;
   gap: 8px;
-  padding: 12px 16px;
+  padding: clamp(12px, 1.3vw, 16px);
 }
 
 .surface-card--camera {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto auto;
   gap: 12px;
-  padding: 14px 16px 16px;
+  padding: clamp(12px, 1.4vw, 16px);
   height: 100%;
 }
 
 .surface-card--results {
   display: grid;
   gap: 0;
-  padding: 18px 20px 20px;
+  padding: clamp(14px, 1.5vw, 20px);
   min-height: 0;
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
@@ -1110,7 +1112,7 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
   overflow: hidden;
   min-height: 0;
   height: 100%;
-  border-radius: 22px;
+  border-radius: clamp(18px, 1.8vw, 22px);
   background: linear-gradient(
     160deg,
     rgba(11, 114, 136, 0.08),
@@ -1166,8 +1168,8 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 
 .camera-status--secondary {
   min-height: 52px;
-  padding: 10px 12px;
-  border-radius: 14px;
+  padding: clamp(10px, 1vw, 12px);
+  border-radius: clamp(12px, 1.2vw, 14px);
   background: rgba(11, 114, 136, 0.06);
   border: 1px solid rgba(11, 114, 136, 0.1);
 }
@@ -1206,17 +1208,18 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 
 .results-list {
   display: grid;
-  gap: 14px;
+  gap: clamp(12px, 1.2vw, 14px);
   height: 100%;
-  margin-top: 16px;
+  margin-top: clamp(12px, 1.4vw, 16px);
   min-height: 0;
   align-content: start;
   overflow: auto;
+  padding-right: 4px;
 }
 
 .surface-card--results .empty-state {
-  margin-top: 16px;
-  padding: 34px 12px 16px;
+  margin-top: clamp(12px, 1.4vw, 16px);
+  padding: clamp(24px, 4vw, 34px) 12px 16px;
   border: 0;
   background: transparent;
   box-shadow: none;
@@ -1226,9 +1229,10 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
   position: relative;
   display: flex;
   align-items: stretch;
-  gap: 18px;
-  padding: 16px 18px 16px 24px;
-  border-radius: 24px;
+  gap: clamp(14px, 1.4vw, 18px);
+  padding: clamp(14px, 1.5vw, 16px) clamp(14px, 1.5vw, 18px)
+    clamp(14px, 1.5vw, 16px) clamp(20px, 1.8vw, 24px);
+  border-radius: clamp(18px, 1.8vw, 24px);
   background: rgba(255, 255, 255, 0.94);
   border: 1px solid rgba(157, 189, 202, 0.36);
   box-shadow: 0 22px 46px rgba(14, 40, 48, 0.08);
@@ -1356,10 +1360,10 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 }
 
 .result-strip__actions {
-  display: flex;
-  flex: 0 0 240px;
-  width: 240px;
-  align-items: stretch;
+  display: grid;
+  flex: 0 0 clamp(160px, 16vw, 220px);
+  width: clamp(160px, 16vw, 220px);
+  align-items: end;
 }
 
 .result-strip__actions .primary-action {
@@ -1367,10 +1371,10 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
   align-items: center;
   justify-content: center;
   width: 100%;
-  min-height: 100%;
-  padding: 18px 20px;
-  border-radius: 18px;
-  font-size: 1.04rem;
+  min-height: clamp(84px, 16vh, 120px);
+  padding: clamp(14px, 1.4vw, 18px) clamp(16px, 1.6vw, 20px);
+  border-radius: clamp(16px, 1.6vw, 18px);
+  font-size: clamp(0.96rem, 0.86rem + 0.32vw, 1.04rem);
   letter-spacing: 0.04em;
 }
 
@@ -1502,7 +1506,7 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 
 @media (min-width: 1080px) {
   .panel-grid {
-    grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.85fr);
+    grid-template-columns: minmax(0, 1.28fr) minmax(320px, 0.92fr);
     align-items: stretch;
   }
 
@@ -1526,14 +1530,14 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 
 @media (max-width: 719px) {
   .user-page {
-    min-height: auto;
-    align-content: start;
+    height: auto;
   }
 
   .user-shell {
     height: auto;
-    padding: 22px 20px;
-    border-radius: 24px;
+    min-height: auto;
+    padding: 14px;
+    border-radius: 22px;
     overflow: visible;
   }
 

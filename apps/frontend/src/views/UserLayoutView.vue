@@ -451,6 +451,12 @@ onBeforeUnmount(() => {
 
 <style scoped lang="scss">
 .user-shell {
+  --header-height: 92px;
+  --page-pad-x: clamp(12px, 1.8vw, 28px);
+  --page-pad-y: clamp(12px, 1.8vw, 28px);
+  --sidebar-width: clamp(236px, 18vw, 272px);
+  --sidebar-gap: clamp(14px, 1.8vw, 28px);
+  --content-height: calc(100dvh - var(--header-height) - (var(--page-pad-y) * 2));
   --page-bg: #eff6f9;
   --panel-bg: rgba(255, 255, 255, 0.9);
   --panel-border: rgba(157, 189, 202, 0.38);
@@ -459,7 +465,9 @@ onBeforeUnmount(() => {
   --text-main: #15252b;
   --text-muted: #5b7179;
   --shadow: 0 22px 46px rgba(14, 40, 48, 0.08);
-  min-height: 100vh;
+  position: relative;
+  min-height: 100dvh;
+  overflow: hidden;
   background:
     radial-gradient(circle at top left, rgba(16, 146, 174, 0.16), transparent 28%),
     radial-gradient(circle at right center, rgba(251, 162, 122, 0.12), transparent 22%),
@@ -476,8 +484,9 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  min-height: var(--header-height);
   gap: 16px;
-  padding: 18px 20px;
+  padding: clamp(14px, 1.6vw, 18px) var(--page-pad-x);
   background: rgba(255, 255, 255, 0.84);
   border-bottom: 1px solid rgba(157, 189, 202, 0.28);
   backdrop-filter: blur(18px);
@@ -608,21 +617,21 @@ onBeforeUnmount(() => {
 
 .user-shell__backdrop {
   position: fixed;
-  inset: 82px 0 0;
+  inset: var(--header-height) 0 0;
   z-index: 20;
   background: rgba(10, 24, 29, 0.4);
 }
 
 .user-shell__sidebar {
   position: fixed;
-  top: 82px;
+  top: var(--header-height);
   left: 0;
   bottom: 0;
   z-index: 30;
   display: flex;
   flex-direction: column;
-  width: min(256px, calc(100vw - 28px));
-  padding: 18px;
+  width: min(var(--sidebar-width), calc(100vw - (var(--page-pad-x) * 2)));
+  padding: clamp(14px, 1.6vw, 18px);
   background: rgba(246, 251, 253, 0.96);
   border-right: 1px solid rgba(157, 189, 202, 0.28);
   box-shadow: var(--shadow);
@@ -642,17 +651,17 @@ onBeforeUnmount(() => {
 
 .sidebar__nav {
   display: grid;
-  gap: 12px;
-  margin-top: 18px;
+  gap: clamp(10px, 1.2vw, 12px);
+  margin-top: clamp(14px, 1.8vw, 18px);
 }
 
 .nav-link {
   display: grid;
   gap: 4px;
   width: 100%;
-  min-height: 92px;
-  padding: 16px;
-  border-radius: 20px;
+  min-height: clamp(84px, 10vh, 96px);
+  padding: clamp(14px, 1.8vw, 16px);
+  border-radius: clamp(18px, 1.8vw, 20px);
   background: linear-gradient(180deg, rgba(17, 34, 40, 0.02), rgba(17, 34, 40, 0.06));
   color: var(--text-main);
   border: 1px solid rgba(15, 48, 58, 0.14);
@@ -682,8 +691,8 @@ onBeforeUnmount(() => {
 .sidebar__tools {
   margin-top: auto;
   display: grid;
-  gap: 10px;
-  padding-top: 16px;
+  gap: clamp(8px, 1.2vw, 10px);
+  padding-top: clamp(12px, 1.6vw, 16px);
 }
 
 .sidebar-upload__input {
@@ -737,9 +746,9 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 4px;
   width: 100%;
-  min-height: 92px;
-  padding: 18px 16px;
-  border-radius: 18px;
+  min-height: clamp(84px, 10vh, 96px);
+  padding: clamp(14px, 1.8vw, 18px) clamp(14px, 1.6vw, 16px);
+  border-radius: clamp(16px, 1.8vw, 18px);
   text-align: left;
   background: linear-gradient(160deg, rgba(11, 114, 136, 0.08), rgba(255, 255, 255, 0.94));
   border: 1px solid rgba(11, 114, 136, 0.18);
@@ -789,9 +798,15 @@ onBeforeUnmount(() => {
 }
 
 .user-shell__content {
-  min-height: 100vh;
-  padding: 106px 20px 24px;
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 100dvh;
+  padding: calc(var(--header-height) + var(--page-pad-y))
+    var(--page-pad-x) var(--page-pad-y);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   transition: padding-left 0.24s ease;
+  overflow: hidden;
 }
 
 .import-detail-dialog {
@@ -850,26 +865,34 @@ onBeforeUnmount(() => {
 
 @media (min-width: 1080px) {
   .user-shell.has-sidebar .user-shell__content {
-    padding-left: 296px;
+    padding-left: calc(
+      var(--page-pad-x) + var(--sidebar-width) + var(--sidebar-gap)
+    );
   }
 
   .user-shell__header {
-    padding: 18px 28px;
-  }
-
-  .user-shell__sidebar {
-    width: 252px;
-  }
-
-  .user-shell__content {
-    padding: 106px 28px 28px;
+    padding-right: var(--page-pad-x);
+    padding-left: var(--page-pad-x);
   }
 }
 
 @media (max-width: 719px) {
+  .user-shell {
+    --header-height: 148px;
+  }
+
   .user-shell__header,
   .header-tools {
     flex-direction: column;
+  }
+
+  .user-shell__content {
+    min-height: calc(100dvh - var(--header-height));
+    overflow: visible;
+  }
+
+  .user-shell__sidebar {
+    width: min(92vw, 320px);
   }
 
   .session-chip,
