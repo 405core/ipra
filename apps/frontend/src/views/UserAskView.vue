@@ -10,6 +10,7 @@ import {
 import SensitiveAssetImage from '../app/SensitiveAssetImage.vue';
 import { formatChinaDateTime, formatChinaTime } from '../app/display-time';
 import { useRoute, useRouter } from 'vue-router';
+import { openTouchInput } from '../app/touch-input';
 import {
   resolveAiServiceWebSocketUrl,
   type ActionObservationPayload,
@@ -203,6 +204,7 @@ const inspectorName = session?.user.name || '普通员工';
 const inspectorWorkId = session?.user.workId || 'EMP-0000';
 const route = useRoute();
 const router = useRouter();
+const touchInputHint = '单击正常输入，双击打开触控键盘';
 
 const workflowStages: StageItem[] = [
   {
@@ -268,6 +270,24 @@ const stageLoadingContent: Record<StageLoadingMode, StageLoadingContent> = {
     ],
   },
 };
+
+async function openJudgementReasonKeyboard() {
+  const value = await openTouchInput({
+    title: '输入详细理由',
+    description: '请填写关键证据、风险信号与人工判断依据。',
+    placeholder:
+      '请详细说明为什么做出该判定，至少包含关键证据、风险信号与人工判断依据。',
+    value: judgementReason.value,
+    multiline: true,
+    confirmText: '确认回填',
+  });
+
+  if (value == null) {
+    return;
+  }
+
+  judgementReason.value = value;
+}
 
 const strategyBlueprints = [
   {
@@ -3845,7 +3865,9 @@ onBeforeUnmount(() => {
                 <span>详细理由</span>
                 <textarea
                   v-model="judgementReason"
+                  :title="touchInputHint"
                   placeholder="请详细说明为什么做出该判定，至少包含关键证据、风险信号与人工判断依据。"
+                  @dblclick.stop.prevent="openJudgementReasonKeyboard"
                 ></textarea>
               </label>
 
