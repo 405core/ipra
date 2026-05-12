@@ -134,21 +134,17 @@ func (h *Handler) handleAdminProtectedUsers(c *gin.Context) {
 		document := sensitive.Document{
 			Eyebrow:  "用户管理",
 			Title:    firstNonEmptyString(strings.TrimSpace(user.Name), "系统用户"),
-			Subtitle: "工号 " + firstNonEmptyString(strings.TrimSpace(user.WorkID), "-"),
-			Tags: compactUserStrings([]string{
-				"角色 " + NormalizeRole(user.Role),
-				"状态 " + NormalizeStatus(user.Status),
-			}),
-			Sections: []sensitive.Section{
-				{
-					Heading: "账号信息",
-					Lines: compactUserStrings([]string{
-						"姓名：" + firstNonEmptyString(strings.TrimSpace(user.Name), "-"),
-						"工号：" + firstNonEmptyString(strings.TrimSpace(user.WorkID), "-"),
-						"角色：" + NormalizeRole(user.Role),
-						"状态：" + NormalizeStatus(user.Status),
-					}),
-				},
+			Subtitle: "用户账号信息",
+			TagItems: []sensitive.TagItem{
+				{Text: firstNonEmptyString(strings.TrimSpace(user.WorkID), "-"), Tone: sensitive.TagToneIdentity},
+				{Text: NormalizeRole(user.Role), Tone: sensitive.TagToneDefault},
+				{Text: NormalizeStatus(user.Status), Tone: userStatusTagTone(user.Status)},
+			},
+			FactItems: []sensitive.FactItem{
+				{Label: "工号", Value: firstNonEmptyString(strings.TrimSpace(user.WorkID), "-")},
+				{Label: "姓名", Value: firstNonEmptyString(strings.TrimSpace(user.Name), "-")},
+				{Label: "角色", Value: NormalizeRole(user.Role)},
+				{Label: "状态", Value: NormalizeStatus(user.Status)},
 			},
 			Footer: []string{
 				"更新时间 " + user.UpdatedAt.Local().Format("2006-01-02 15:04:05"),
@@ -173,6 +169,13 @@ func (h *Handler) handleAdminProtectedUsers(c *gin.Context) {
 		Page:     1,
 		PageSize: len(items),
 	})
+}
+
+func userStatusTagTone(value string) sensitive.TagTone {
+	if NormalizeStatus(value) == StatusActive {
+		return sensitive.TagToneSuccess
+	}
+	return sensitive.TagToneMuted
 }
 
 func (h *Handler) handleAdminCreateUser(c *gin.Context) {

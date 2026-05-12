@@ -32,13 +32,39 @@ type Section struct {
 	Lines   []string
 }
 
+type TagTone string
+
+const (
+	TagToneDefault  TagTone = "default"
+	TagToneAccent   TagTone = "accent"
+	TagToneMuted    TagTone = "muted"
+	TagToneAlert    TagTone = "alert"
+	TagToneWarning  TagTone = "warning"
+	TagToneSuccess  TagTone = "success"
+	TagToneIdentity TagTone = "identity"
+)
+
+type TagItem struct {
+	Text string
+	Tone TagTone
+}
+
+type FactItem struct {
+	Label string
+	Value string
+}
+
 type Document struct {
-	Eyebrow  string
-	Title    string
-	Subtitle string
-	Tags     []string
-	Sections []Section
-	Footer   []string
+	Eyebrow    string
+	Title      string
+	Subtitle   string
+	Tags       []string
+	TagItems   []TagItem
+	FactItems  []FactItem
+	MetaItems  []TagItem
+	FooterTags []TagItem
+	Sections   []Section
+	Footer     []string
 }
 
 type EncodedImage struct {
@@ -66,10 +92,10 @@ type AssetRef struct {
 }
 
 type ListItem struct {
-	ID         string   `json:"id"`
-	Asset      AssetRef `json:"asset"`
+	ID          string   `json:"id"`
+	Asset       AssetRef `json:"asset"`
 	DetailAsset AssetRef `json:"detailAsset,omitempty"`
-	Actions    []string `json:"actions,omitempty"`
+	Actions     []string `json:"actions,omitempty"`
 }
 
 type ListResponse struct {

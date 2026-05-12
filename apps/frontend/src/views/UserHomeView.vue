@@ -1084,8 +1084,8 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 14px 16px 16px 20px;
+  gap: 12px;
+  padding: 12px 14px 14px 18px;
   border-radius: 24px;
   background: rgba(255, 255, 255, 0.94);
   border: 1px solid rgba(157, 189, 202, 0.36);
@@ -1107,20 +1107,28 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 
 .result-strip__content {
   min-width: 0;
-  display: block;
+  display: flex;
+  justify-content: center;
   position: relative;
   z-index: 1;
 }
 
 .result-strip :deep(.sensitive-image) {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  width: 100%;
   min-height: 0;
+  max-height: min(60vh, 620px);
   pointer-events: none;
   border-radius: 20px;
 }
 
 .result-strip :deep(.sensitive-image img) {
-  width: 100%;
+  width: auto;
   height: auto;
+  max-width: 100%;
+  max-height: min(60vh, 620px);
   object-fit: contain;
   object-position: top center;
   vertical-align: top;
@@ -1143,8 +1151,8 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
   align-items: center;
   justify-content: center;
   width: 100%;
-  min-height: 52px;
-  padding: 14px 20px;
+  min-height: 50px;
+  padding: 12px 20px;
   border-radius: 18px;
   font-size: 1.04rem;
   letter-spacing: 0.04em;
