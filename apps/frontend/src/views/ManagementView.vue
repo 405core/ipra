@@ -2544,14 +2544,20 @@ function stringifyDetail(value: unknown) {
 <style scoped lang="scss">
 .admin-page {
   min-height: 100vh;
+  height: 100vh;
   display: grid;
   grid-template-columns: 280px 1fr;
   background:
     linear-gradient(135deg, rgba(145, 48, 30, 0.07), transparent 36%),
     linear-gradient(180deg, #fff8f4, #f4efe9);
+  overflow: hidden;
 }
 
 .admin-sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -2612,7 +2618,11 @@ function stringifyDetail(value: unknown) {
 }
 
 .admin-content {
+  min-height: 0;
+  height: 100vh;
   padding: 28px;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .admin-panel {
@@ -3295,7 +3305,19 @@ function stringifyDetail(value: unknown) {
 
 @media (max-width: 1100px) {
   .admin-page {
+    height: auto;
     grid-template-columns: 1fr;
+    overflow: visible;
+  }
+
+  .admin-sidebar {
+    position: static;
+    height: auto;
+  }
+
+  .admin-content {
+    height: auto;
+    overflow: visible;
   }
 
   .admin-form-grid > * {
