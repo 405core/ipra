@@ -128,11 +128,8 @@ export interface FirstRoundStrategyResponse {
 
 export interface UploadedWindowFilePayload {
   filename: string;
-  storedPath: string;
   contentType?: string | null;
   sizeBytes: number;
-  bucket?: string | null;
-  objectKey?: string | null;
 }
 
 export interface HumanOmniSummaryResultPayload {

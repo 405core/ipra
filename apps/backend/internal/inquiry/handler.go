@@ -99,6 +99,7 @@ type ProtectedSession struct {
 	Rounds          []*ProtectedRound
 	JudgementBlock  *sensitive.ListItem
 	JudgementAsset  *sensitive.AssetRef
+	JudgementData   map[string]any
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }
@@ -146,6 +147,37 @@ type ProtectedRoundSnapshot struct {
 	RecordedFileName string              `json:"recordedFileName,omitempty"`
 	UploadedFile     map[string]any      `json:"uploadedFile,omitempty"`
 	HumanOmniWindow  map[string]any      `json:"humanOmniWindow,omitempty"`
+}
+
+type ArchiveRoundSnapshot struct {
+	ID                 string
+	RoundNumber        int
+	Title              string
+	QuestionCount      int
+	Status             string
+	DurationSeconds    int
+	RecordedFileName   string
+	AnswerText         string
+	PromptQuestions    []string
+	HumanOmniSummary   string
+	HumanOmniWindow    map[string]any
+	ActionObservations []map[string]any
+	ASR                map[string]any
+}
+
+type ArchiveSessionSnapshot struct {
+	SessionID           string
+	OwnerUserID         uint64
+	PassengerRowID      uint64
+	PassengerName       string
+	PassengerDocNum     string
+	PassengerProfile    map[string]any
+	TripProfile         map[string]any
+	KnownFacts          []string
+	JudgementData       map[string]any
+	Rounds              []ArchiveRoundSnapshot
+	CompletedRounds     int
+	TotalSampleDuration int
 }
 
 type ProtectedSessionSnapshot struct {
@@ -272,13 +304,7 @@ type protectedWindowSummaryRequest struct {
 }
 
 type protectedFollowupRequest struct {
-	RoundNumber        int             `json:"roundNumber"`
-	RecordedFileName   string          `json:"recordedFileName"`
-	DurationSeconds    int             `json:"durationSeconds"`
-	AnswerText         string          `json:"answerText"`
-	HumanOmniWindow    map[string]any  `json:"humanOmniWindow"`
-	ActionObservations []map[string]any `json:"actionObservations"`
-	ASR                map[string]any  `json:"asr"`
+	RoundNumber int `json:"roundNumber"`
 }
 
 func (h *Handler) handleProtectedStrategy(c *gin.Context) {
@@ -430,12 +456,15 @@ func (h *Handler) handleProtectedWindowSummary(c *gin.Context) {
 
 	round.DurationSeconds = durationSeconds
 	round.RecordedFileName = extractStringMap(aiResponse, "uploadedFile", "filename")
-	round.UploadedFile = extractNestedMap(aiResponse, "uploadedFile")
+	round.UploadedFile = sanitizeUploadedFile(extractNestedMap(aiResponse, "uploadedFile"))
 	round.AnswerText = answerText
-	round.HumanOmniWindow = extractNestedMap(aiResponse, "humanOmniWindow")
+	round.HumanOmniWindow = sanitizeHumanOmniWindow(extractNestedMap(aiResponse, "humanOmniWindow"))
 	round.ActionObservations = actionObservations
 	round.ASR = asr
-	round.HumanOmniSummary = extractStringMap(aiResponse, "humanOmniWindow", "rawSummary")
+	round.HumanOmniSummary = firstNonEmptyInquiry(
+		extractStringMap(aiResponse, "humanOmniWindow", "rawSummary"),
+		extractStringMap(aiResponse, "humanOmni", "rawSummary"),
+	)
 	round.Status = "uploaded"
 	summaryAsset := h.renderRoundSummaryAsset(c, claims, round)
 	round.SummaryAsset = &summaryAsset
@@ -467,28 +496,21 @@ func (h *Handler) handleProtectedFollowup(c *gin.Context) {
 		return
 	}
 
-	currentRound.DurationSeconds = req.DurationSeconds
-	currentRound.RecordedFileName = strings.TrimSpace(req.RecordedFileName)
-	currentRound.AnswerText = strings.TrimSpace(req.AnswerText)
-	currentRound.HumanOmniWindow = cloneMap(req.HumanOmniWindow)
-	currentRound.ActionObservations = cloneMapSlice(req.ActionObservations)
-	currentRound.ASR = cloneMap(req.ASR)
-	currentRound.HumanOmniSummary = extractString(req.HumanOmniWindow["rawSummary"])
-	currentRound.Status = "uploaded"
-	summaryAsset := h.renderRoundSummaryAsset(c, claims, currentRound)
-	currentRound.SummaryAsset = &summaryAsset
-	currentRound.SummaryBlock = h.buildRoundSummaryBlock(c, claims, currentRound, summaryAsset)
+	if currentRound.Status != "uploaded" {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "当前轮次尚未完成受保护摘要上传"})
+		return
+	}
 
 	memoryContext := h.loadMemoryContext(session.SessionID, session.PassengerID)
 	aiPayload := map[string]any{
 		"sessionId": session.SessionID,
-		"roundNo":   req.RoundNumber,
+		"roundNo":   currentRound.RoundNumber,
 		"passengerProfile": session.PassengerProfile,
 		"tripProfile":      session.TripProfile,
 		"qaHistory":        h.buildQaHistory(session),
 		"humanOmniWindows": h.buildHumanOmniWindows(session),
 		"actionObservations": h.buildActionObservationHistory(session),
-		"asr":               req.ASR,
+		"asr":               cloneMap(currentRound.ASR),
 		"memoryContext":     memoryContext,
 		"constraints": map[string]any{
 			"questionCount": 3,
@@ -502,7 +524,7 @@ func (h *Handler) handleProtectedFollowup(c *gin.Context) {
 		return
 	}
 
-	nextRound := h.buildFollowupRound(c, claims, aiResponse, req.RoundNumber)
+	nextRound := h.buildFollowupRound(c, claims, aiResponse, currentRound.RoundNumber+1)
 	session.Rounds = append(session.Rounds, nextRound)
 	session.CurrentRoundID = nextRound.ID
 	memoryAsset := h.renderMemoryAsset(c, claims, session.SessionID, session.PassengerID, memoryContext)
@@ -556,6 +578,7 @@ func (h *Handler) handleProtectedJudgement(c *gin.Context) {
 	judgementAsset := h.renderJudgementAsset(c, claims, aiResponse, session)
 	session.JudgementAsset = &judgementAsset
 	session.JudgementBlock = h.buildJudgementBlock(c, claims, aiResponse, session, judgementAsset)
+	session.JudgementData = cloneMap(aiResponse)
 	session.UpdatedAt = time.Now().UTC()
 
 	c.JSON(http.StatusOK, h.snapshotProtectedSession(session.SessionID))
@@ -1069,8 +1092,8 @@ func (h *Handler) snapshotProtectedSession(sessionID string) ProtectedSessionSna
 			PromptAsset:      round.PromptAsset,
 			SummaryAsset:     round.SummaryAsset,
 			RecordedFileName: round.RecordedFileName,
-			UploadedFile:     cloneMap(round.UploadedFile),
-			HumanOmniWindow:  cloneMap(round.HumanOmniWindow),
+			UploadedFile:     sanitizeUploadedFile(cloneMap(round.UploadedFile)),
+			HumanOmniWindow:  sanitizeHumanOmniWindow(cloneMap(round.HumanOmniWindow)),
 		}
 		if round.ID == session.CurrentRoundID {
 			currentRound = &snapshot
@@ -1097,6 +1120,90 @@ func (h *Handler) snapshotProtectedSession(sessionID string) ProtectedSessionSna
 		CompletedRounds:     completedRounds,
 		TotalSampleDuration: totalDuration,
 	}
+}
+
+func (h *Handler) ArchiveSnapshot(sessionID string, userID uint64) (ArchiveSessionSnapshot, bool) {
+	session, ok := h.authorizeProtectedSession(sessionID, userID)
+	if !ok {
+		return ArchiveSessionSnapshot{}, false
+	}
+
+	rounds := make([]ArchiveRoundSnapshot, 0, len(session.Rounds))
+	completedRounds := 0
+	totalDuration := 0
+	for _, round := range session.Rounds {
+		rounds = append(rounds, ArchiveRoundSnapshot{
+			ID:                 round.ID,
+			RoundNumber:        round.RoundNumber,
+			Title:              round.Title,
+			QuestionCount:      round.QuestionCount,
+			Status:             round.Status,
+			DurationSeconds:    round.DurationSeconds,
+			RecordedFileName:   round.RecordedFileName,
+			AnswerText:         round.AnswerText,
+			PromptQuestions:    append([]string(nil), round.PromptQuestions...),
+			HumanOmniSummary:   round.HumanOmniSummary,
+			HumanOmniWindow:    cloneMap(round.HumanOmniWindow),
+			ActionObservations: cloneMapSlice(round.ActionObservations),
+			ASR:                cloneMap(round.ASR),
+		})
+		if round.Status == "uploaded" {
+			completedRounds++
+			totalDuration += round.DurationSeconds
+		}
+	}
+
+	return ArchiveSessionSnapshot{
+		SessionID:           session.SessionID,
+		OwnerUserID:         session.OwnerUserID,
+		PassengerRowID:      session.PassengerRowID,
+		PassengerName:       session.PassengerName,
+		PassengerDocNum:     session.PassengerDocNum,
+		PassengerProfile:    cloneMap(session.PassengerProfile),
+		TripProfile:         cloneMap(session.TripProfile),
+		KnownFacts:          append([]string(nil), session.KnownFacts...),
+		JudgementData:       cloneMap(session.JudgementData),
+		Rounds:              rounds,
+		CompletedRounds:     completedRounds,
+		TotalSampleDuration: totalDuration,
+	}, true
+}
+
+func sanitizeUploadedFile(value map[string]any) map[string]any {
+	if len(value) == 0 {
+		return nil
+	}
+	result := map[string]any{}
+	if filename := extractString(value["filename"]); filename != "" {
+		result["filename"] = filename
+	}
+	if contentType := extractString(value["contentType"]); contentType != "" {
+		result["contentType"] = contentType
+	}
+	if sizeBytes, ok := asInquiryNumber(value["sizeBytes"]); ok {
+		result["sizeBytes"] = sizeBytes
+	}
+	return result
+}
+
+func sanitizeHumanOmniWindow(value map[string]any) map[string]any {
+	if len(value) == 0 {
+		return nil
+	}
+	result := map[string]any{}
+	for _, key := range []string{
+		"windowId",
+		"questionId",
+		"startSeconds",
+		"endSeconds",
+		"modal",
+		"modelName",
+	} {
+		if raw, ok := value[key]; ok && raw != nil {
+			result[key] = raw
+		}
+	}
+	return result
 }
 
 func toProtectedBlockSnapshot(item *sensitive.ListItem) *ProtectedBlockSnapshot {
@@ -1653,6 +1760,23 @@ func asInquiryStringSlice(value any) []string {
 		}
 	}
 	return result
+}
+
+func asInquiryNumber(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case int32:
+		return float64(typed), true
+	default:
+		return 0, false
+	}
 }
 
 func asInquiryInt(value any) any {

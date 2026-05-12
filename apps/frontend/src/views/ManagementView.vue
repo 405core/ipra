@@ -1817,47 +1817,63 @@ function stringifyDetail(value: unknown) {
           >
             <div class="admin-row__profile-content">
               <div class="admin-row__headline">
-                <strong>{{ item.archiveCode }}</strong>
+                <strong class="admin-inline-title">
+                  <SensitiveAssetImage
+                    v-if="findProtectedField(item.fields, 'archiveCode')"
+                    :src="findProtectedField(item.fields, 'archiveCode')!.asset.url"
+                    alt="归档编号"
+                    inline
+                    eager
+                  />
+                </strong>
                 <span
                   class="admin-row__status"
                   :class="archiveJudgementClass(item.finalJudgement)"
                 >
                   <span class="admin-row__status-dot"></span>
-                  {{ formatArchiveJudgementLabel(item.finalJudgement) }}
+                  <SensitiveAssetImage
+                    v-if="findProtectedChip(item, 'judgement')"
+                    :src="findProtectedChip(item, 'judgement')!.asset.url"
+                    alt="最终判定"
+                    inline
+                  />
                 </span>
-                <span class="admin-row__identity">{{ item.sessionId }}</span>
+                <span class="admin-row__identity">
+                  <SensitiveAssetImage
+                    v-if="findProtectedChip(item, 'sessionId')"
+                    :src="findProtectedChip(item, 'sessionId')!.asset.url"
+                    alt="会话 ID"
+                    inline
+                  />
+                </span>
               </div>
               <div class="admin-row__fact-list">
-                <span class="admin-row__fact">
-                  <span class="admin-row__fact-label">旅客</span>
+                <span
+                  v-for="detail in protectedFactEntries(item)"
+                  :key="`${item.id}-${detail.key || detail.label}`"
+                  class="admin-row__fact"
+                >
+                  <span class="admin-row__fact-label">{{ detail.label }}</span>
                   <strong class="admin-row__fact-value">
-                    已受保护
+                    <SensitiveAssetImage
+                      :src="detail.asset.url"
+                      :alt="detail.label"
+                      inline
+                    />
                   </strong>
                 </span>
-                <span class="admin-row__fact">
-                  <span class="admin-row__fact-label">证件号</span>
-                  <strong class="admin-row__fact-value">
-                    已受保护
-                  </strong>
-                </span>
-                <span class="admin-row__fact">
-                  <span class="admin-row__fact-label">采样</span>
-                  <strong class="admin-row__fact-value">
-                    {{ item.roundCount }} 轮 ·
-                    {{ formatDuration(item.totalDurationSeconds) }}
-                  </strong>
-                </span>
-                <span class="admin-row__fact">
-                  <span class="admin-row__fact-label">操作人</span>
-                  <strong class="admin-row__fact-value">
-                    已受保护
-                  </strong>
-                </span>
-                <span class="admin-row__fact">
-                  <span class="admin-row__fact-label">归档时间</span>
-                  <strong class="admin-row__fact-value">
-                    {{ formatArchiveTime(item.archivedAt) }}
-                  </strong>
+              </div>
+              <div v-if="protectedNotes(item).length" class="admin-row__tags">
+                <span
+                  v-for="note in protectedNotes(item)"
+                  :key="`${item.id}-${note.key}-${note.asset.id}`"
+                  class="admin-row__tag admin-row__tag--muted"
+                >
+                  <SensitiveAssetImage
+                    :src="note.asset.url"
+                    alt="归档说明"
+                    inline
+                  />
                 </span>
               </div>
             </div>
@@ -2689,19 +2705,45 @@ function stringifyDetail(value: unknown) {
             </div>
           </section>
 
+          <section
+            v-if="selectedArchive.overviewAsset"
+            class="archive-detail__block"
+          >
+            <span class="meta-label">归档概览</span>
+            <SensitiveAssetImage
+              :src="selectedArchive.overviewAsset.url"
+              alt="归档概览"
+            />
+          </section>
+
           <section class="archive-detail__block">
             <span class="meta-label">详细理由</span>
-            <p>已通过受保护资产交付</p>
+            <SensitiveAssetImage
+              v-if="selectedArchive.judgementAsset"
+              :src="selectedArchive.judgementAsset.url"
+              alt="判定理由"
+            />
+            <p v-else>已通过受保护资产交付</p>
           </section>
 
           <section class="archive-detail__grid">
             <div class="archive-detail__block">
               <span class="meta-label">系统摘要</span>
-              <pre>已通过受保护资产交付</pre>
+              <SensitiveAssetImage
+                v-if="selectedArchive.briefingAsset"
+                :src="selectedArchive.briefingAsset.url"
+                alt="系统摘要"
+              />
+              <pre v-else>已通过受保护资产交付</pre>
             </div>
             <div class="archive-detail__block">
               <span class="meta-label">旅客快照</span>
-              <pre>已通过受保护资产交付</pre>
+              <SensitiveAssetImage
+                v-if="selectedArchive.passengerAsset"
+                :src="selectedArchive.passengerAsset.url"
+                alt="旅客快照"
+              />
+              <pre v-else>已通过受保护资产交付</pre>
             </div>
           </section>
 

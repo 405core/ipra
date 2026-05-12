@@ -1,9 +1,7 @@
 import { loadAuthSession } from '../auth';
 import type {
   ProtectedAssetRef,
-  ProtectedDetailResponse,
   ProtectedListItem,
-  ProtectedListResponse,
 } from './protected-service';
 import { protectedJson } from './protected-service';
 
@@ -57,6 +55,13 @@ export interface InquiryArchiveListItem extends ProtectedListItem {
 export interface InquiryArchiveListResult {
   items: InquiryArchiveListItem[];
   total: number;
+}
+
+interface ProtectedArchiveListResponse {
+  items: InquiryArchiveListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
 }
 
 export interface CreateInquiryArchiveVideoPayload {
@@ -192,23 +197,12 @@ export async function listInquiryArchives(query: InquiryArchiveQuery = {}) {
     String(query.limit && query.limit > 0 ? query.limit : 500),
   );
 
-  const response = await protectedJson<ProtectedListResponse>(
+  const response = await protectedJson<ProtectedArchiveListResponse>(
     `/api/admin/inquiry-archives?${params.toString()}`,
     '查询问询归档失败。'
   );
   return {
-    items: response.items.map((item) => ({
-      ...item,
-      archiveCode: item.id,
-      sessionId: item.kind || '',
-      finalJudgement: '',
-      roundCount: 0,
-      totalDurationSeconds: 0,
-      transcriptCount: 0,
-      videoCount: 0,
-      status: '',
-      archivedAt: '',
-    })),
+    items: response.items,
     total: response.total,
   } satisfies InquiryArchiveListResult;
 }
