@@ -149,7 +149,7 @@ func resolveLayout(preset RenderPreset) presetLayout {
 			Padding:       42,
 			TitleSize:     30,
 			BodySize:      21,
-			TagSize:       18,
+			TagSize:       24,
 			WatermarkSize: 18,
 			Quality:       83,
 		}
