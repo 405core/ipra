@@ -59,6 +59,25 @@ export function clearAuthSession() {
   localStorage.removeItem(AUTH_STORAGE_KEY);
 }
 
+export async function logoutAuthSession() {
+  const session = loadAuthSession();
+
+  try {
+    if (session?.token) {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+        },
+      });
+    }
+  } catch {
+    // noop
+  } finally {
+    clearAuthSession();
+  }
+}
+
 export function resolveRoleHome(role: UserRole) {
   return role === 'admin' ? '/admin/home' : '/home';
 }

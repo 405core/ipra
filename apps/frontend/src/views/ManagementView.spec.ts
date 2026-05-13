@@ -47,6 +47,7 @@ vi.mock('../auth', () => ({
       status: 'active',
     },
   })),
+  logoutAuthSession: vi.fn(),
   resolveRoleHome: vi.fn(() => '/home'),
   validateAuthSession: vi.fn(),
 }));
@@ -252,9 +253,13 @@ describe('ManagementView settings tab', () => {
     await flushPromises();
     await nextTick();
 
+    expect(adminServiceMocks.getAdminInquirySettings).not.toHaveBeenCalled();
+
     await findButton(wrapper, '系统设置').trigger('click');
     await nextTick();
+    await flushPromises();
 
+    expect(adminServiceMocks.getAdminInquirySettings).toHaveBeenCalledTimes(1);
     const input = wrapper.find('input[type="number"]');
     expect(input.exists()).toBe(true);
     await input.setValue('5');
