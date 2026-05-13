@@ -2,6 +2,7 @@ package inquiry
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"mime/multipart"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"ipra/backend/internal/profile"
 )
 
 func TestASRTranscribeUsesFallbackTranscript(t *testing.T) {
@@ -177,6 +179,111 @@ func TestSubmitTurnRejectsBlankTranscript(t *testing.T) {
 	}
 }
 
+func TestLoadInquiryProfileAcceptsProfileID(t *testing.T) {
+	handler := NewHandler()
+	handler.SetProfileLookup(stubProfileLookup{
+		getByID: func(ctx context.Context, id uint64) (profile.SearchProfileResponse, error) {
+			if id != 10 {
+				t.Fatalf("unexpected profile id: %d", id)
+			}
+			return profile.SearchProfileResponse{
+				ID:          10,
+				FullName:    "测试旅客",
+				DocumentNum: "440582199402155270",
+				ProfileData: map[string]any{},
+			}, nil
+		},
+		searchByDocument: func(ctx context.Context, documentNum string) ([]profile.SearchProfileResponse, error) {
+			t.Fatalf("document lookup should not be used when profile id is provided: %s", documentNum)
+			return nil, nil
+		},
+	})
+
+	record, found, err := handler.loadInquiryProfile(context.Background(), "10")
+	if err != nil {
+		t.Fatalf("loadInquiryProfile() error = %v", err)
+	}
+	if !found {
+		t.Fatal("expected profile to be found by id")
+	}
+	if record.ID != 10 {
+		t.Fatalf("expected profile id 10, got %d", record.ID)
+	}
+}
+
+func TestLoadInquiryProfileFallsBackToDocumentNumber(t *testing.T) {
+	handler := NewHandler()
+	handler.SetProfileLookup(stubProfileLookup{
+		searchByDocument: func(ctx context.Context, documentNum string) ([]profile.SearchProfileResponse, error) {
+			if documentNum != "440582199402155270" {
+				t.Fatalf("unexpected document num: %s", documentNum)
+			}
+			return []profile.SearchProfileResponse{
+				{
+					ID:          10,
+					FullName:    "测试旅客",
+					DocumentNum: "440582199402155270",
+					ProfileData: map[string]any{},
+				},
+			}, nil
+		},
+	})
+
+	record, found, err := handler.loadInquiryProfile(context.Background(), "440582199402155270")
+	if err != nil {
+		t.Fatalf("loadInquiryProfile() error = %v", err)
+	}
+	if !found {
+		t.Fatal("expected profile to be found by document number")
+	}
+	if record.DocumentNum != "440582199402155270" {
+		t.Fatalf("unexpected document num: %s", record.DocumentNum)
+	}
+}
+
+func TestAsInquiryStringSliceAlwaysReturnsArray(t *testing.T) {
+	tests := []struct {
+		name  string
+		input any
+		want  []string
+	}{
+		{
+			name:  "nil",
+			input: nil,
+			want:  []string{},
+		},
+		{
+			name:  "string slice",
+			input: []string{"同行人A", "同行人B"},
+			want:  []string{"同行人A", "同行人B"},
+		},
+		{
+			name:  "any slice",
+			input: []any{"泰国", "新加坡"},
+			want:  []string{"泰国", "新加坡"},
+		},
+		{
+			name:  "unsupported type",
+			input: "single",
+			want:  []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := asInquiryStringSlice(tt.input)
+			if len(got) != len(tt.want) {
+				t.Fatalf("len(asInquiryStringSlice(%v)) = %d, want %d", tt.input, len(got), len(tt.want))
+			}
+			for index := range tt.want {
+				if got[index] != tt.want[index] {
+					t.Fatalf("asInquiryStringSlice(%v)[%d] = %q, want %q", tt.input, index, got[index], tt.want[index])
+				}
+			}
+		})
+	}
+}
+
 func newTestRouter() *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -235,4 +342,23 @@ func contains(values []string, expected string) bool {
 		}
 	}
 	return false
+}
+
+type stubProfileLookup struct {
+	getByID          func(ctx context.Context, id uint64) (profile.SearchProfileResponse, error)
+	searchByDocument func(ctx context.Context, documentNum string) ([]profile.SearchProfileResponse, error)
+}
+
+func (s stubProfileLookup) SearchProfilesByDocumentExact(ctx context.Context, documentNum string) ([]profile.SearchProfileResponse, error) {
+	if s.searchByDocument == nil {
+		return nil, nil
+	}
+	return s.searchByDocument(ctx, documentNum)
+}
+
+func (s stubProfileLookup) GetProfileByID(ctx context.Context, id uint64) (profile.SearchProfileResponse, error) {
+	if s.getByID == nil {
+		return profile.SearchProfileResponse{}, nil
+	}
+	return s.getByID(ctx, id)
 }

@@ -17,7 +17,7 @@ import type {
 
 const router = useRouter();
 const defaultCameraStatus = '等待开启摄像头。';
-const defaultOCRStatus = '等待开启实时扫描。';
+const defaultOCRStatus = '请将身份证保持在取景框内后点击确定。';
 
 const query = ref('');
 const touchInputHint = '单击正常输入，双击打开触控键盘';
@@ -82,7 +82,6 @@ const resultEmptyDetail = computed(() => {
 });
 let cameraStream: MediaStream | null = null;
 let liveScanTimer: number | null = null;
-let ocrScanTimer: number | null = null;
 let isOCRRequestPending = false;
 let lastAutoSearchNumber = '';
 type LegacyNavigator = Navigator & {
@@ -245,9 +244,8 @@ async function startCamera() {
 
     isCameraActive.value = true;
     startLiveScanLoop();
-    startOCRLoop();
-    cameraStatus.value = '实时扫描中，请将身份证保持在取景框内。';
-    ocrStatus.value = '扫描中';
+    cameraStatus.value = '摄像头已开启，请将身份证保持在取景框内后点击确定。';
+    ocrStatus.value = defaultOCRStatus;
   } catch (error) {
     cameraStatus.value = resolveCameraErrorMessage(error);
   } finally {
@@ -257,7 +255,7 @@ async function startCamera() {
 
 function stopCameraStream(updateStatus = true) {
   stopLiveScanLoop();
-  stopOCRLoop();
+  isOCRRequestPending = false;
   cameraStream?.getTracks().forEach((track) => track.stop());
   cameraStream = null;
 
@@ -292,7 +290,7 @@ async function confirmCameraFrame() {
   }
 
   cameraStatus.value = '正在确认当前证件画面并发起检索。';
-  ocrStatus.value = '扫描中';
+  ocrStatus.value = '识别中';
   await runOCRScan({
     forceSearch: true,
     manual: true,
@@ -314,27 +312,6 @@ function stopLiveScanLoop() {
   }
 }
 
-function startOCRLoop() {
-  stopOCRLoop();
-  void runOCRScan();
-  ocrScanTimer = window.setInterval(() => {
-    void runOCRScan();
-  }, 1400);
-}
-
-function stopOCRLoop() {
-  if (ocrScanTimer != null) {
-    window.clearInterval(ocrScanTimer);
-    ocrScanTimer = null;
-  }
-  isOCRRequestPending = false;
-}
-
-function pauseLiveOCR(message: string) {
-  stopOCRLoop();
-  ocrStatus.value = message;
-}
-
 async function runOCRScan(options?: {
   forceSearch?: boolean;
   manual?: boolean;
@@ -349,17 +326,8 @@ async function runOCRScan(options?: {
     handleOCRResult(result, options);
   } catch (error) {
     const message = normalizeErrorMessage(error, '调用身份证 OCR 失败。');
-    const shouldPauseLiveScan = !options?.manual;
-    if (shouldPauseLiveScan) {
-      pauseLiveOCR(message || 'OCR 识别异常，已暂停扫描。');
-    } else {
-      ocrStatus.value = message;
-    }
-    if (options?.manual) {
-      cameraStatus.value = '当前证件画面识别失败，请调整角度或光线后重试。';
-    } else {
-      cameraStatus.value = '扫描已暂停，请重新开启。';
-    }
+    ocrStatus.value = message;
+    cameraStatus.value = '当前证件画面识别失败，请调整角度或光线后重试。';
   } finally {
     isOCRRequestPending = false;
   }
@@ -379,9 +347,7 @@ function handleOCRResult(
 
   const payload = result.data;
   if (!payload || payload.result !== 0) {
-    ocrStatus.value = isCameraActive.value
-      ? '扫描中'
-      : '未识别到有效身份证画面。';
+    ocrStatus.value = '未识别到有效身份证画面。';
     if (options?.manual) {
       cameraStatus.value = '当前证件画面未识别成功，请保持身份证完整入框。';
     }
@@ -407,7 +373,7 @@ function handleOCRResult(
   }
 
   if (payload.side === 'back') {
-    ocrStatus.value = '扫描中';
+    ocrStatus.value = '已识别到国徽面，请切换到人像面。';
     if (options?.manual) {
       cameraStatus.value = '当前是身份证国徽面，请翻到人像面后再检索。';
     }
@@ -813,7 +779,7 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
               class="camera-preview__placeholder"
             >
               <strong>等待开启摄像头</strong>
-              <span>开启后将自动持续扫描当前证件画面。</span>
+              <span>开启后可实时预览证件画面，点击确定后识别。</span>
             </div>
             <div class="camera-preview__frame"></div>
           </div>
@@ -828,7 +794,7 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
             <button
               class="camera-action camera-action--primary"
               type="button"
-              :disabled="isCameraStarting"
+              :disabled="isCameraStarting || isOCRRequestPending"
               @click="toggleCamera"
             >
               {{
@@ -842,10 +808,10 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
             <button
               class="camera-action"
               type="button"
-              :disabled="!isCameraActive"
+              :disabled="!isCameraActive || isOCRRequestPending"
               @click="confirmCameraFrame"
             >
-              确定
+              {{ isOCRRequestPending ? '识别中...' : '确定' }}
             </button>
           </div>
         </section>

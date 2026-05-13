@@ -71,6 +71,7 @@ describe('UserHomeView assistant inquiry entry', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
     vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(
       () => undefined,
     );
@@ -88,7 +89,7 @@ describe('UserHomeView assistant inquiry entry', () => {
     vi.restoreAllMocks();
   });
 
-  it('passes the selected document number when starting assistant inquiry', async () => {
+  it('passes the selected profile id when starting assistant inquiry', async () => {
     wrapper = mountView();
 
     await wrapper.find('#passenger-query').setValue('440582199402155270');
@@ -101,8 +102,73 @@ describe('UserHomeView assistant inquiry entry', () => {
     expect(routerMocks.push).toHaveBeenCalledWith({
       name: 'home-ask',
       query: {
-        documentNum: '440582199402155270',
+        profileId: '10',
       },
     });
+  });
+
+  it('does not auto trigger OCR after camera start and only recognizes on confirm', async () => {
+    vi.useFakeTimers();
+    try {
+      const getUserMedia = vi.fn().mockResolvedValue({
+        getTracks: () => [{ stop: vi.fn() }],
+      } as unknown as MediaStream);
+
+      Object.defineProperty(window, 'isSecureContext', {
+        configurable: true,
+        value: true,
+      });
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: {
+          getUserMedia,
+        },
+      });
+
+      profileServiceMocks.recognizeIDCard.mockResolvedValue({
+        code: 200,
+        msg: 'ok',
+        data: {
+          result: 1,
+        },
+      });
+
+      wrapper = mountView();
+
+      const video = wrapper.find('video').element as HTMLVideoElement;
+      Object.defineProperty(video, 'videoWidth', {
+        configurable: true,
+        value: 1280,
+      });
+      Object.defineProperty(video, 'videoHeight', {
+        configurable: true,
+        value: 720,
+      });
+
+      const canvas = wrapper.find('canvas').element as HTMLCanvasElement;
+      vi.spyOn(canvas, 'getContext').mockReturnValue({
+        drawImage: vi.fn(),
+      } as unknown as CanvasRenderingContext2D);
+      vi.spyOn(canvas, 'toDataURL').mockReturnValue(
+        'data:image/jpeg;base64,test-frame',
+      );
+
+      await findButton(wrapper, '开启').trigger('click');
+      await Promise.resolve();
+      await nextTick();
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      expect(getUserMedia).toHaveBeenCalledTimes(1);
+      expect(profileServiceMocks.recognizeIDCard).not.toHaveBeenCalled();
+
+      await findButton(wrapper, '确定').trigger('click');
+      await Promise.resolve();
+      await nextTick();
+
+      expect(profileServiceMocks.recognizeIDCard).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

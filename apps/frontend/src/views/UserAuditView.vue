@@ -14,9 +14,6 @@ import type {
   ProtectedListItem,
 } from '../app/protected-service';
 
-type HistoryTabKey = 'scan' | 'log';
-
-const activeTab = ref<HistoryTabKey>('log');
 const query = ref('');
 const logs = ref<ProtectedListItem[]>([]);
 const total = ref(0);
@@ -25,6 +22,7 @@ const pageSize = 10;
 const statusMessage = ref('正在加载审计日志...');
 const isLoading = ref(false);
 const selectedLog = ref<ProtectedDetailResponse | null>(null);
+const isLogDetailVisible = ref(false);
 const detailLoading = ref(false);
 const detailError = ref('');
 const touchInputHint = '单击正常输入，双击打开触控键盘';
@@ -117,6 +115,7 @@ async function openAuditFilterKeyboard() {
 }
 
 async function openLogDetail(item: ProtectedListItem) {
+  isLogDetailVisible.value = true;
   detailLoading.value = true;
   detailError.value = '';
   selectedLog.value = null;
@@ -130,7 +129,9 @@ async function openLogDetail(item: ProtectedListItem) {
 }
 
 function closeLogDetail() {
+  isLogDetailVisible.value = false;
   selectedLog.value = null;
+  detailLoading.value = false;
   detailError.value = '';
 }
 
@@ -143,6 +144,26 @@ function findProtectedField(
 
 function protectedFactEntries(item: ProtectedListItem) {
   return (item.facts ?? []) as ProtectedFactRef[];
+}
+
+function protectedChipToneClass(tone?: string | null) {
+  switch (tone) {
+    case 'success':
+      return 'admin-row__pill--success';
+    case 'warning':
+      return 'admin-row__pill--warning';
+    case 'alert':
+    case 'danger':
+    case 'denied':
+    case 'failure':
+      return 'admin-row__pill--alert';
+    case 'muted':
+      return 'admin-row__pill--muted';
+    case 'identity':
+      return 'admin-row__pill--identity';
+    default:
+      return '';
+  }
 }
 
 function pageCount() {
@@ -169,98 +190,84 @@ function paginationSummary() {
 <template>
   <section class="audit-page">
     <section class="audit-shell">
-      <div class="audit-topbar">
-        <div class="history-tabs" role="tablist" aria-label="历史记录导航">
-          <button
-            type="button"
-            class="history-tab"
-            :class="{ 'is-active': activeTab === 'scan' }"
-            :aria-selected="activeTab === 'scan'"
-            @click="activeTab = 'scan'"
-          >
-            扫描记录
-          </button>
-          <button
-            type="button"
-            class="history-tab"
-            :class="{ 'is-active': activeTab === 'log' }"
-            :aria-selected="activeTab === 'log'"
-            @click="activeTab = 'log'"
-          >
-            日志记录
-          </button>
-        </div>
-
-        <template v-if="activeTab === 'log'">
+      <div class="admin-toolbar">
+        <div class="admin-toolbar__search-block">
           <input
             v-model="query"
             :title="touchInputHint"
-            class="audit-topbar__input"
+            class="admin-toolbar__search-input"
             type="text"
             inputmode="search"
-            placeholder="筛选操作、资源、路径"
+            placeholder="输入操作、资源或路径"
             @dblclick.stop.prevent="openAuditFilterKeyboard"
           />
-          <span class="audit-topbar__meta">{{ paginationSummary() }}，总计 {{ total }} 条</span>
-          <button type="button" class="audit-refresh" :disabled="isLoading" @click="loadLogs">
-            {{ isLoading ? '刷新中...' : '刷新' }}
+        </div>
+        <div class="admin-toolbar__actions">
+          <button
+            type="button"
+            class="ghost ghost--strong"
+            :disabled="isLoading"
+            @click="loadLogs"
+          >
+            {{ isLoading ? '刷新中...' : '刷新日志' }}
           </button>
-        </template>
+        </div>
       </div>
 
-      <section v-if="activeTab === 'scan'" class="audit-card audit-card--placeholder">
-        <div class="audit-empty">
-          <strong>扫描记录功能暂未开放</strong>
-          <span>当前仅保留导航占位，后续将在这里展示扫描历史。</span>
-        </div>
-      </section>
+      <p class="admin-filter-summary">
+        {{ paginationSummary() }}，总计 {{ total }} 条
+      </p>
 
-      <section v-else class="audit-card">
-        <div class="audit-list">
-          <article v-for="item in pagedLogs()" :key="item.id" class="audit-item">
-            <div class="audit-item__head">
-              <div class="audit-item__title">
-                <strong>
-                  <SensitiveAssetImage
-                    v-if="findProtectedField(item.fields, 'resource')"
-                    :src="findProtectedField(item.fields, 'resource')!.asset.url"
-                    alt="资源"
-                    inline
-                  />
-                </strong>
-                <span class="audit-item__subtitle">
-                  <SensitiveAssetImage
-                    v-if="findProtectedField(item.fields, 'action')"
-                    :src="findProtectedField(item.fields, 'action')!.asset.url"
-                    alt="动作"
-                    inline
-                  />
-                </span>
-              </div>
-              <div class="audit-item__chips">
-                <span
-                  v-for="chip in item.chips ?? []"
-                  :key="`${item.id}-${chip.key}`"
-                  class="audit-item__pill"
-                  :class="`is-${chip.tone || 'default'}`"
-                >
-                  <SensitiveAssetImage
-                    :src="chip.asset.url"
-                    :alt="chip.key"
-                    inline
-                  />
-                </span>
-              </div>
+      <div class="admin-table">
+        <article
+          v-for="item in pagedLogs()"
+          :key="item.id"
+          class="admin-row admin-row--audit"
+        >
+          <div class="admin-row__profile-content">
+            <div class="admin-row__headline">
+              <strong class="admin-inline-title">
+                <SensitiveAssetImage
+                  v-if="findProtectedField(item.fields, 'resource')"
+                  :src="findProtectedField(item.fields, 'resource')!.asset.url"
+                  alt="资源"
+                  inline
+                  eager
+                />
+              </strong>
+              <span class="admin-row__pill admin-row__pill--identity">
+                <SensitiveAssetImage
+                  v-if="findProtectedField(item.fields, 'action')"
+                  :src="findProtectedField(item.fields, 'action')!.asset.url"
+                  alt="动作"
+                  inline
+                />
+              </span>
+              <span
+                v-for="chip in item.chips ?? []"
+                :key="`${item.id}-${chip.key}`"
+                class="admin-row__pill"
+                :class="protectedChipToneClass(chip.tone)"
+              >
+                <SensitiveAssetImage
+                  :src="chip.asset.url"
+                  :alt="chip.key"
+                  inline
+                />
+              </span>
             </div>
 
-            <div class="audit-item__meta">
+            <div
+              v-if="protectedFactEntries(item).length"
+              class="admin-row__fact-list"
+            >
               <span
                 v-for="detail in protectedFactEntries(item)"
                 :key="`${item.id}-${detail.key || detail.label}`"
-                class="audit-item__meta-entry"
+                class="admin-row__fact"
               >
-                <span class="audit-item__meta-label">{{ detail.label }}</span>
-                <strong>
+                <span class="admin-row__fact-label">{{ detail.label }}</span>
+                <strong class="admin-row__fact-value">
                   <SensitiveAssetImage
                     :src="detail.asset.url"
                     :alt="detail.label"
@@ -269,63 +276,105 @@ function paginationSummary() {
                 </strong>
               </span>
             </div>
-            <div class="audit-item__actions">
-              <button type="button" class="audit-item__detail" @click="openLogDetail(item)">
-                详情
-              </button>
-            </div>
-          </article>
-
-          <div v-if="!logs.length" class="audit-empty">
-            <strong>当前没有可显示的审计日志</strong>
-            <span>{{ statusMessage }}</span>
           </div>
-        </div>
 
-        <div v-if="logs.length" class="audit-pagination">
-          <button
-            type="button"
-            class="audit-refresh"
-            :disabled="page <= 1"
-            @click="page = Math.max(1, page - 1)"
-          >
-            上一页
-          </button>
-          <span class="audit-topbar__meta">第 {{ page }} / {{ pageCount() }} 页</span>
-          <button
-            type="button"
-            class="audit-refresh"
-            :disabled="page >= pageCount()"
-            @click="page = Math.min(pageCount(), page + 1)"
-          >
-            下一页
-          </button>
+          <div class="admin-row__actions">
+            <button type="button" @click="openLogDetail(item)">
+              查看详情
+            </button>
+          </div>
+        </article>
+
+        <div v-if="!logs.length" class="empty-panel--compact">
+          <strong>当前没有可显示的审计日志</strong>
+          <span>{{ statusMessage }}</span>
         </div>
-      </section>
+      </div>
+
+      <div v-if="logs.length" class="admin-pagination">
+        <button
+          type="button"
+          class="ghost"
+          :disabled="page <= 1"
+          @click="page = Math.max(1, page - 1)"
+        >
+          上一页
+        </button>
+        <span class="admin-pagination__meta">
+          第 {{ page }} / {{ pageCount() }} 页
+        </span>
+        <button
+          type="button"
+          class="ghost"
+          :disabled="page >= pageCount()"
+          @click="page = Math.min(pageCount(), page + 1)"
+        >
+          下一页
+        </button>
+      </div>
     </section>
   </section>
 
   <Teleport to="body">
-    <section v-if="selectedLog" class="audit-dialog" @click.self="closeLogDetail">
-      <div class="audit-dialog__card">
-        <div class="audit-dialog__head">
-          <div>
-            <h3>日志详情</h3>
-          </div>
-          <button type="button" class="audit-dialog__close" @click="closeLogDetail">关闭</button>
-        </div>
+    <section
+      v-if="isLogDetailVisible"
+      class="admin-dialog"
+      @click.self="closeLogDetail"
+    >
+      <div class="admin-form-card admin-form-card--dialog admin-form-card--audit admin-form-card--content-fit">
+        <div class="admin-dialog-shell admin-dialog-shell--audit-detail">
+          <section class="admin-dialog-console admin-dialog-console--audit-detail admin-dialog-console--content-only">
+            <div v-if="selectedLog" class="archive-detail archive-detail--dialog">
+              <section class="archive-detail__block archive-detail__block--media">
+                <span class="meta-label">日志快照</span>
+                <SensitiveAssetImage
+                  :src="selectedLog.asset.url"
+                  alt="审计日志详情敏感图片"
+                />
+              </section>
+            </div>
 
-        <SensitiveAssetImage :src="selectedLog.asset.url" alt="审计日志详情敏感图片" />
+            <div v-else class="empty-panel--compact">
+              <strong>{{
+                detailLoading ? '正在加载审计日志详情' : '暂时无法显示日志详情'
+              }}</strong>
+              <span>{{ detailError || '请稍候。' }}</span>
+            </div>
+          </section>
+        </div>
       </div>
     </section>
   </Teleport>
 </template>
 
 <style scoped lang="scss">
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Manrope:wght@600;700;800&display=swap');
+
 .audit-page {
+  --audit-scale: clamp(0.88rem, 0.54rem + 0.72vmin, 1.08rem);
+  --audit-gap-xs: calc(var(--audit-scale) * 0.36);
+  --audit-gap-sm: calc(var(--audit-scale) * 0.62);
+  --audit-gap-md: calc(var(--audit-scale) * 0.92);
+  --audit-gap-lg: calc(var(--audit-scale) * 1.18);
+  --audit-card-radius: calc(var(--audit-scale) * 1.14);
+  --audit-pill-h: calc(var(--audit-scale) * 1.92);
+  --audit-pill-px: calc(var(--audit-scale) * 0.72);
+  --audit-control-h-lg: calc(var(--audit-scale) * 2.95);
+  --audit-font-xs: clamp(0.74rem, 0.68rem + 0.18vw, 0.82rem);
+  --audit-font-sm: clamp(0.82rem, 0.76rem + 0.18vw, 0.92rem);
+  --audit-font-md: clamp(0.92rem, 0.84rem + 0.24vw, 1rem);
+  --audit-inline-image-h: calc(var(--audit-scale) * 1.08);
+  --audit-border: rgba(157, 189, 202, 0.42);
+  --audit-border-strong: rgba(157, 189, 202, 0.56);
+  --audit-accent: #0b7288;
+  --audit-accent-strong: #0a5b6b;
+  --audit-text: #15252b;
+  --audit-text-muted: #5b7179;
   min-height: 0;
-  height: 100%;
+  height: min(100%, var(--content-height, 100%));
   display: grid;
+  overflow: hidden;
+  font-family: 'IBM Plex Sans', sans-serif;
 }
 
 .audit-shell {
@@ -333,10 +382,10 @@ function paginationSummary() {
   width: 100%;
   min-width: 0;
   min-height: 0;
-  height: min(100%, var(--content-height, 100%));
+  height: 100%;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: clamp(12px, 1.4vw, 18px);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: var(--audit-gap-md);
   padding: clamp(14px, 1.8vw, 26px);
   border-radius: clamp(22px, 2vw, 28px);
   background: rgba(255, 255, 255, 0.92);
@@ -345,244 +394,322 @@ function paginationSummary() {
   overflow: hidden;
 }
 
-.audit-topbar {
+.admin-toolbar {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   flex-wrap: wrap;
-  gap: clamp(10px, 1.2vw, 12px);
-  min-width: 0;
+  gap: var(--audit-gap-md);
 }
 
-.history-tabs {
+.admin-toolbar__search-block {
+  flex: 1 1 min(30rem, 100%);
+  min-width: min(100%, 18rem);
+}
+
+.admin-toolbar__actions {
   display: flex;
-  flex: 0 0 auto;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: var(--audit-gap-sm);
+  margin-left: auto;
 }
 
-.history-tab,
-.audit-refresh {
-  min-height: clamp(42px, 5vh, 48px);
-  padding: 0 clamp(14px, 1.6vw, 18px);
-  border-radius: clamp(12px, 1.2vw, 14px);
-  font-weight: 700;
-  flex: 0 0 auto;
-}
-
-.history-tab {
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px solid rgba(157, 189, 202, 0.42);
-  color: #4a636b;
-}
-
-.history-tab.is-active,
-.audit-refresh {
-  background: linear-gradient(135deg, #0b7288, #20a8c5);
-  color: #fff;
-}
-
-.audit-topbar__input {
-  flex: 1 1 min(340px, 100%);
-  min-width: min(100%, 260px);
-  min-height: clamp(44px, 5vh, 48px);
-  padding: 0 clamp(12px, 1.4vw, 16px);
-  border-radius: clamp(14px, 1.5vw, 16px);
+.admin-toolbar__search-input {
+  width: 100%;
+  min-height: var(--audit-control-h-lg);
+  padding: 0 calc(var(--audit-scale) * 0.92);
+  border-radius: var(--audit-card-radius);
   background: #fff;
-  border: 1px solid rgba(157, 189, 202, 0.4);
-  color: #15252b;
+  border: 1px solid var(--audit-border);
+  color: var(--audit-text);
+  font: inherit;
+  font-size: var(--audit-font-md);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
 }
 
-.audit-topbar__meta,
-.audit-item__meta,
-.audit-empty span {
-  color: #5b7179;
+.admin-toolbar__search-input::placeholder {
+  color: #7a97a0;
+}
+
+.admin-toolbar__search-input:focus {
+  outline: none;
+  border-color: rgba(11, 114, 136, 0.36);
+  box-shadow:
+    0 0 0 4px rgba(11, 114, 136, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.admin-toolbar button,
+.admin-row__actions button,
+.admin-pagination button {
+  border: 0;
+  cursor: pointer;
+  font-family: inherit;
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    opacity 0.18s ease;
+}
+
+.admin-toolbar button:hover:not(:disabled),
+.admin-row__actions button:hover:not(:disabled),
+.admin-pagination button:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.admin-toolbar button:disabled,
+.admin-row__actions button:disabled,
+.admin-pagination button:disabled {
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.admin-toolbar button,
+.admin-row__actions button {
+  min-height: var(--audit-control-h-lg);
+  padding: 0 calc(var(--audit-scale) * 1.15);
+  border-radius: var(--audit-card-radius);
+  background: linear-gradient(135deg, var(--audit-accent), #20a8c5);
+  color: #fff;
+  font-size: var(--audit-font-md);
+  font-weight: 700;
+  box-shadow: 0 calc(var(--audit-scale) * 0.4) calc(var(--audit-scale) * 0.95)
+    rgba(11, 114, 136, 0.22);
+}
+
+.admin-toolbar button.ghost,
+.admin-pagination button.ghost {
+  background: rgba(233, 244, 247, 0.96);
+  color: var(--audit-accent-strong);
+  border: 1px solid var(--audit-border);
+  box-shadow: none;
+}
+
+.admin-toolbar button.ghost--strong {
+  background: linear-gradient(135deg, var(--audit-accent), #20a8c5);
+  color: #fff;
+  border: 0;
+  box-shadow: 0 calc(var(--audit-scale) * 0.4) calc(var(--audit-scale) * 0.95)
+    rgba(11, 114, 136, 0.22);
+}
+
+.admin-toolbar button:disabled,
+.admin-row__actions button:disabled,
+.admin-pagination button:disabled {
+  background: #eef5f7;
+  color: #99aeb6;
+  border-color: rgba(157, 189, 202, 0.24);
+}
+
+.admin-filter-summary {
+  margin: 0;
+  color: var(--audit-text-muted);
+  font-size: var(--audit-font-sm);
   line-height: 1.6;
 }
 
-.audit-card {
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  height: 100%;
-  padding: clamp(16px, 1.8vw, 24px);
-  border-radius: clamp(20px, 1.8vw, 24px);
-  background: rgba(255, 255, 255, 0.94);
-  border: 1px solid rgba(157, 189, 202, 0.36);
-  overflow: hidden;
-}
-
-.audit-card--placeholder {
-  display: grid;
-  place-items: center;
-}
-
-.audit-list {
+.admin-table {
   display: grid;
   flex: 1 1 auto;
-  gap: clamp(12px, 1.2vw, 14px);
-  height: 100%;
+  gap: var(--audit-gap-md);
   min-height: 0;
   align-content: start;
   overflow: auto;
-  padding-right: 4px;
+  padding-right: var(--audit-gap-xs);
 }
 
-.audit-pagination {
+.admin-row {
   display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-top: clamp(12px, 1.2vw, 16px);
-  padding-top: clamp(10px, 1vw, 12px);
-  border-top: 1px solid rgba(157, 189, 202, 0.28);
-}
-
-.audit-item,
-.audit-empty {
-  padding: clamp(16px, 1.6vw, 20px);
-  border-radius: clamp(18px, 1.8vw, 22px);
-  background: rgba(255, 255, 255, 0.94);
-  border: 1px solid rgba(157, 189, 202, 0.36);
-}
-
-.audit-item__head,
-.audit-item__meta,
-.audit-item__actions,
-.audit-dialog__head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.audit-item__head {
+  align-items: stretch;
   justify-content: space-between;
-  align-items: flex-start;
+  gap: var(--audit-gap-lg);
+  padding: calc(var(--audit-scale) * 0.98);
+  border-radius: var(--audit-card-radius);
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid var(--audit-border);
 }
 
-.audit-item__head strong,
-.audit-empty strong,
-.audit-dialog__head h3 {
-  color: #15252b;
+.admin-row > :first-child {
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
-.audit-item__title {
+.admin-row__profile-content {
+  min-width: 0;
+  flex: 1 1 auto;
   display: grid;
-  gap: 8px;
+  gap: var(--audit-gap-sm);
 }
 
-.audit-item__title strong,
-.audit-item__subtitle {
-  display: inline-flex;
-  align-items: center;
-}
-
-.audit-item__title :deep(.sensitive-image img) {
-  height: 22px;
-}
-
-.audit-item__chips {
+.admin-row__headline {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
+  align-items: center;
+  gap: var(--audit-gap-xs) var(--audit-gap-sm);
 }
 
-.audit-item__meta {
-  flex-wrap: wrap;
-  justify-content: flex-start;
-  margin-top: 10px;
-}
-
-.audit-item__meta-entry {
+.admin-inline-title {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  min-height: 34px;
-  padding: 0 10px;
-  border-radius: 12px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.admin-inline-title :deep(.sensitive-image img) {
+  height: var(--audit-inline-image-h);
+}
+
+.admin-row__pill :deep(.sensitive-image),
+.admin-row__fact-value :deep(.sensitive-image) {
+  max-width: 100%;
+}
+
+.admin-row__pill :deep(.sensitive-image img),
+.admin-row__fact-value :deep(.sensitive-image img) {
+  max-width: 100%;
+  height: calc(var(--audit-scale) * 0.98);
+}
+
+.admin-row__pill,
+.admin-row__fact {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.admin-row__pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--audit-pill-h);
+  padding: 0 var(--audit-pill-px);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid var(--audit-border-strong);
+  color: #43646e;
+  font-size: var(--audit-font-xs);
+  font-weight: 700;
+}
+
+.admin-row__pill--identity {
+  background: rgba(233, 244, 247, 0.96);
+  border-color: rgba(157, 189, 202, 0.58);
+  color: #39606b;
+}
+
+.admin-row__pill--alert {
+  background: rgba(199, 92, 71, 0.12);
+  border-color: rgba(199, 92, 71, 0.18);
+  color: #a24734;
+}
+
+.admin-row__pill--warning {
+  background: rgba(233, 176, 58, 0.16);
+  border-color: rgba(233, 176, 58, 0.24);
+  color: #9b6508;
+}
+
+.admin-row__pill--success {
+  background: rgba(35, 125, 77, 0.14);
+  border-color: rgba(35, 125, 77, 0.22);
+  color: #237d4d;
+}
+
+.admin-row__pill--muted {
+  background: rgba(91, 113, 121, 0.12);
+  border-color: rgba(157, 189, 202, 0.24);
+  color: #5b7179;
+}
+
+.admin-row__fact-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--audit-gap-xs) var(--audit-gap-sm);
+}
+
+.admin-row__fact {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--audit-gap-xs);
+  min-height: calc(var(--audit-scale) * 2.18);
+  padding: 0 var(--audit-pill-px);
+  border-radius: calc(var(--audit-scale) * 0.78);
   background: #fbfeff;
   border: 1px solid rgba(157, 189, 202, 0.36);
 }
 
-.audit-item__meta-entry strong {
-  display: inline-flex;
-  align-items: center;
-}
-
-.audit-item__meta-label {
-  color: #6c8790;
-  font-size: 0.74rem;
+.admin-row__fact-label {
+  color: #6f8a93;
+  font-size: var(--audit-font-xs);
   font-weight: 700;
   letter-spacing: 0.04em;
 }
 
-.audit-item__pill {
+.admin-row__fact-value {
   display: inline-flex;
   align-items: center;
-  min-height: 30px;
-  padding: 0 10px;
-  border-radius: 999px;
-  font-size: 0.78rem;
+  min-width: 0;
+  color: var(--audit-text);
+  font-size: var(--audit-font-sm);
   font-weight: 700;
 }
 
-.audit-item__pill.is-success {
-  background: rgba(35, 125, 77, 0.12);
-  color: #237d4d;
-}
-
-.audit-item__pill.is-alert,
-.audit-item__pill.is-denied,
-.audit-item__pill.is-failure {
-  background: rgba(199, 92, 71, 0.12);
-  color: #a24734;
-}
-
-.audit-item__pill.is-muted {
-  background: rgba(91, 113, 121, 0.12);
-  color: #5b7179;
-}
-
-.audit-item__pill.is-default {
-  background: rgba(255, 255, 255, 0.94);
-  border: 1px solid rgba(157, 189, 202, 0.48);
-  color: #43646e;
-}
-
-.audit-item__notes {
+.admin-row__actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 10px;
+  flex-direction: column;
+  gap: var(--audit-gap-sm);
+  margin-left: auto;
+  justify-content: flex-start;
+  align-items: stretch;
+  flex: 0 0 clamp(calc(var(--audit-scale) * 8.9), 14vw, calc(var(--audit-scale) * 11.2));
+  width: clamp(calc(var(--audit-scale) * 8.9), 14vw, calc(var(--audit-scale) * 11.2));
+  min-width: 0;
 }
 
-.audit-item__note {
-  display: inline-flex;
-  align-items: center;
-  min-height: 28px;
-  padding: 0 10px;
-  border-radius: 999px;
-  background: rgba(91, 113, 121, 0.12);
-  color: #5b7179;
-}
-
-.audit-item__detail,
-.audit-dialog__close {
-  min-height: 34px;
-  padding: 0 14px;
-  border-radius: 12px;
-  background: rgba(11, 114, 136, 0.12);
-  color: #0b7288;
+.admin-row__actions button {
+  width: 100%;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: var(--audit-control-h-lg);
+  border-radius: var(--audit-card-radius);
+  font-size: var(--audit-font-sm);
   font-weight: 700;
 }
 
-.audit-empty {
-  text-align: center;
+.admin-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--audit-gap-sm);
+  margin-top: var(--audit-gap-xs);
+  padding-top: var(--audit-gap-sm);
+  border-top: 1px solid rgba(157, 189, 202, 0.28);
 }
 
-.audit-dialog {
+.admin-pagination button {
+  min-height: var(--audit-control-h-lg);
+  min-width: calc(var(--audit-scale) * 7.8);
+  padding: 0 calc(var(--audit-scale) * 1.15);
+  border-radius: var(--audit-card-radius);
+  font-size: var(--audit-font-md);
+  font-weight: 700;
+}
+
+.admin-pagination__meta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--audit-control-h-lg);
+  padding: 0 calc(var(--audit-scale) * 1.15);
+  border-radius: var(--audit-card-radius);
+  background: rgba(233, 244, 247, 0.96);
+  border: 1px solid var(--audit-border);
+  color: var(--audit-accent-strong);
+  font-size: var(--audit-font-md);
+  font-weight: 700;
+}
+
+.admin-dialog {
   position: fixed;
   inset: 0;
   z-index: 90;
@@ -593,80 +720,123 @@ function paginationSummary() {
   backdrop-filter: blur(8px);
 }
 
-.audit-dialog__card {
-  width: min(920px, 100%);
-  max-height: min(86dvh, 920px);
-  overflow: auto;
-  padding: 24px;
-  border-radius: 24px;
+.admin-form-card {
+  width: min(1080px, 100%);
+  overflow: hidden;
+  border-radius: 28px;
   background: rgba(255, 255, 255, 0.98);
   border: 1px solid rgba(157, 189, 202, 0.4);
   box-shadow: 0 26px 56px rgba(14, 40, 48, 0.18);
 }
 
-.audit-dialog__head {
-  justify-content: space-between;
-  align-items: flex-start;
+.admin-form-card--dialog {
+  min-height: 0;
 }
 
-.audit-dialog__head h3,
-.audit-dialog__head p,
-.audit-detail-item,
-.audit-detail-block {
-  margin: 0;
+.admin-form-card--content-fit {
+  min-height: 0;
+  max-height: min(760px, 88vh);
 }
 
-.audit-dialog__head p,
-.audit-detail-item span,
-.audit-detail-block span {
-  color: #5b7179;
-}
-
-.audit-detail-grid {
+.admin-dialog-shell {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 18px;
+  grid-template-columns: 1fr;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: rgba(255, 255, 255, 0.92);
 }
 
-.audit-detail-item {
+.admin-dialog-console {
   display: grid;
-  gap: 6px;
-  padding: 14px 16px;
+  grid-template-rows: minmax(0, 1fr);
+  gap: 18px;
+  padding: 28px 32px 32px;
+  min-height: 0;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.archive-detail {
+  display: grid;
+  gap: var(--audit-gap-md);
+}
+
+.archive-detail--dialog {
+  min-height: 0;
+  align-content: start;
+  overflow: auto;
+  padding-right: 6px;
+}
+
+.archive-detail__block {
+  padding: 22px;
+  border-radius: 20px;
+  border: 1px solid rgba(157, 189, 202, 0.36);
+  background: linear-gradient(
+    180deg,
+    rgba(250, 254, 255, 0.98),
+    rgba(239, 246, 249, 0.94)
+  );
+  box-shadow:
+    0 0 0 4px rgba(11, 114, 136, 0.05),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.meta-label {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--audit-text-muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.archive-detail__block--media :deep(.sensitive-image) {
+  display: block;
+  overflow: hidden;
   border-radius: 18px;
-  background: rgba(239, 246, 249, 0.88);
-  border: 1px solid rgba(157, 189, 202, 0.26);
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(157, 189, 202, 0.36);
 }
 
-.audit-detail-item strong {
-  color: #15252b;
-  word-break: break-word;
+.archive-detail__block--media :deep(.sensitive-image img) {
+  display: block;
+  width: 100%;
+  height: auto;
 }
 
-.audit-detail-item--full {
-  grid-column: 1 / -1;
-}
-
-.audit-detail-block {
-  margin-top: 18px;
+.empty-panel--compact {
   display: grid;
+  place-items: center;
   gap: 10px;
+  min-height: 220px;
+  padding: 24px;
+  text-align: center;
+  border-radius: 20px;
+  border: 1px solid rgba(157, 189, 202, 0.36);
+  background: linear-gradient(
+    180deg,
+    rgba(250, 254, 255, 0.98),
+    rgba(239, 246, 249, 0.94)
+  );
+  box-shadow:
+    0 0 0 4px rgba(11, 114, 136, 0.05),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
 }
 
-.audit-detail-block pre {
-  margin: 0;
-  padding: 16px 18px;
-  border-radius: 18px;
-  background: #f2f8fa;
-  border: 1px solid rgba(157, 189, 202, 0.26);
-  color: #1d353c;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 0.85rem;
-  line-height: 1.65;
+.empty-panel--compact strong {
+  font-family: 'Manrope', sans-serif;
+  font-size: 1.22rem;
+  color: var(--audit-text);
 }
 
-@media (max-width: 719px) {
+.empty-panel--compact span {
+  color: var(--audit-text-muted);
+  line-height: 1.6;
+}
+
+@media (max-width: 959px) {
   .audit-page {
     height: auto;
   }
@@ -679,30 +849,64 @@ function paginationSummary() {
     overflow: visible;
   }
 
-  .audit-card {
-    min-height: 280px;
-    height: auto;
+  .admin-toolbar__search-block,
+  .admin-toolbar__actions {
+    flex: 1 1 100%;
+    min-width: 0;
+    margin-left: 0;
   }
 
-  .audit-list {
+  .admin-toolbar__actions > * {
     flex: 1 1 auto;
-    max-height: none;
   }
 
-  .audit-card--placeholder {
-    min-height: 280px;
+  .admin-table {
+    padding-right: 0;
   }
 
-  .audit-dialog {
+  .admin-row {
+    flex-direction: column;
+    gap: var(--audit-gap-md);
+  }
+
+  .admin-row__actions {
+    width: 100%;
+    flex: 1 1 auto;
+  }
+
+  .admin-row__actions button,
+  .admin-pagination button,
+  .admin-pagination__meta {
+    min-height: calc(var(--audit-control-h-lg) + 4px);
+  }
+
+  .admin-pagination {
+    justify-content: stretch;
+  }
+
+  .admin-pagination button,
+  .admin-pagination__meta {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .admin-dialog {
     padding: 14px;
   }
 
-  .audit-dialog__card {
+  .admin-dialog-console {
     padding: 20px;
   }
+}
 
-  .audit-detail-grid {
-    grid-template-columns: 1fr;
+@media (max-width: 719px) {
+  .admin-row__fact {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .empty-panel--compact {
+    min-height: 180px;
   }
 }
 </style>

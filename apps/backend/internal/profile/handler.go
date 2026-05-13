@@ -1,6 +1,7 @@
 package profile
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,8 +28,13 @@ type Handler struct {
 }
 
 func NewHandler(db *gorm.DB, ocrConfig config.OCRConfig) *Handler {
+	service := NewService(db)
+	if err := service.EnsureSchema(context.Background()); err != nil {
+		panic(fmt.Sprintf("ensure profile schema: %v", err))
+	}
+
 	return &Handler{
-		service: NewService(db),
+		service: service,
 		ocr:     NewIDCardOCRClient(ocrConfig),
 	}
 }

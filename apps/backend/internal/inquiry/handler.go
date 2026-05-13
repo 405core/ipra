@@ -41,6 +41,7 @@ type Handler struct {
 
 type profileLookup interface {
 	SearchProfilesByDocumentExact(ctx context.Context, documentNum string) ([]profile.SearchProfileResponse, error)
+	GetProfileByID(ctx context.Context, id uint64) (profile.SearchProfileResponse, error)
 }
 
 type Passenger struct {
@@ -81,27 +82,27 @@ type Session struct {
 }
 
 type ProtectedSession struct {
-	SessionID       string
-	OwnerUserID     uint64
-	PassengerID     string
-	PassengerName   string
-	PassengerDocNum string
-	PassengerRowID  uint64
+	SessionID        string
+	OwnerUserID      uint64
+	PassengerID      string
+	PassengerName    string
+	PassengerDocNum  string
+	PassengerRowID   uint64
 	PassengerProfile map[string]any
-	TripProfile     map[string]any
-	KnownFacts      []string
-	ProfileBlock    *sensitive.ListItem
-	StrategyBlock   *sensitive.ListItem
-	MemoryBlock     *sensitive.ListItem
-	StrategyAsset   *sensitive.AssetRef
-	MemoryAsset     *sensitive.AssetRef
-	CurrentRoundID  string
-	Rounds          []*ProtectedRound
-	JudgementBlock  *sensitive.ListItem
-	JudgementAsset  *sensitive.AssetRef
-	JudgementData   map[string]any
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	TripProfile      map[string]any
+	KnownFacts       []string
+	ProfileBlock     *sensitive.ListItem
+	StrategyBlock    *sensitive.ListItem
+	MemoryBlock      *sensitive.ListItem
+	StrategyAsset    *sensitive.AssetRef
+	MemoryAsset      *sensitive.AssetRef
+	CurrentRoundID   string
+	Rounds           []*ProtectedRound
+	JudgementBlock   *sensitive.ListItem
+	JudgementAsset   *sensitive.AssetRef
+	JudgementData    map[string]any
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 type ProtectedRound struct {
@@ -126,27 +127,27 @@ type ProtectedRound struct {
 }
 
 type ProtectedBlockSnapshot struct {
-	Asset  *sensitive.AssetRef   `json:"asset,omitempty"`
-	Fields []sensitive.FieldRef  `json:"fields,omitempty"`
-	Chips  []sensitive.FieldRef  `json:"chips,omitempty"`
-	Facts  []sensitive.FactRef   `json:"facts,omitempty"`
-	Meta   []sensitive.FieldRef  `json:"meta,omitempty"`
-	Notes  []sensitive.FieldRef  `json:"notes,omitempty"`
+	Asset  *sensitive.AssetRef  `json:"asset,omitempty"`
+	Fields []sensitive.FieldRef `json:"fields,omitempty"`
+	Chips  []sensitive.FieldRef `json:"chips,omitempty"`
+	Facts  []sensitive.FactRef  `json:"facts,omitempty"`
+	Meta   []sensitive.FieldRef `json:"meta,omitempty"`
+	Notes  []sensitive.FieldRef `json:"notes,omitempty"`
 }
 
 type ProtectedRoundSnapshot struct {
-	ID               string              `json:"id"`
-	RoundNumber      int                 `json:"roundNumber"`
-	Title            string              `json:"title"`
-	QuestionCount    int                 `json:"questionCount"`
-	Status           string              `json:"status"`
+	ID               string                  `json:"id"`
+	RoundNumber      int                     `json:"roundNumber"`
+	Title            string                  `json:"title"`
+	QuestionCount    int                     `json:"questionCount"`
+	Status           string                  `json:"status"`
 	PromptBlock      *ProtectedBlockSnapshot `json:"promptBlock,omitempty"`
 	SummaryBlock     *ProtectedBlockSnapshot `json:"summaryBlock,omitempty"`
-	PromptAsset      *sensitive.AssetRef `json:"promptAsset,omitempty"`
-	SummaryAsset     *sensitive.AssetRef `json:"summaryAsset,omitempty"`
-	RecordedFileName string              `json:"recordedFileName,omitempty"`
-	UploadedFile     map[string]any      `json:"uploadedFile,omitempty"`
-	HumanOmniWindow  map[string]any      `json:"humanOmniWindow,omitempty"`
+	PromptAsset      *sensitive.AssetRef     `json:"promptAsset,omitempty"`
+	SummaryAsset     *sensitive.AssetRef     `json:"summaryAsset,omitempty"`
+	RecordedFileName string                  `json:"recordedFileName,omitempty"`
+	UploadedFile     map[string]any          `json:"uploadedFile,omitempty"`
+	HumanOmniWindow  map[string]any          `json:"humanOmniWindow,omitempty"`
 }
 
 type ArchiveRoundSnapshot struct {
@@ -293,14 +294,14 @@ type protectedStrategyRequest struct {
 }
 
 type protectedWindowSummaryRequest struct {
-	RoundNumber        int           `json:"roundNumber"`
-	QuestionID         string        `json:"questionId"`
-	RecordedFileName   string        `json:"recordedFileName"`
-	DurationSeconds    int           `json:"durationSeconds"`
-	AnswerText         string        `json:"answerText"`
-	HumanOmniWindow    map[string]any `json:"humanOmniWindow"`
+	RoundNumber        int              `json:"roundNumber"`
+	QuestionID         string           `json:"questionId"`
+	RecordedFileName   string           `json:"recordedFileName"`
+	DurationSeconds    int              `json:"durationSeconds"`
+	AnswerText         string           `json:"answerText"`
+	HumanOmniWindow    map[string]any   `json:"humanOmniWindow"`
 	ActionObservations []map[string]any `json:"actionObservations"`
-	ASR                map[string]any `json:"asr"`
+	ASR                map[string]any   `json:"asr"`
 }
 
 type protectedFollowupRequest struct {
@@ -336,16 +337,15 @@ func (h *Handler) handleProtectedStrategy(c *gin.Context) {
 		return
 	}
 
-	profiles, err := h.profileLookup.SearchProfilesByDocumentExact(c.Request.Context(), passengerID)
+	profileRecord, found, err := h.loadInquiryProfile(c.Request.Context(), passengerID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "读取旅客画像失败"})
 		return
 	}
-	if len(profiles) == 0 || profiles[0].ID == 0 {
+	if !found || profileRecord.ID == 0 {
 		c.JSON(http.StatusNotFound, gin.H{"message": "未查询到可用旅客画像"})
 		return
 	}
-	profileRecord := profiles[0]
 	passengerProfile := buildInquiryPassengerProfile(profileRecord)
 	tripProfile := buildInquiryTripProfile(profileRecord)
 	knownFacts := buildInquiryKnownFacts(profileRecord)
@@ -398,6 +398,33 @@ func (h *Handler) handleProtectedStrategy(c *gin.Context) {
 	c.JSON(http.StatusOK, h.snapshotProtectedSession(req.SessionID))
 }
 
+func (h *Handler) loadInquiryProfile(
+	ctx context.Context,
+	passengerID string,
+) (profile.SearchProfileResponse, bool, error) {
+	trimmedPassengerID := strings.TrimSpace(passengerID)
+	if trimmedPassengerID == "" || h.profileLookup == nil {
+		return profile.SearchProfileResponse{}, false, nil
+	}
+
+	if numericID, err := strconv.ParseUint(trimmedPassengerID, 10, 64); err == nil && numericID != 0 {
+		record, getErr := h.profileLookup.GetProfileByID(ctx, numericID)
+		if getErr == nil && record.ID != 0 {
+			return record, true, nil
+		}
+	}
+
+	profiles, err := h.profileLookup.SearchProfilesByDocumentExact(ctx, trimmedPassengerID)
+	if err != nil {
+		return profile.SearchProfileResponse{}, false, err
+	}
+	if len(profiles) == 0 {
+		return profile.SearchProfileResponse{}, false, nil
+	}
+
+	return profiles[0], true, nil
+}
+
 func (h *Handler) handleProtectedWindowSummary(c *gin.Context) {
 	if h.sensitive == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"message": "敏感图片服务未启用"})
@@ -442,12 +469,12 @@ func (h *Handler) handleProtectedWindowSummary(c *gin.Context) {
 	answerText := strings.TrimSpace(c.PostForm("answerText"))
 
 	aiResponse, err := h.postAIForm("/v1/humanomni/summarize-window", fileHeader.Filename, fileHeader.Header.Get("Content-Type"), fileBytes, map[string]string{
-		"sessionId":   c.PostForm("sessionId"),
-		"questionId":  c.PostForm("questionId"),
-		"windowId":    c.PostForm("windowId"),
-		"modal":       firstNonEmptyInquiry(c.PostForm("modal"), "video_audio"),
+		"sessionId":    c.PostForm("sessionId"),
+		"questionId":   c.PostForm("questionId"),
+		"windowId":     c.PostForm("windowId"),
+		"modal":        firstNonEmptyInquiry(c.PostForm("modal"), "video_audio"),
 		"startSeconds": firstNonEmptyInquiry(c.PostForm("startSeconds"), "0"),
-		"endSeconds":  firstNonEmptyInquiry(c.PostForm("endSeconds"), strconv.Itoa(durationSeconds)),
+		"endSeconds":   firstNonEmptyInquiry(c.PostForm("endSeconds"), strconv.Itoa(durationSeconds)),
 	})
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"message": err.Error()})
@@ -503,15 +530,15 @@ func (h *Handler) handleProtectedFollowup(c *gin.Context) {
 
 	memoryContext := h.loadMemoryContext(session.SessionID, session.PassengerID)
 	aiPayload := map[string]any{
-		"sessionId": session.SessionID,
-		"roundNo":   currentRound.RoundNumber,
-		"passengerProfile": session.PassengerProfile,
-		"tripProfile":      session.TripProfile,
-		"qaHistory":        h.buildQaHistory(session),
-		"humanOmniWindows": h.buildHumanOmniWindows(session),
+		"sessionId":          session.SessionID,
+		"roundNo":            currentRound.RoundNumber,
+		"passengerProfile":   session.PassengerProfile,
+		"tripProfile":        session.TripProfile,
+		"qaHistory":          h.buildQaHistory(session),
+		"humanOmniWindows":   h.buildHumanOmniWindows(session),
 		"actionObservations": h.buildActionObservationHistory(session),
-		"asr":               cloneMap(currentRound.ASR),
-		"memoryContext":     memoryContext,
+		"asr":                cloneMap(currentRound.ASR),
+		"memoryContext":      memoryContext,
 		"constraints": map[string]any{
 			"questionCount": 3,
 			"tone":          "中性、专业、非指控",
@@ -554,15 +581,15 @@ func (h *Handler) handleProtectedJudgement(c *gin.Context) {
 
 	memoryContext := h.loadMemoryContext(session.SessionID, session.PassengerID)
 	aiPayload := map[string]any{
-		"sessionId": session.SessionID,
-		"roundNo":   currentRound.RoundNumber + 1,
-		"passengerProfile": session.PassengerProfile,
-		"tripProfile":      session.TripProfile,
-		"qaHistory":        h.buildQaHistory(session),
-		"humanOmniWindows": h.buildHumanOmniWindows(session),
+		"sessionId":          session.SessionID,
+		"roundNo":            currentRound.RoundNumber + 1,
+		"passengerProfile":   session.PassengerProfile,
+		"tripProfile":        session.TripProfile,
+		"qaHistory":          h.buildQaHistory(session),
+		"humanOmniWindows":   h.buildHumanOmniWindows(session),
 		"actionObservations": h.buildActionObservationHistory(session),
-		"asr":               currentRound.ASR,
-		"memoryContext":     memoryContext,
+		"asr":                currentRound.ASR,
+		"memoryContext":      memoryContext,
 		"constraints": map[string]any{
 			"questionCount": 3,
 			"tone":          "中性、专业、非指控",
@@ -1250,7 +1277,7 @@ func (h *Handler) renderStrategyAsset(c *gin.Context, claims auth.Claims, respon
 			},
 			{
 				Heading: "问题包",
-				Lines: buildQuestionLines(extractMapSlice(response["questions"])),
+				Lines:   buildQuestionLines(extractMapSlice(response["questions"])),
 			},
 		},
 	}
@@ -1294,11 +1321,11 @@ func (h *Handler) renderMemoryAsset(c *gin.Context, claims auth.Claims, sessionI
 func (h *Handler) buildOpeningRound(c *gin.Context, claims auth.Claims, response map[string]any) *ProtectedRound {
 	questions := buildQuestionLines(extractMapSlice(response["questions"]))
 	round := &ProtectedRound{
-		ID:             "round-1",
-		RoundNumber:    1,
-		Title:          "第 1 轮 · 首轮策略执行",
-		QuestionCount:  len(questions),
-		Status:         "pending",
+		ID:              "round-1",
+		RoundNumber:     1,
+		Title:           "第 1 轮 · 首轮策略执行",
+		QuestionCount:   len(questions),
+		Status:          "pending",
 		PromptQuestions: questions,
 	}
 	asset := h.renderRoundPromptAsset(c, claims, round, extractString(response["operatorNote"]), extractStringMap(response, "riskAssessment", "summary"))
@@ -1309,11 +1336,11 @@ func (h *Handler) buildOpeningRound(c *gin.Context, claims auth.Claims, response
 func (h *Handler) buildFollowupRound(c *gin.Context, claims auth.Claims, response map[string]any, roundNumber int) *ProtectedRound {
 	questions := buildFollowupQuestionLines(extractMapSlice(response["followupGuidance"]))
 	round := &ProtectedRound{
-		ID:             fmt.Sprintf("round-%d", roundNumber),
-		RoundNumber:    roundNumber,
-		Title:          fmt.Sprintf("第 %d 轮 · AI 追问引导", roundNumber),
-		QuestionCount:  len(questions),
-		Status:         "pending",
+		ID:              fmt.Sprintf("round-%d", roundNumber),
+		RoundNumber:     roundNumber,
+		Title:           fmt.Sprintf("第 %d 轮 · AI 追问引导", roundNumber),
+		QuestionCount:   len(questions),
+		Status:          "pending",
 		PromptQuestions: questions,
 	}
 	asset := h.renderRoundPromptAsset(c, claims, round, extractString(response["operatorNote"]), extractStringMap(response, "multimodalAssessment", "summary"))
@@ -1684,10 +1711,10 @@ func (h *Handler) buildQaHistory(session *ProtectedSession) []map[string]any {
 			continue
 		}
 		result = append(result, map[string]any{
-			"questionId": round.ID,
-			"roundNo":    round.RoundNumber,
-			"question":   strings.Join(round.PromptQuestions, "\n"),
-			"answerText": round.AnswerText,
+			"questionId":         round.ID,
+			"roundNo":            round.RoundNumber,
+			"question":           strings.Join(round.PromptQuestions, "\n"),
+			"answerText":         round.AnswerText,
 			"answerStartSeconds": 0,
 			"answerEndSeconds":   round.DurationSeconds,
 		})
@@ -1749,17 +1776,28 @@ func extractInquiryString(value any) string {
 }
 
 func asInquiryStringSlice(value any) []string {
-	raw, ok := value.([]any)
-	if !ok {
-		return nil
-	}
-	result := make([]string, 0, len(raw))
-	for _, item := range raw {
-		if text := extractInquiryString(item); text != "" {
-			result = append(result, text)
+	switch typed := value.(type) {
+	case nil:
+		return []string{}
+	case []string:
+		result := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text := extractInquiryString(item); text != "" {
+				result = append(result, text)
+			}
 		}
+		return result
+	case []any:
+		result := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text := extractInquiryString(item); text != "" {
+				result = append(result, text)
+			}
+		}
+		return result
+	default:
+		return []string{}
 	}
-	return result
 }
 
 func asInquiryNumber(value any) (float64, bool) {
