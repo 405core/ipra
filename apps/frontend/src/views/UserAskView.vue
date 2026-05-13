@@ -3026,106 +3026,108 @@ onBeforeUnmount(() => {
                   class="ask-protected-card"
                   :class="{ 'is-high-risk': protectedProfile.flags?.isHighRisk }"
                 >
-                  <div class="ask-protected-card__headline">
-                    <strong class="ask-protected-card__title">
-                      <SensitiveAssetImage
-                        v-if="findProtectedField(protectedProfile.fields, 'fullName')"
-                        :src="findProtectedField(protectedProfile.fields, 'fullName')!.asset.url"
-                        alt="旅客姓名"
-                        inline
-                        eager
-                      />
-                    </strong>
-                    <span
-                      v-if="findProtectedChip(protectedProfile.chips, 'highRisk')"
-                      class="ask-protected-card__pill ask-protected-card__pill--alert"
-                    >
-                      <SensitiveAssetImage
-                        :src="findProtectedChip(protectedProfile.chips, 'highRisk')!.asset.url"
-                        alt="高风险预警"
-                        inline
-                      />
-                    </span>
-                    <span
-                      v-if="findProtectedChip(protectedProfile.chips, 'documentType')"
-                      class="ask-protected-card__pill"
-                    >
-                      <SensitiveAssetImage
-                        :src="findProtectedChip(protectedProfile.chips, 'documentType')!.asset.url"
-                        alt="证件类型"
-                        inline
-                      />
-                    </span>
-                    <span
-                      v-if="findProtectedChip(protectedProfile.chips, 'gender')"
-                      class="ask-protected-card__pill"
-                    >
-                      <SensitiveAssetImage
-                        :src="findProtectedChip(protectedProfile.chips, 'gender')!.asset.url"
-                        alt="性别"
-                        inline
-                      />
-                    </span>
-                    <span
-                      v-if="findProtectedChip(protectedProfile.chips, 'documentNum')"
-                      class="ask-protected-card__identity"
-                    >
-                      <SensitiveAssetImage
-                        :src="findProtectedChip(protectedProfile.chips, 'documentNum')!.asset.url"
-                        alt="证件号码"
-                        inline
-                      />
-                    </span>
-                  </div>
-
-                  <div class="ask-protected-card__facts">
-                    <span
-                      v-for="detail in protectedFactEntries(protectedProfile)"
-                      :key="`${protectedProfile.id}-${detail.key || detail.label}`"
-                      class="ask-protected-card__fact"
-                    >
-                      <span class="ask-protected-card__fact-label">
-                        {{ detail.label }}
-                      </span>
-                      <strong class="ask-protected-card__fact-value">
+                  <div class="ask-protected-card__content">
+                    <div class="ask-protected-card__headline">
+                      <strong class="ask-protected-card__title">
                         <SensitiveAssetImage
-                          :src="detail.asset.url"
-                          :alt="detail.label"
+                          v-if="findProtectedField(protectedProfile.fields, 'fullName')"
+                          :src="findProtectedField(protectedProfile.fields, 'fullName')!.asset.url"
+                          alt="旅客姓名"
                           inline
+                          eager
                         />
                       </strong>
-                    </span>
-                  </div>
+                      <span
+                        v-if="findProtectedChip(protectedProfile.chips, 'highRisk')"
+                        class="ask-protected-card__pill ask-protected-card__pill--alert"
+                      >
+                        <SensitiveAssetImage
+                          :src="findProtectedChip(protectedProfile.chips, 'highRisk')!.asset.url"
+                          alt="高风险预警"
+                          inline
+                        />
+                      </span>
+                      <span
+                        v-if="findProtectedChip(protectedProfile.chips, 'documentType')"
+                        class="ask-protected-card__pill"
+                      >
+                        <SensitiveAssetImage
+                          :src="findProtectedChip(protectedProfile.chips, 'documentType')!.asset.url"
+                          alt="证件类型"
+                          inline
+                        />
+                      </span>
+                      <span
+                        v-if="findProtectedChip(protectedProfile.chips, 'gender')"
+                        class="ask-protected-card__pill"
+                      >
+                        <SensitiveAssetImage
+                          :src="findProtectedChip(protectedProfile.chips, 'gender')!.asset.url"
+                          alt="性别"
+                          inline
+                        />
+                      </span>
+                      <span
+                        v-if="findProtectedChip(protectedProfile.chips, 'documentNum')"
+                        class="ask-protected-card__identity"
+                      >
+                        <SensitiveAssetImage
+                          :src="findProtectedChip(protectedProfile.chips, 'documentNum')!.asset.url"
+                          alt="证件号码"
+                          inline
+                        />
+                      </span>
+                    </div>
 
-                  <div
-                    v-if="
-                      protectedMetaEntries(protectedProfile).length ||
-                      protectedNoteEntries(protectedProfile).length
-                    "
-                    class="ask-protected-card__tags"
-                  >
-                    <span
-                      v-for="tag in protectedMetaEntries(protectedProfile)"
-                      :key="`${protectedProfile.id}-${tag.key}-${tag.asset.id}`"
-                      class="ask-protected-card__tag"
+                    <div class="ask-protected-card__facts">
+                      <span
+                        v-for="detail in protectedFactEntries(protectedProfile)"
+                        :key="`${protectedProfile.id}-${detail.key || detail.label}`"
+                        class="ask-protected-card__fact"
+                      >
+                        <span class="ask-protected-card__fact-label">
+                          {{ detail.label }}
+                        </span>
+                        <strong class="ask-protected-card__fact-value">
+                          <SensitiveAssetImage
+                            :src="detail.asset.url"
+                            :alt="detail.label"
+                            inline
+                          />
+                        </strong>
+                      </span>
+                    </div>
+
+                    <div
+                      v-if="
+                        protectedMetaEntries(protectedProfile).length ||
+                        protectedNoteEntries(protectedProfile).length
+                      "
+                      class="ask-protected-card__tags"
                     >
-                      <SensitiveAssetImage
-                        :src="tag.asset.url"
-                        alt="风险标签"
-                        inline
-                      />
-                    </span>
-                    <span
-                      v-for="note in protectedNoteEntries(protectedProfile)"
-                      :key="`${protectedProfile.id}-${note.key}-${note.asset.id}`"
-                      class="ask-protected-card__tag ask-protected-card__tag--muted"
-                    >
-                      <SensitiveAssetImage
-                        :src="note.asset.url"
-                        alt="备注"
-                        inline
-                      />
-                    </span>
+                      <span
+                        v-for="tag in protectedMetaEntries(protectedProfile)"
+                        :key="`${protectedProfile.id}-${tag.key}-${tag.asset.id}`"
+                        class="ask-protected-card__tag"
+                      >
+                        <SensitiveAssetImage
+                          :src="tag.asset.url"
+                          alt="风险标签"
+                          inline
+                        />
+                      </span>
+                      <span
+                        v-for="note in protectedNoteEntries(protectedProfile)"
+                        :key="`${protectedProfile.id}-${note.key}-${note.asset.id}`"
+                        class="ask-protected-card__tag ask-protected-card__tag--muted"
+                      >
+                        <SensitiveAssetImage
+                          :src="note.asset.url"
+                          alt="备注"
+                          inline
+                        />
+                      </span>
+                    </div>
                   </div>
                 </div>
               </template>
@@ -4369,6 +4371,136 @@ onBeforeUnmount(() => {
   gap: clamp(12px, 1.4vw, 14px);
   padding: clamp(14px, 1.5vw, 16px);
   min-height: 0;
+}
+
+.ask-protected-card {
+  position: relative;
+  overflow: hidden;
+  padding: clamp(14px, 1.5vw, 16px) clamp(14px, 1.5vw, 18px)
+    clamp(14px, 1.5vw, 16px) clamp(20px, 1.8vw, 24px);
+  border-radius: clamp(18px, 1.8vw, 24px);
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(157, 189, 202, 0.36);
+  box-shadow: 0 22px 46px rgba(14, 40, 48, 0.08);
+}
+
+.ask-protected-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 6px;
+  background: linear-gradient(180deg, var(--accent), var(--accent-bright));
+}
+
+.ask-protected-card.is-high-risk::before {
+  background: linear-gradient(180deg, #c75c47, #de876d);
+}
+
+.ask-protected-card__content {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.ask-protected-card__headline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+
+.ask-protected-card__title {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+}
+
+.ask-protected-card__title :deep(.sensitive-image img) {
+  height: 28px;
+}
+
+.ask-protected-card__pill,
+.ask-protected-card__identity,
+.ask-protected-card__tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.ask-protected-card__pill {
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(157, 189, 202, 0.48);
+  color: #43646e;
+}
+
+.ask-protected-card__pill--alert {
+  background: rgba(199, 92, 71, 0.12);
+  border-color: rgba(199, 92, 71, 0.16);
+  color: #a24734;
+}
+
+.ask-protected-card__identity {
+  background: rgba(217, 238, 244, 0.92);
+  color: #09596c;
+}
+
+.ask-protected-card__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+}
+
+.ask-protected-card__fact {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 12px;
+  background: #fbfeff;
+  border: 1px solid rgba(157, 189, 202, 0.36);
+}
+
+.ask-protected-card__fact-label {
+  color: #6c8790;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.ask-protected-card__fact-value {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-main);
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.ask-protected-card__pill :deep(.sensitive-image img),
+.ask-protected-card__identity :deep(.sensitive-image img),
+.ask-protected-card__tag :deep(.sensitive-image img),
+.ask-protected-card__fact-value :deep(.sensitive-image img) {
+  height: 18px;
+}
+
+.ask-protected-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ask-protected-card__tag {
+  background: rgba(11, 114, 136, 0.12);
+  color: #09596c;
+}
+
+.ask-protected-card__tag--muted {
+  background: rgba(91, 113, 121, 0.12);
+  color: #5b7179;
 }
 
 .video-panel,
