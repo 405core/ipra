@@ -161,14 +161,28 @@ func classifyRequest(method string, routePath string) (string, string) {
 	switch {
 	case method == "GET" && routePath == "/api/passenger-profiles":
 		return "search_passenger_profiles", "旅客画像"
+	case method == "GET" && routePath == "/api/passenger-profiles/protected":
+		return "search_passenger_profiles_protected", "旅客画像"
+	case method == "GET" && routePath == "/api/passenger-profiles/:id/protected":
+		return "view_passenger_profile_protected", "旅客画像"
 	case method == "POST" && routePath == "/api/passenger-profiles/imports":
 		return "import_passenger_profiles", "旅客画像"
+	case method == "GET" && routePath == "/api/passenger-profiles/imports/:id/protected":
+		return "view_passenger_profile_import_detail", "旅客画像"
 	case method == "POST" && routePath == "/api/passenger-profiles/ocr/idcard":
 		return "recognize_idcard", "证件识别"
+	case method == "GET" && routePath == "/api/import-templates/passenger-profile.xlsx":
+		return "download_base_profile_template", "导入模板"
+	case method == "GET" && routePath == "/api/import-templates/high-risk-watchlist.xlsx":
+		return "download_watchlist_template", "导入模板"
 	case method == "GET" && strings.HasPrefix(routePath, "/api/import-templates/"):
 		return "download_import_template", "导入模板"
 	case method == "GET" && routePath == "/api/admin/profiles":
 		return "list_admin_profiles", "基础画像"
+	case method == "GET" && routePath == "/api/admin/profiles/protected":
+		return "list_admin_profiles_protected", "基础画像"
+	case method == "GET" && routePath == "/api/admin/profiles/:id":
+		return "view_admin_profile", "基础画像"
 	case method == "POST" && routePath == "/api/admin/profiles":
 		return "create_admin_profile", "基础画像"
 	case method == "PUT" && routePath == "/api/admin/profiles/:id":
@@ -177,6 +191,10 @@ func classifyRequest(method string, routePath string) (string, string) {
 		return "delete_admin_profile", "基础画像"
 	case method == "GET" && routePath == "/api/admin/watchlist":
 		return "list_admin_watchlist", "高风险名单"
+	case method == "GET" && routePath == "/api/admin/watchlist/protected":
+		return "list_admin_watchlist_protected", "高风险名单"
+	case method == "GET" && routePath == "/api/admin/watchlist/:id":
+		return "view_admin_watchlist", "高风险名单"
 	case method == "POST" && routePath == "/api/admin/watchlist":
 		return "create_admin_watchlist", "高风险名单"
 	case method == "PUT" && routePath == "/api/admin/watchlist/:id":
@@ -185,6 +203,10 @@ func classifyRequest(method string, routePath string) (string, string) {
 		return "delete_admin_watchlist", "高风险名单"
 	case method == "GET" && routePath == "/api/admin/users":
 		return "list_admin_users", "用户管理"
+	case method == "GET" && routePath == "/api/admin/users/protected":
+		return "list_admin_users_protected", "用户管理"
+	case method == "GET" && routePath == "/api/admin/users/:id":
+		return "view_admin_user", "用户管理"
 	case method == "POST" && routePath == "/api/admin/users":
 		return "create_admin_user", "用户管理"
 	case method == "PUT" && routePath == "/api/admin/users/:id":
@@ -204,13 +226,15 @@ func classifyRequest(method string, routePath string) (string, string) {
 	case method == "GET" && routePath == "/api/admin/inquiry-archives":
 		return "list_inquiry_archives", "问询归档"
 	case method == "GET" && routePath == "/api/admin/inquiry-archives/:id":
-		return "view_inquiry_archive", "问询归档"
+		return "view_inquiry_archive_detail", "问询归档"
 	case method == "GET" && routePath == "/api/admin/inquiry-archives/videos/:id/stream":
-		return "stream_inquiry_archive_video", "问询归档"
-	case method == "GET" && routePath == "/api/admin/memory":
-		return "list_admin_memory", "Agent记忆"
+		return "stream_inquiry_archive_video", "问询归档视频"
 	case method == "GET" && routePath == "/api/audit-logs":
 		return "view_audit_logs", "日志审计"
+	case method == "GET" && routePath == "/api/audit-logs/protected":
+		return "view_audit_logs_protected", "日志审计"
+	case method == "GET" && routePath == "/api/audit-logs/:id/protected":
+		return "view_audit_log_detail", "日志审计"
 	case method == "POST" && routePath == "/api/asr/transcribe":
 		return "transcribe_audio", "辅助问询"
 	case method == "POST" && routePath == "/api/inquiry/sessions":
@@ -219,10 +243,22 @@ func classifyRequest(method string, routePath string) (string, string) {
 		return "view_inquiry_session", "辅助问询"
 	case method == "POST" && routePath == "/api/inquiry/sessions/:sessionId/turns":
 		return "submit_inquiry_turn", "辅助问询"
-	case method == "GET" && routePath == "/api/memory/context":
-		return "view_memory_context", "Agent记忆"
-	case method == "POST" && routePath == "/api/memory/updates":
-		return "save_memory_updates", "Agent记忆"
+	case method == "POST" && routePath == "/api/inquiry/protected/strategy":
+		return "create_protected_inquiry_strategy", "辅助问询"
+	case method == "POST" && routePath == "/api/inquiry/protected/sessions/:sessionId/rounds/:roundId/window-summary":
+		return "upload_protected_round_summary", "辅助问询"
+	case method == "POST" && routePath == "/api/inquiry/protected/sessions/:sessionId/followup":
+		return "generate_protected_inquiry_followup", "辅助问询"
+	case method == "POST" && routePath == "/api/inquiry/protected/sessions/:sessionId/judgement":
+		return "generate_protected_inquiry_judgement", "辅助问询"
+	case method == "GET" && routePath == "/api/inquiry/protected/sessions/:sessionId/memory":
+		return "view_protected_inquiry_memory", "智能体记忆"
+	case method == "GET" && routePath == "/api/inquiry/memory-context":
+		return "view_inquiry_memory_context", "智能体记忆"
+	case method == "POST" && routePath == "/api/inquiry/memory-updates":
+		return "save_inquiry_memory_updates", "智能体记忆"
+	case method == "PATCH" && routePath == "/api/admin/memories/:id/status":
+		return "update_admin_memory_status", "智能体记忆"
 	default:
 		normalizedMethod := strings.ToLower(strings.TrimSpace(method))
 		normalizedPath := strings.Trim(strings.TrimSpace(routePath), "/")

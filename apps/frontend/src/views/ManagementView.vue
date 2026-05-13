@@ -477,10 +477,7 @@ watch(auditPageCount, (count) => {
 });
 
 async function initializeManagementView() {
-  await Promise.all([
-    ensureTabLoaded('profiles'),
-    ensureTabLoaded('settings'),
-  ]);
+  await ensureTabLoaded('profiles');
 }
 
 async function ensureTabLoaded(tabKey: TabKey) {
