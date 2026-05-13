@@ -2550,62 +2550,8 @@ function stringifyDetail(value: unknown) {
       <div
         class="admin-form-card admin-form-card--dialog admin-form-card--archive"
       >
-        <div class="admin-dialog-shell admin-dialog-shell--stacked">
-          <section class="admin-dialog-hero">
-            <div class="admin-dialog-hero__main">
-              <div class="admin-dialog-brand">
-                <div class="admin-dialog-brand__mark">AR</div>
-                <div>
-                  <p class="admin-dialog-brand__name">Archive Review</p>
-                  <p class="admin-dialog-brand__subtitle">Inquiry Detail Panel</p>
-                </div>
-              </div>
-
-              <div class="admin-dialog-copy">
-                <p class="admin-dialog-copy__eyebrow">问询归档</p>
-                <h3>
-                  {{
-                    selectedArchive?.archiveCode ||
-                    (isLoadingArchiveDetail ? '正在加载问询归档' : '问询归档详情')
-                  }}
-                </h3>
-                <p>
-                  {{
-                    selectedArchive
-                      ? `会话 ${selectedArchive.sessionId}`
-                      : '正在读取归档主表、轮次与视频。'
-                  }}
-                </p>
-              </div>
-            </div>
-
-            <div class="admin-dialog-hero__aside">
-              <div v-if="selectedArchive" class="admin-dialog-pill-group">
-                <span class="admin-dialog-pill">
-                  判定：{{ formatArchiveJudgementLabel(selectedArchive.finalJudgement) }}
-                </span>
-                <span class="admin-dialog-pill">
-                  采样：{{ selectedArchive.roundCount }} 轮
-                </span>
-              </div>
-
-              <div v-if="selectedArchive" class="admin-dialog-preview">
-                <span class="admin-dialog-preview__label">当前归档摘要</span>
-                <strong>{{ formatArchiveJudgementLabel(selectedArchive.finalJudgement) }}</strong>
-                <span>{{ formatArchiveTime(selectedArchive.archivedAt) }}</span>
-              </div>
-
-              <button type="button" class="ghost admin-dialog-close" @click="closeArchiveDetail">
-                关闭窗口
-              </button>
-            </div>
-          </section>
-
-          <section class="admin-dialog-console admin-dialog-console--stacked">
-            <div class="admin-dialog-console__header admin-dialog-console__header--inline">
-              <span class="admin-dialog-console__title">归档详情浏览区</span>
-            </div>
-
+        <div class="admin-dialog-shell admin-dialog-shell--archive-detail">
+          <section class="admin-dialog-console admin-dialog-console--archive-detail admin-dialog-console--content-only">
             <div v-if="selectedArchive" class="archive-detail archive-detail--dialog">
               <section class="archive-detail__summary">
                 <div class="archive-detail__summary-card">
@@ -2766,52 +2712,9 @@ function stringifyDetail(value: unknown) {
       class="admin-dialog"
       @click.self="closeAuditDetail"
     >
-      <div class="admin-form-card admin-form-card--dialog admin-form-card--audit">
-        <div class="admin-dialog-shell admin-dialog-shell--stacked">
-          <section class="admin-dialog-hero">
-            <div class="admin-dialog-hero__main">
-              <div class="admin-dialog-brand">
-                <div class="admin-dialog-brand__mark">AU</div>
-                <div>
-                  <p class="admin-dialog-brand__name">Audit Detail</p>
-                  <p class="admin-dialog-brand__subtitle">Protected Log Viewer</p>
-                </div>
-              </div>
-
-              <div class="admin-dialog-copy">
-                <p class="admin-dialog-copy__eyebrow">审计日志</p>
-                <h3>审计日志详情</h3>
-                <p>查看完整日志详情与上下文。</p>
-              </div>
-            </div>
-
-            <div class="admin-dialog-hero__aside">
-              <div class="admin-dialog-pill-group">
-                <span class="admin-dialog-pill">
-                  {{ isLoadingAuditDetail ? '状态：加载中' : '状态：可查看' }}
-                </span>
-                <span class="admin-dialog-pill">
-                  交付方式：受保护图像
-                </span>
-              </div>
-
-              <div class="admin-dialog-preview">
-                <span class="admin-dialog-preview__label">查看提示</span>
-                <strong>{{ selectedAuditLog ? '详情已加载' : '等待日志详情返回' }}</strong>
-                <span>{{ auditDetailError || '支持滚动查看完整内容。' }}</span>
-              </div>
-
-              <button type="button" class="ghost admin-dialog-close" @click="closeAuditDetail">
-                关闭窗口
-              </button>
-            </div>
-          </section>
-
-          <section class="admin-dialog-console admin-dialog-console--stacked">
-            <div class="admin-dialog-console__header admin-dialog-console__header--inline">
-              <span class="admin-dialog-console__title">日志详情浏览区</span>
-            </div>
-
+      <div class="admin-form-card admin-form-card--dialog admin-form-card--audit admin-form-card--content-fit">
+        <div class="admin-dialog-shell admin-dialog-shell--audit-detail">
+          <section class="admin-dialog-console admin-dialog-console--audit-detail admin-dialog-console--content-only">
             <div v-if="selectedAuditLog" class="archive-detail archive-detail--dialog">
               <section class="archive-detail__block archive-detail__block--media">
                 <span class="meta-label">日志快照</span>
@@ -3308,6 +3211,11 @@ function stringifyDetail(value: unknown) {
   max-height: min(720px, 88vh);
 }
 
+.admin-form-card--content-fit {
+  min-height: 0;
+  max-height: min(760px, 88vh);
+}
+
 .admin-dialog-shell {
   display: grid;
   grid-template-columns: minmax(300px, 0.92fr) minmax(420px, 1.5fr);
@@ -3325,6 +3233,14 @@ function stringifyDetail(value: unknown) {
 .admin-dialog-shell--user-form {
   grid-template-columns: 1fr;
   height: auto;
+}
+
+.admin-dialog-shell--archive-detail {
+  grid-template-columns: 1fr;
+}
+
+.admin-dialog-shell--audit-detail {
+  grid-template-columns: 1fr;
 }
 
 .admin-dialog-hero {
@@ -3515,6 +3431,21 @@ function stringifyDetail(value: unknown) {
   grid-template-rows: minmax(0, 1fr) auto;
   padding: 28px 32px 32px;
   height: auto;
+}
+
+.admin-dialog-console--archive-detail {
+  grid-template-rows: minmax(0, 1fr) auto;
+  padding: 28px 32px 32px;
+}
+
+.admin-dialog-console--audit-detail {
+  grid-template-rows: minmax(0, 1fr) auto;
+  padding: 28px 32px 32px;
+}
+
+.admin-dialog-console--content-only {
+  grid-template-rows: minmax(0, 1fr);
+  padding-bottom: 28px;
 }
 
 .admin-dialog-console__header {
@@ -3902,8 +3833,10 @@ function stringifyDetail(value: unknown) {
 }
 
 .admin-row--user {
-  align-items: center;
+  align-items: stretch;
   flex-wrap: wrap;
+  padding-top: calc(var(--admin-scale) * 1.16);
+  padding-bottom: calc(var(--admin-scale) * 1.16);
 }
 
 .admin-row--user .admin-row__profile-content {
@@ -3912,6 +3845,7 @@ function stringifyDetail(value: unknown) {
   align-items: center;
   flex-wrap: wrap;
   gap: var(--admin-gap-sm) var(--admin-gap-md);
+  min-height: calc(var(--admin-scale) * 4.9);
 }
 
 .admin-row--user .admin-row__headline {
@@ -3932,24 +3866,33 @@ function stringifyDetail(value: unknown) {
 }
 
 .admin-row--user .admin-row__actions {
-  flex: 0 0 auto;
-  width: auto;
-  max-width: 100%;
+  flex: 0 0 clamp(
+    calc(var(--admin-scale) * 8.9),
+    14vw,
+    calc(var(--admin-scale) * 11.2)
+  );
+  width: clamp(
+    calc(var(--admin-scale) * 8.9),
+    14vw,
+    calc(var(--admin-scale) * 11.2)
+  );
+  max-width: none;
   min-width: 0;
-  flex-direction: row;
-  justify-content: flex-end;
-  align-items: center;
-  flex-wrap: wrap;
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: stretch;
+  flex-wrap: nowrap;
   gap: var(--admin-gap-sm);
 }
 
 .admin-row--user .admin-row__actions button {
-  flex: 0 0 auto;
-  width: auto;
-  min-width: var(--admin-action-inline);
+  width: 100%;
+  flex: 1 1 0;
+  min-width: 0;
   min-height: var(--admin-control-h-lg);
-  padding: 0 calc(var(--admin-scale) * 1.02);
-  font-size: var(--admin-font-md);
+  padding: 0 calc(var(--admin-scale) * 1.15);
+  font-size: var(--admin-font-sm);
+  font-weight: 700;
   border-radius: var(--admin-card-radius);
 }
 
