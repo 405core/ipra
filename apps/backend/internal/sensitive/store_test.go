@@ -17,7 +17,10 @@ func testFontCandidates(t *testing.T) []string {
 		"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 		"/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
 		"/usr/share/fonts/truetype/wqy/wqy-zenhei.ttf",
-		filepath.Clean("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+		"/Library/Fonts/Arial Unicode.ttf",
+		"/System/Library/Fonts/Hiragino Sans GB.ttc",
+		"/System/Library/Fonts/STHeiti Medium.ttc",
+		filepath.Clean("/System/Library/Fonts/STHeiti Light.ttc"),
 	}
 }
 
@@ -65,7 +68,7 @@ func TestBuildWatermarkTextMatchesFrontendRule(t *testing.T) {
 		WorkID:    "EMP-0001",
 		Name:      "Alice",
 		Page:      "home:data",
-		Timestamp: time.Date(2026, 5, 11, 12, 0, 0, 0, time.Local),
+		Timestamp: time.Date(2026, 5, 11, 12, 0, 0, 0, time.UTC),
 	})
 
 	want := "IPRA · 页面 智能旅客风险评估系统 · 姓名 Alice · 工号 EMP-0001 · 时间 2026/05/11 20:00:00"

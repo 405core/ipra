@@ -88,6 +88,20 @@ type SpeechRecognitionPhase =
   | 'error';
 type MemoryLoadState = 'idle' | 'loading' | 'ready' | 'error';
 type ProfileLoadState = 'idle' | 'loading' | 'ready' | 'locked' | 'error';
+type RiskCategoryCode =
+  | 'cross_border_gambling'
+  | 'cross_border_fraud'
+  | 'illegal_work'
+  | 'suspicious_purpose';
+type RiskCategorySource = 'watchlist' | 'officer' | 'none';
+
+interface RiskCaseContextPayload {
+  source: RiskCategorySource;
+  category: RiskCategoryCode;
+  label: string;
+  reason?: string;
+  officerNote?: string;
+}
 
 interface PassengerProfileViewModel {
   name: string;
@@ -223,6 +237,13 @@ const workflowStages: StageItem[] = [
     helper: '给出最终判定并归档',
   },
 ];
+
+const riskCategoryLabels: Record<RiskCategoryCode, string> = {
+  cross_border_gambling: '跨境赌博',
+  cross_border_fraud: '跨境电诈',
+  illegal_work: '非法务工',
+  suspicious_purpose: '出境目的存疑',
+};
 
 const stageLoadingContent: Record<StageLoadingMode, StageLoadingContent> = {
   strategy: {
@@ -817,6 +838,12 @@ const selectedProfileId = computed(() =>
 const selectedPassengerId = computed(
   () => selectedProfileId.value,
 );
+const selectedRiskCategory = computed(() =>
+  normalizeRiskCategoryCode(route.query.riskCategory),
+);
+const selectedRiskCategorySource = computed(() =>
+  normalizeRiskCategorySource(route.query.riskCategorySource),
+);
 
 function resetProfileDependentState() {
   currentStage.value = 'strategy';
@@ -869,6 +896,50 @@ async function loadSelectedProfile(profileId: string) {
 
 function returnToDataSearch() {
   void router.push({ name: 'home-data' });
+}
+
+function buildRiskCaseContext(): RiskCaseContextPayload {
+  const category = selectedRiskCategory.value;
+  const source = selectedRiskCategorySource.value;
+  const context: RiskCaseContextPayload = {
+    source,
+    category,
+    label: riskCategoryLabels[category],
+  };
+
+  if (source === 'watchlist') {
+    context.reason = '高风险名单风险类别命中';
+  } else if (source === 'officer') {
+    context.officerNote = '工作人员在发起辅助问询前选择风险方向';
+  }
+
+  return context;
+}
+
+function normalizeRiskCategoryCode(value: unknown): RiskCategoryCode {
+  switch (normalizeRouteQueryValue(value).trim()) {
+    case 'cross_border_gambling':
+      return 'cross_border_gambling';
+    case 'cross_border_fraud':
+      return 'cross_border_fraud';
+    case 'illegal_work':
+      return 'illegal_work';
+    case 'suspicious_purpose':
+      return 'suspicious_purpose';
+    default:
+      return 'suspicious_purpose';
+  }
+}
+
+function normalizeRiskCategorySource(value: unknown): RiskCategorySource {
+  switch (normalizeRouteQueryValue(value).trim()) {
+    case 'watchlist':
+      return 'watchlist';
+    case 'officer':
+      return 'officer';
+    default:
+      return 'none';
+  }
 }
 
 function stageStatus(stage: WorkflowStage) {
@@ -1879,6 +1950,7 @@ async function generateStrategy() {
     const response = await generateProtectedInquiryStrategy({
       sessionId: sessionId.value,
       passengerId: selectedPassengerId.value,
+      riskCaseContext: buildRiskCaseContext(),
       constraints: buildOutputConstraints(6),
     });
     syncProtectedSessionState(response);
@@ -2139,6 +2211,7 @@ async function enterNextRound() {
     const nextRoundNumber = round.roundNumber + 1;
     const response = await requestProtectedInquiryFollowup(sessionId.value, {
       roundNumber: nextRoundNumber,
+      riskCaseContext: buildRiskCaseContext(),
     });
     syncProtectedSessionState(response);
     round.transcripts = [];

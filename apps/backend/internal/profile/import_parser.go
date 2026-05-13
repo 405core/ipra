@@ -491,10 +491,10 @@ func buildProfileRecord(row map[string]string, importType string) (profileRecord
 		}
 
 		return profileRecord{
-			DocumentNum: documentNum,
-			FullName:    fullName,
+			DocumentNum:  documentNum,
+			FullName:     fullName,
 			RiskCategory: riskCategory,
-			RiskReason:  riskReason,
+			RiskReason:   riskReason,
 		}, nil
 	}
 
@@ -595,14 +595,28 @@ func defaultString(value string, fallback string) string {
 	return trimmed
 }
 
-func normalizeRiskCategory(value string) string {
+func NormalizeRiskCategoryCode(value string) string {
 	trimmed := strings.TrimSpace(value)
-	switch trimmed {
-	case "跨境赌博", "跨境电诈", "非法务工", "出境目的存疑":
-		return trimmed
-	default:
+	if trimmed == "" {
 		return ""
 	}
+
+	switch trimmed {
+	case "跨境赌博", "cross_border_gambling":
+		return "cross_border_gambling"
+	case "跨境电诈", "cross_border_fraud":
+		return "cross_border_fraud"
+	case "非法务工", "illegal_work":
+		return "illegal_work"
+	case "suspicious_purpose":
+		return "suspicious_purpose"
+	default:
+		return "suspicious_purpose"
+	}
+}
+
+func normalizeRiskCategory(value string) string {
+	return NormalizeRiskCategoryCode(value)
 }
 
 func readAlias(row map[string]string, usedKeys map[string]struct{}, aliases ...string) string {

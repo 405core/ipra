@@ -739,6 +739,31 @@ describe('UserAskView realtime speech sampling', () => {
     });
   });
 
+  it('passes the URL risk category into the protected strategy request', async () => {
+    routerMocks.route.query = {
+      profileId: '10',
+      riskCategory: 'cross_border_gambling',
+      riskCategorySource: 'watchlist',
+    };
+
+    const wrapper = mount(UserAskView);
+    mountedWrappers.push(wrapper);
+    await flushPromises();
+    await nextTick();
+
+    await findButton(wrapper, '生成策略').trigger('click');
+    await flushPromises();
+
+    const payload =
+      inquiryProtectedMocks.generateProtectedInquiryStrategy.mock.calls[0][0];
+    expect(payload.riskCaseContext).toMatchObject({
+      source: 'watchlist',
+      category: 'cross_border_gambling',
+      label: '跨境赌博',
+      reason: '高风险名单风险类别命中',
+    });
+  });
+
   it('keeps the strategy stage locked when the queried profile is missing', async () => {
     profileServiceMocks.getProtectedProfileById.mockRejectedValue(
       new Error('旅客画像读取失败，请返回数据检索后重试。'),

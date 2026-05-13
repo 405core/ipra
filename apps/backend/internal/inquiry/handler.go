@@ -27,6 +27,13 @@ const (
 	maxMaxRounds     = 10
 )
 
+var riskCaseLabels = map[string]string{
+	"cross_border_gambling": "跨境赌博",
+	"cross_border_fraud":    "跨境电诈",
+	"illegal_work":          "非法务工",
+	"suspicious_purpose":    "出境目的存疑",
+}
+
 type Handler struct {
 	mu                sync.RWMutex
 	nextID            int64
@@ -91,6 +98,7 @@ type ProtectedSession struct {
 	PassengerProfile map[string]any
 	TripProfile      map[string]any
 	KnownFacts       []string
+	RiskCaseContext  map[string]any
 	ProfileBlock     *sensitive.ListItem
 	StrategyBlock    *sensitive.ListItem
 	MemoryBlock      *sensitive.ListItem
@@ -288,9 +296,10 @@ func (h *Handler) SetAIServiceBaseURL(baseURL string) {
 }
 
 type protectedStrategyRequest struct {
-	SessionID   string         `json:"sessionId"`
-	Constraints map[string]any `json:"constraints"`
-	PassengerID string         `json:"passengerId"`
+	SessionID       string         `json:"sessionId"`
+	Constraints     map[string]any `json:"constraints"`
+	PassengerID     string         `json:"passengerId"`
+	RiskCaseContext map[string]any `json:"riskCaseContext"`
 }
 
 type protectedWindowSummaryRequest struct {
@@ -349,6 +358,7 @@ func (h *Handler) handleProtectedStrategy(c *gin.Context) {
 	passengerProfile := buildInquiryPassengerProfile(profileRecord)
 	tripProfile := buildInquiryTripProfile(profileRecord)
 	knownFacts := buildInquiryKnownFacts(profileRecord)
+	riskCaseContext := buildProtectedRiskCaseContext(req.RiskCaseContext, profileRecord.RiskCategory)
 	profileBlock := h.buildProtectedProfileBlock(c, claims, profileRecord)
 
 	memoryContext := h.loadMemoryContext(req.SessionID, passengerID)
@@ -359,6 +369,7 @@ func (h *Handler) handleProtectedStrategy(c *gin.Context) {
 		"knownFacts":       knownFacts,
 		"memoryContext":    memoryContext,
 		"constraints":      req.Constraints,
+		"riskCaseContext":  riskCaseContext,
 	}
 	aiResponse, err := h.postAIJSON("/v1/inquiry/first-round-strategy", aiPayload)
 	if err != nil {
@@ -383,6 +394,7 @@ func (h *Handler) handleProtectedStrategy(c *gin.Context) {
 		PassengerProfile: cloneMap(passengerProfile),
 		TripProfile:      cloneMap(tripProfile),
 		KnownFacts:       append([]string(nil), knownFacts...),
+		RiskCaseContext:  cloneMap(riskCaseContext),
 		ProfileBlock:     profileBlock,
 		StrategyBlock:    strategyBlock,
 		MemoryBlock:      memoryBlock,
@@ -423,6 +435,56 @@ func (h *Handler) loadInquiryProfile(
 	}
 
 	return profiles[0], true, nil
+}
+
+func buildProtectedRiskCaseContext(raw map[string]any, databaseRiskCategory string) map[string]any {
+	category := profile.NormalizeRiskCategoryCode(readStringMapValue(raw, "category"))
+	source := strings.TrimSpace(readStringMapValue(raw, "source"))
+	reason := strings.TrimSpace(readStringMapValue(raw, "reason"))
+	officerNote := strings.TrimSpace(readStringMapValue(raw, "officerNote"))
+
+	if category == "" {
+		category = profile.NormalizeRiskCategoryCode(databaseRiskCategory)
+		if category != "" && source == "" {
+			source = "watchlist"
+		}
+	}
+	if category == "" {
+		category = "suspicious_purpose"
+	}
+
+	if source != "watchlist" && source != "officer" && source != "none" {
+		source = "none"
+	}
+
+	result := map[string]any{
+		"source":   source,
+		"category": category,
+		"label":    riskCaseLabels[category],
+	}
+	if reason != "" {
+		result["reason"] = reason
+	}
+	if officerNote != "" {
+		result["officerNote"] = officerNote
+	}
+	return result
+}
+
+func readStringMapValue(values map[string]any, key string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	value, ok := values[key]
+	if !ok || value == nil {
+		return ""
+	}
+	switch current := value.(type) {
+	case string:
+		return strings.TrimSpace(current)
+	default:
+		return strings.TrimSpace(fmt.Sprint(current))
+	}
 }
 
 func (h *Handler) handleProtectedWindowSummary(c *gin.Context) {
@@ -544,6 +606,7 @@ func (h *Handler) handleProtectedFollowup(c *gin.Context) {
 			"tone":          "中性、专业、非指控",
 			"language":      "zh-CN",
 		},
+		"riskCaseContext": cloneMap(session.RiskCaseContext),
 	}
 	aiResponse, err := h.postAIJSON("/v1/inquiry/followup-guidance", aiPayload)
 	if err != nil {
@@ -595,6 +658,7 @@ func (h *Handler) handleProtectedJudgement(c *gin.Context) {
 			"tone":          "中性、专业、非指控",
 			"language":      "zh-CN",
 		},
+		"riskCaseContext": cloneMap(session.RiskCaseContext),
 	}
 	aiResponse, err := h.postAIJSON("/v1/inquiry/followup-guidance", aiPayload)
 	if err != nil {

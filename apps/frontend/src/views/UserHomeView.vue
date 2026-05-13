@@ -5,6 +5,7 @@ import SensitiveAssetImage from '../app/SensitiveAssetImage.vue';
 import { openTouchInput } from '../app/touch-input';
 import { useProtectedPage } from '../app/use-protected-page';
 import {
+  getProfileRiskCategory,
   recognizeIDCard,
   type IDCardOCRResponse,
   searchPassengerProfilesProtected,
@@ -27,6 +28,9 @@ const searchStatus = ref('');
 const isSearching = ref(false);
 const lastSearchedQuery = ref('');
 const protectedResultError = ref('');
+const riskCategoryDialogVisible = ref(false);
+const pendingAskProfileId = ref('');
+const openingAskProfileId = ref('');
 const cameraVideo = ref<HTMLVideoElement | null>(null);
 const captureCanvas = ref<HTMLCanvasElement | null>(null);
 const isCameraActive = ref(false);
@@ -101,6 +105,39 @@ type LegacyNavigator = Navigator & {
     errorCallback: (error: DOMException) => void,
   ) => void;
 };
+
+type RiskCategoryCode =
+  | 'cross_border_gambling'
+  | 'cross_border_fraud'
+  | 'illegal_work'
+  | 'suspicious_purpose';
+
+const riskCategoryOptions: Array<{
+  value: RiskCategoryCode;
+  label: string;
+  detail: string;
+}> = [
+  {
+    value: 'cross_border_gambling',
+    label: '跨境赌博',
+    detail: '围绕资金来源、活动安排和同行关系核验。',
+  },
+  {
+    value: 'cross_border_fraud',
+    label: '跨境电诈',
+    detail: '围绕邀约来源、境外联系人和设备用途核验。',
+  },
+  {
+    value: 'illegal_work',
+    label: '非法务工',
+    detail: '围绕雇佣关系、薪酬承诺和签证目的核验。',
+  },
+  {
+    value: 'suspicious_purpose',
+    label: '出境目的存疑',
+    detail: '围绕目的、行程、住宿和返程安排核验。',
+  },
+];
 
 function handleProfilesImported() {
   if (query.value.trim()) {
@@ -194,12 +231,69 @@ async function openAskWorkspace(profile: ProtectedListItem) {
     return;
   }
 
+  openingAskProfileId.value = profileId;
+  try {
+    const response = await getProfileRiskCategory(profileId);
+    const riskCategory = normalizeRiskCategoryCode(response.riskCategory);
+    if (riskCategory) {
+      await navigateToAskWorkspace(profileId, riskCategory, 'watchlist');
+      return;
+    }
+
+    pendingAskProfileId.value = profileId;
+    riskCategoryDialogVisible.value = true;
+  } catch (error) {
+    searchStatus.value = normalizeErrorMessage(error, '查询风险类别失败，请稍后重试。');
+  } finally {
+    openingAskProfileId.value = '';
+  }
+}
+
+async function navigateToAskWorkspace(
+  profileId: string,
+  riskCategory: RiskCategoryCode,
+  source: 'watchlist' | 'officer',
+) {
   await router.push({
     name: 'home-ask',
     query: {
       profileId,
+      riskCategory,
+      riskCategorySource: source,
     },
   });
+}
+
+async function chooseRiskCategory(value: RiskCategoryCode) {
+  const profileId = pendingAskProfileId.value.trim();
+  if (!profileId) {
+    riskCategoryDialogVisible.value = false;
+    return;
+  }
+
+  riskCategoryDialogVisible.value = false;
+  pendingAskProfileId.value = '';
+  await navigateToAskWorkspace(profileId, value, 'officer');
+}
+
+function closeRiskCategoryDialog() {
+  riskCategoryDialogVisible.value = false;
+  pendingAskProfileId.value = '';
+}
+
+function normalizeRiskCategoryCode(value: unknown): RiskCategoryCode | '' {
+  switch (String(value || '').trim()) {
+    case 'cross_border_gambling':
+      return 'cross_border_gambling';
+    case 'cross_border_fraud':
+      return 'cross_border_fraud';
+    case 'illegal_work':
+      return 'illegal_work';
+    case 'suspicious_purpose':
+      return 'suspicious_purpose';
+    default:
+      return '';
+  }
 }
 
 async function toggleCamera() {
@@ -734,9 +828,14 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
                   <button
                     class="primary-action"
                     type="button"
+                    :disabled="openingAskProfileId === record.id"
                     @click="openAskWorkspace(record)"
                   >
-                    发起辅助问询
+                    {{
+                      openingAskProfileId === record.id
+                        ? '读取风险类别...'
+                        : '发起辅助问询'
+                    }}
                   </button>
                 </div>
               </article>
@@ -817,6 +916,46 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
         </section>
       </section>
     </section>
+
+    <Teleport to="body">
+      <section
+        v-if="riskCategoryDialogVisible"
+        class="risk-category-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="risk-category-dialog-title"
+      >
+        <div class="risk-category-dialog__panel">
+          <div class="risk-category-dialog__header">
+            <div>
+              <p class="section-eyebrow">问询方向</p>
+              <h3 id="risk-category-dialog-title">选择辅助问询类型</h3>
+            </div>
+            <button
+              class="risk-category-dialog__close"
+              type="button"
+              aria-label="关闭"
+              @click="closeRiskCategoryDialog"
+            >
+              ×
+            </button>
+          </div>
+
+          <div class="risk-category-dialog__options">
+            <button
+              v-for="option in riskCategoryOptions"
+              :key="option.value"
+              type="button"
+              class="risk-category-option"
+              @click="chooseRiskCategory(option.value)"
+            >
+              <strong>{{ option.label }}</strong>
+              <span>{{ option.detail }}</span>
+            </button>
+          </div>
+        </div>
+      </section>
+    </Teleport>
   </section>
 </template>
 
@@ -1170,6 +1309,93 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
 .camera-action:disabled {
   cursor: not-allowed;
   opacity: 0.6;
+}
+
+.risk-category-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(10, 31, 38, 0.42);
+  backdrop-filter: blur(8px);
+}
+
+.risk-category-dialog__panel {
+  width: min(640px, 100%);
+  padding: clamp(18px, 2vw, 24px);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(157, 189, 202, 0.46);
+  box-shadow: 0 24px 56px rgba(14, 40, 48, 0.2);
+}
+
+.risk-category-dialog__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.risk-category-dialog__header h3 {
+  margin: 4px 0 0;
+  color: #15252b;
+}
+
+.risk-category-dialog__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: rgba(91, 113, 121, 0.1);
+  color: #15252b;
+  font-size: 1.35rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.risk-category-dialog__options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.risk-category-option {
+  min-height: 116px;
+  padding: 16px;
+  border-radius: 16px;
+  background: rgba(11, 114, 136, 0.07);
+  border: 1px solid rgba(11, 114, 136, 0.16);
+  color: #15252b;
+  text-align: left;
+  cursor: pointer;
+}
+
+.risk-category-option:hover,
+.risk-category-option:focus-visible {
+  background: rgba(11, 114, 136, 0.13);
+  border-color: rgba(11, 114, 136, 0.32);
+  outline: none;
+}
+
+.risk-category-option strong,
+.risk-category-option span {
+  display: block;
+}
+
+.risk-category-option strong {
+  font-size: 1rem;
+}
+
+.risk-category-option span {
+  margin-top: 8px;
+  color: #5b7179;
+  font-size: 0.88rem;
+  line-height: 1.5;
 }
 
 .results-list {
@@ -1534,6 +1760,14 @@ function normalizeErrorMessage(error: unknown, fallback: string) {
   }
 
   .camera-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .risk-category-dialog {
+    padding: 16px;
+  }
+
+  .risk-category-dialog__options {
     grid-template-columns: 1fr;
   }
 

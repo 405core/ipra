@@ -57,6 +57,17 @@ type MinIOConfig struct {
 	Secure      bool
 }
 
+var defaultSensitiveFontCandidates = strings.Join([]string{
+	"/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+	"/usr/share/fonts/truetype/wqy/wqy-zenhei.ttf",
+	"/usr/share/fonts/opentype/unifont/unifont.otf",
+	"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+	"/Library/Fonts/Arial Unicode.ttf",
+	"/System/Library/Fonts/Hiragino Sans GB.ttc",
+	"/System/Library/Fonts/STHeiti Medium.ttc",
+	"/System/Library/Fonts/STHeiti Light.ttc",
+}, ",")
+
 func Load() (Config, error) {
 	initialEnv := snapshotEnvKeys()
 	appEnv := firstNonEmpty(os.Getenv("APP_ENV"), "local")
@@ -92,7 +103,7 @@ func Load() (Config, error) {
 			FontCandidates: splitCSV(
 				firstNonEmpty(
 					os.Getenv("SENSITIVE_FONT_CANDIDATES"),
-					"/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc,/usr/share/fonts/truetype/wqy/wqy-zenhei.ttf,/usr/share/fonts/opentype/unifont/unifont.otf,/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+					defaultSensitiveFontCandidates,
 				),
 			),
 		},
