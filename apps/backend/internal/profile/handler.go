@@ -308,7 +308,12 @@ func (h *Handler) handleProtectedImportDetail(c *gin.Context) {
 
 func (h *Handler) handleAdminListProfiles(c *gin.Context) {
 	limit := parseListLimit(c)
-	result, err := h.service.ListProfiles(c.Request.Context(), c.Query("query"), limit)
+	result, err := h.service.ListProfiles(c.Request.Context(), ProfileListFilter{
+		Query:        c.Query("query"),
+		DocumentType: c.Query("documentType"),
+		Nationality:  c.Query("nationality"),
+		Gender:       c.Query("gender"),
+	}, limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "查询基础画像失败"})
 		return
@@ -330,7 +335,19 @@ func (h *Handler) handleAdminProtectedProfiles(c *gin.Context) {
 	}
 
 	limit := parseListLimit(c)
-	result, err := h.service.ListProfiles(c.Request.Context(), c.Query("query"), limit)
+	filter := ProfileListFilter{
+		Query:        c.Query("query"),
+		DocumentType: c.Query("documentType"),
+		Nationality:  c.Query("nationality"),
+		Gender:       c.Query("gender"),
+	}
+	result, err := h.service.ListProfiles(c.Request.Context(), filter, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "查询基础画像失败"})
+		return
+	}
+
+	filters, err := h.service.ListProfileFilterGroups(c.Request.Context(), filter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "查询基础画像失败"})
 		return
@@ -346,6 +363,7 @@ func (h *Handler) handleAdminProtectedProfiles(c *gin.Context) {
 		Total:    result.Total,
 		Page:     1,
 		PageSize: len(items),
+		Filters:  filters,
 	})
 }
 

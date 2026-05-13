@@ -27,6 +27,17 @@ export interface ProtectedFactRef {
   asset: ProtectedAssetRef;
 }
 
+export interface ProtectedFilterOption {
+  value: string;
+  label: string;
+}
+
+export interface ProtectedFilterGroup {
+  key: string;
+  label: string;
+  options: ProtectedFilterOption[];
+}
+
 export interface ProtectedListItem {
   id: string;
   asset: ProtectedAssetRef;
@@ -46,6 +57,7 @@ export interface ProtectedListResponse {
   total: number;
   page: number;
   pageSize: number;
+  filters?: ProtectedFilterGroup[];
 }
 
 export interface ProtectedDetailResponse {

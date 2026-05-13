@@ -70,17 +70,17 @@ type archiveRoundRequest struct {
 }
 
 type archiveVideoRequest struct {
-	VideoKind           string          `json:"videoKind"`
-	WindowID            string          `json:"windowId"`
-	QuestionID          string          `json:"questionId"`
-	FileName            string          `json:"fileName"`
-	ContentType         string          `json:"contentType"`
-	SizeBytes           int64           `json:"sizeBytes"`
-	Modal               string          `json:"modal"`
-	StartSeconds        *float64        `json:"startSeconds"`
-	EndSeconds          *float64        `json:"endSeconds"`
-	HumanOmniModel      string          `json:"humanOmniModel"`
-	HumanOmniRawSummary string          `json:"humanOmniRawSummary"`
+	VideoKind           string   `json:"videoKind"`
+	WindowID            string   `json:"windowId"`
+	QuestionID          string   `json:"questionId"`
+	FileName            string   `json:"fileName"`
+	ContentType         string   `json:"contentType"`
+	SizeBytes           int64    `json:"sizeBytes"`
+	Modal               string   `json:"modal"`
+	StartSeconds        *float64 `json:"startSeconds"`
+	EndSeconds          *float64 `json:"endSeconds"`
+	HumanOmniModel      string   `json:"humanOmniModel"`
+	HumanOmniRawSummary string   `json:"humanOmniRawSummary"`
 }
 
 type createArchiveResponse struct {
@@ -91,10 +91,11 @@ type createArchiveResponse struct {
 }
 
 type protectedArchiveListResponse struct {
-	Items []protectedArchiveListItem `json:"items"`
-	Total int64                      `json:"total"`
-	Page  int                        `json:"page"`
-	PageSize int                     `json:"pageSize"`
+	Items    []protectedArchiveListItem `json:"items"`
+	Total    int64                      `json:"total"`
+	Page     int                        `json:"page"`
+	PageSize int                        `json:"pageSize"`
+	Filters  []sensitive.FilterGroup    `json:"filters,omitempty"`
 }
 
 type protectedArchiveListItem struct {
@@ -122,38 +123,38 @@ type archiveRoundDetail struct {
 }
 
 type protectedArchiveVideoPayload struct {
-	ID           uint64  `json:"id"`
-	FileName     string  `json:"fileName"`
-	ContentType  string  `json:"contentType"`
-	SizeBytes    int64   `json:"sizeBytes"`
-	Modal        string  `json:"modal"`
-	PlaybackPath string  `json:"playbackPath"`
+	ID           uint64   `json:"id"`
+	FileName     string   `json:"fileName"`
+	ContentType  string   `json:"contentType"`
+	SizeBytes    int64    `json:"sizeBytes"`
+	Modal        string   `json:"modal"`
+	PlaybackPath string   `json:"playbackPath"`
 	StartSeconds *float64 `json:"startSeconds,omitempty"`
 	EndSeconds   *float64 `json:"endSeconds,omitempty"`
 }
 
 type protectedArchiveRoundPayload struct {
-	ID              uint64                        `json:"id"`
-	RoundNo         int                           `json:"roundNo"`
-	DurationSeconds int                           `json:"durationSeconds"`
-	DetailAsset     *sensitive.AssetRef           `json:"detailAsset,omitempty"`
+	ID              uint64                         `json:"id"`
+	RoundNo         int                            `json:"roundNo"`
+	DurationSeconds int                            `json:"durationSeconds"`
+	DetailAsset     *sensitive.AssetRef            `json:"detailAsset,omitempty"`
 	Videos          []protectedArchiveVideoPayload `json:"videos"`
 }
 
 type protectedArchiveDetailResponse struct {
-	ID                   string                        `json:"id"`
-	ArchiveCode          string                        `json:"archiveCode"`
-	SessionID            string                        `json:"sessionId"`
-	FinalJudgement       string                        `json:"finalJudgement"`
-	RoundCount           int                           `json:"roundCount"`
-	TotalDurationSeconds int                           `json:"totalDurationSeconds"`
-	TranscriptCount      int                           `json:"transcriptCount"`
-	Status               string                        `json:"status"`
-	ArchivedAt           time.Time                     `json:"archivedAt"`
-	OverviewAsset        *sensitive.AssetRef           `json:"overviewAsset,omitempty"`
-	JudgementAsset       *sensitive.AssetRef           `json:"judgementAsset,omitempty"`
-	BriefingAsset        *sensitive.AssetRef           `json:"briefingAsset,omitempty"`
-	PassengerAsset       *sensitive.AssetRef           `json:"passengerAsset,omitempty"`
+	ID                   string                         `json:"id"`
+	ArchiveCode          string                         `json:"archiveCode"`
+	SessionID            string                         `json:"sessionId"`
+	FinalJudgement       string                         `json:"finalJudgement"`
+	RoundCount           int                            `json:"roundCount"`
+	TotalDurationSeconds int                            `json:"totalDurationSeconds"`
+	TranscriptCount      int                            `json:"transcriptCount"`
+	Status               string                         `json:"status"`
+	ArchivedAt           time.Time                      `json:"archivedAt"`
+	OverviewAsset        *sensitive.AssetRef            `json:"overviewAsset,omitempty"`
+	JudgementAsset       *sensitive.AssetRef            `json:"judgementAsset,omitempty"`
+	BriefingAsset        *sensitive.AssetRef            `json:"briefingAsset,omitempty"`
+	PassengerAsset       *sensitive.AssetRef            `json:"passengerAsset,omitempty"`
 	Rounds               []protectedArchiveRoundPayload `json:"rounds"`
 	Videos               []protectedArchiveVideoPayload `json:"videos"`
 }
@@ -273,36 +274,19 @@ func (h *Handler) handleList(c *gin.Context) {
 	}
 
 	limit := parseLimit(c.Query("limit"))
-	dbQuery := h.db.WithContext(c.Request.Context()).Model(&dbschema.InquiryArchive{})
-
-	if query := strings.TrimSpace(c.Query("query")); query != "" {
-		pattern := "%" + query + "%"
-		dbQuery = dbQuery.Where(
-			`archive_code ILIKE ? OR session_id ILIKE ? OR passenger_document_num ILIKE ? OR passenger_name ILIKE ? OR operator_work_id ILIKE ? OR operator_name ILIKE ? OR judgement_reason ILIKE ?`,
-			pattern,
-			pattern,
-			pattern,
-			pattern,
-			pattern,
-			pattern,
-			pattern,
-		)
-	}
-	if judgement := strings.TrimSpace(c.Query("judgement")); judgement != "" {
-		dbQuery = dbQuery.Where("final_judgement = ?", judgement)
-	}
-	if documentNum := strings.TrimSpace(c.Query("documentNum")); documentNum != "" {
-		dbQuery = dbQuery.Where("passenger_document_num ILIKE ?", "%"+documentNum+"%")
-	}
-	if operatorWorkID := strings.TrimSpace(c.Query("operatorWorkId")); operatorWorkID != "" {
-		dbQuery = dbQuery.Where("LOWER(operator_work_id) = ?", strings.ToLower(operatorWorkID))
+	filter := archiveListFilter{
+		Query:          strings.TrimSpace(c.Query("query")),
+		Judgement:      strings.TrimSpace(c.Query("judgement")),
+		DocumentNum:    strings.TrimSpace(c.Query("documentNum")),
+		OperatorWorkID: strings.TrimSpace(c.Query("operatorWorkId")),
 	}
 	if from, ok := parseTimeQuery(c.Query("from")); ok {
-		dbQuery = dbQuery.Where("archived_at >= ?", from)
+		filter.From = &from
 	}
 	if to, ok := parseTimeQuery(c.Query("to")); ok {
-		dbQuery = dbQuery.Where("archived_at <= ?", to)
+		filter.To = &to
 	}
+	dbQuery := buildArchiveListQuery(h.db.WithContext(c.Request.Context()), filter)
 
 	var total int64
 	if err := dbQuery.Count(&total).Error; err != nil {
@@ -316,14 +300,35 @@ func (h *Handler) handleList(c *gin.Context) {
 		return
 	}
 
+	videoCounts, err := h.loadArchiveVideoCounts(c.Request.Context(), archives)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "查询问询归档失败"})
+		return
+	}
+
 	items := make([]protectedArchiveListItem, 0, len(archives))
 	for _, item := range archives {
-		var videoCount int64
-		_ = h.db.WithContext(c.Request.Context()).
-			Model(&dbschema.InquiryArchiveVideo{}).
-			Where("archive_id = ?", item.ID).
-			Count(&videoCount).Error
-		items = append(items, h.buildProtectedArchiveListItem(c, claims, item, videoCount))
+		items = append(items, h.buildProtectedArchiveListItem(c, claims, item, videoCounts[item.ID]))
+	}
+
+	judgementOptions, err := listArchiveFilterOptions(
+		h.db.WithContext(c.Request.Context()),
+		archiveListFilterWithoutJudgement(filter),
+		"final_judgement",
+		func(value string) (sensitive.FilterOption, bool) {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				return sensitive.FilterOption{}, false
+			}
+			return sensitive.FilterOption{
+				Value: value,
+				Label: formatArchiveJudgementLabel(value),
+			}, true
+		},
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "查询问询归档失败"})
+		return
 	}
 
 	c.JSON(http.StatusOK, protectedArchiveListResponse{
@@ -331,7 +336,116 @@ func (h *Handler) handleList(c *gin.Context) {
 		Total:    total,
 		Page:     1,
 		PageSize: len(items),
+		Filters: []sensitive.FilterGroup{
+			{
+				Key:     "judgement",
+				Label:   "判定",
+				Options: sensitive.NormalizeFilterOptions(judgementOptions),
+			},
+		},
 	})
+}
+
+type archiveListFilter struct {
+	Query          string
+	Judgement      string
+	DocumentNum    string
+	OperatorWorkID string
+	From           *time.Time
+	To             *time.Time
+}
+
+func buildArchiveListQuery(db *gorm.DB, filter archiveListFilter) *gorm.DB {
+	dbQuery := db.Model(&dbschema.InquiryArchive{})
+	if filter.Query != "" {
+		pattern := "%" + filter.Query + "%"
+		dbQuery = dbQuery.Where(
+			`archive_code ILIKE ? OR session_id ILIKE ? OR passenger_document_num ILIKE ? OR passenger_name ILIKE ? OR operator_work_id ILIKE ? OR operator_name ILIKE ? OR judgement_reason ILIKE ?`,
+			pattern,
+			pattern,
+			pattern,
+			pattern,
+			pattern,
+			pattern,
+			pattern,
+		)
+	}
+	if filter.Judgement != "" {
+		dbQuery = dbQuery.Where("final_judgement = ?", filter.Judgement)
+	}
+	if filter.DocumentNum != "" {
+		dbQuery = dbQuery.Where("passenger_document_num ILIKE ?", "%"+filter.DocumentNum+"%")
+	}
+	if filter.OperatorWorkID != "" {
+		dbQuery = dbQuery.Where("LOWER(operator_work_id) = ?", strings.ToLower(filter.OperatorWorkID))
+	}
+	if filter.From != nil {
+		dbQuery = dbQuery.Where("archived_at >= ?", *filter.From)
+	}
+	if filter.To != nil {
+		dbQuery = dbQuery.Where("archived_at <= ?", *filter.To)
+	}
+	return dbQuery
+}
+
+func archiveListFilterWithoutJudgement(filter archiveListFilter) archiveListFilter {
+	filter.Judgement = ""
+	return filter
+}
+
+func listArchiveFilterOptions(
+	db *gorm.DB,
+	filter archiveListFilter,
+	column string,
+	resolver func(value string) (sensitive.FilterOption, bool),
+) ([]sensitive.FilterOption, error) {
+	var values []string
+	if err := buildArchiveListQuery(db, filter).Distinct(column).Pluck(column, &values).Error; err != nil {
+		return nil, err
+	}
+
+	options := make([]sensitive.FilterOption, 0, len(values))
+	for _, value := range values {
+		option, ok := resolver(value)
+		if !ok {
+			continue
+		}
+		options = append(options, option)
+	}
+	return sensitive.NormalizeFilterOptions(options), nil
+}
+
+func (h *Handler) loadArchiveVideoCounts(
+	ctx context.Context,
+	archives []dbschema.InquiryArchive,
+) (map[uint64]int64, error) {
+	result := make(map[uint64]int64, len(archives))
+	if len(archives) == 0 {
+		return result, nil
+	}
+
+	archiveIDs := make([]uint64, 0, len(archives))
+	for _, archive := range archives {
+		archiveIDs = append(archiveIDs, archive.ID)
+	}
+
+	var rows []struct {
+		ArchiveID uint64
+		Total     int64
+	}
+	if err := h.db.WithContext(ctx).
+		Model(&dbschema.InquiryArchiveVideo{}).
+		Select("archive_id, COUNT(*) AS total").
+		Where("archive_id IN ?", archiveIDs).
+		Group("archive_id").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	for _, row := range rows {
+		result[row.ArchiveID] = row.Total
+	}
+	return result, nil
 }
 
 func (h *Handler) handleGet(c *gin.Context) {
@@ -410,7 +524,7 @@ func (h *Handler) buildProtectedArchiveListItem(
 	videoCount int64,
 ) protectedArchiveListItem {
 	listItem := sensitive.ListItem{
-		ID: strconv.FormatUint(item.ID, 10),
+		ID:    strconv.FormatUint(item.ID, 10),
 		Asset: h.putArchiveListAsset(c, claims, item),
 		Fields: []sensitive.FieldRef{
 			h.putInlineFieldAsset(c, claims, "archiveCode", item.ArchiveCode, sensitive.TagToneDefault, "admin:archives:field"),
@@ -934,8 +1048,8 @@ func buildArchiveJudgementBriefing(snapshot inquiry.ArchiveSessionSnapshot) map[
 		return map[string]any{}
 	}
 	return map[string]any{
-		"operatorNote":        extractArchiveString(snapshot.JudgementData["operatorNote"]),
-		"warnings":            extractArchiveStringSlice(snapshot.JudgementData["warnings"]),
+		"operatorNote":         extractArchiveString(snapshot.JudgementData["operatorNote"]),
+		"warnings":             extractArchiveStringSlice(snapshot.JudgementData["warnings"]),
 		"multimodalAssessment": cloneMap(extractArchiveMap(snapshot.JudgementData["multimodalAssessment"])),
 	}
 }
@@ -1082,15 +1196,15 @@ func (h *Handler) putArchiveBriefingAsset(c *gin.Context, claims auth.Claims, de
 			},
 			{
 				Heading: "风险提示",
-				Lines: extractArchiveStringSlice(assessment["riskHints"]),
+				Lines:   extractArchiveStringSlice(assessment["riskHints"]),
 			},
 			{
 				Heading: "证据摘要",
-				Lines: extractArchiveStringSlice(assessment["evidence"]),
+				Lines:   extractArchiveStringSlice(assessment["evidence"]),
 			},
 			{
 				Heading: "注意事项",
-				Lines: extractArchiveStringSlice(briefing["warnings"]),
+				Lines:   extractArchiveStringSlice(briefing["warnings"]),
 			},
 		},
 	}

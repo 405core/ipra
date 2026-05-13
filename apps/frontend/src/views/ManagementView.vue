@@ -32,11 +32,13 @@ import {
   updateAdminInquirySettings,
   updateAdminUser,
   updateAdminUserStatus,
+  type AdminProfileProtectedQuery,
   type AdminUserItem,
   type InquirySettings,
 } from '../app/admin-service';
 import type {
   ProtectedDetailResponse,
+  ProtectedFilterGroup,
   ProtectedFactRef,
   ProtectedFieldRef,
   ProtectedListItem,
@@ -116,12 +118,24 @@ let watchlistLoadRequestId = 0;
 let userLoadRequestId = 0;
 let archiveLoadRequestId = 0;
 let auditLoadRequestId = 0;
+const loadedTabs = ref<Record<TabKey, boolean>>({
+  profiles: false,
+  watchlist: false,
+  users: false,
+  archives: false,
+  audit: false,
+  settings: false,
+});
 
 const protectedProfiles = ref<ProtectedListItem[]>([]);
 const protectedWatchlist = ref<ProtectedListItem[]>([]);
 const protectedUsers = ref<ProtectedListItem[]>([]);
 const protectedAuditLogs = ref<ProtectedListItem[]>([]);
 const archives = ref<InquiryArchiveListItem[]>([]);
+const profileFilterGroups = ref<ProtectedFilterGroup[]>([]);
+const userFilterGroups = ref<ProtectedFilterGroup[]>([]);
+const archiveFilterGroups = ref<ProtectedFilterGroup[]>([]);
+const auditFilterGroups = ref<ProtectedFilterGroup[]>([]);
 const inquirySettings = ref<InquirySettings | null>(null);
 const inquiryMaxRoundsInput = ref(3);
 const isSavingInquirySettings = ref(false);
@@ -177,37 +191,48 @@ const isEditingCurrentUser = computed(
 );
 const adminName = computed(() => session.value?.user.name || '系统管理员');
 const adminWorkId = computed(() => session.value?.user.workId || 'admin');
-const profileDocumentTypeOptions = computed<FilterOption[]>(() => [
-  { value: '', label: '全部证件类型' },
-]);
-const profileGenderOptions = computed<FilterOption[]>(() => [
-  { value: '', label: '全部性别' },
-]);
-const profileNationalityOptions = computed<FilterOption[]>(() => [
-  { value: '', label: '全部国籍' },
-]);
-const userRoleOptions: FilterOption[] = [
-  { value: '', label: '全部角色' },
-  { value: 'user', label: '员工' },
-  { value: 'admin', label: '管理员' },
-];
-const userStatusOptions: FilterOption[] = [
-  { value: '', label: '全部状态' },
-  { value: 'active', label: '启用' },
-  { value: 'disabled', label: '停用' },
-];
-const auditResultOptions: FilterOption[] = [
-  { value: '', label: '全部结果' },
-  { value: 'success', label: '成功' },
-  { value: 'denied', label: '拒绝' },
-  { value: 'failure', label: '失败' },
-];
-const archiveJudgementOptions: FilterOption[] = [
-  { value: '', label: '全部判定' },
-  { value: 'concealment', label: '隐瞒' },
-  { value: 'falseStatement', label: '虚假陈述' },
-  { value: 'clear', label: '无异常' },
-];
+const profileDocumentTypeOptions = computed<FilterOption[]>(() =>
+  withAllOption(
+    '全部证件类型',
+    filterGroupOptions(profileFilterGroups.value, 'documentType'),
+  ),
+);
+const profileNationalityOptions = computed<FilterOption[]>(() =>
+  withAllOption(
+    '全部国籍',
+    filterGroupOptions(profileFilterGroups.value, 'nationality'),
+  ),
+);
+const profileGenderOptions = computed<FilterOption[]>(() =>
+  withAllOption(
+    '全部性别',
+    filterGroupOptions(profileFilterGroups.value, 'gender'),
+  ),
+);
+const userRoleOptions = computed<FilterOption[]>(() =>
+  withAllOption(
+    '全部角色',
+    filterGroupOptions(userFilterGroups.value, 'role'),
+  ),
+);
+const userStatusOptions = computed<FilterOption[]>(() =>
+  withAllOption(
+    '全部状态',
+    filterGroupOptions(userFilterGroups.value, 'status'),
+  ),
+);
+const auditResultOptions = computed<FilterOption[]>(() =>
+  withAllOption(
+    '全部结果',
+    filterGroupOptions(auditFilterGroups.value, 'result'),
+  ),
+);
+const archiveJudgementOptions = computed<FilterOption[]>(() =>
+  withAllOption(
+    '全部判定',
+    filterGroupOptions(archiveFilterGroups.value, 'judgement'),
+  ),
+);
 const listPageSize = 10;
 const profilePage = ref(1);
 const watchlistPage = ref(1);
@@ -215,78 +240,9 @@ const userPage = ref(1);
 const archivePage = ref(1);
 const auditPage = ref(1);
 const filteredAuditLogs = computed(() => protectedAuditLogs.value);
-const filteredProtectedProfiles = computed(() =>
-  protectedProfiles.value.filter((item) => {
-    const documentTypeField = findProtectedField(item.chips, 'documentType');
-    const genderField = findProtectedField(item.chips, 'gender');
-    const nationalityField = findProtectedField(item.fields, 'nationality');
-
-    if (
-      profileFilters.value.documentType &&
-      !protectedAssetTextMatches(
-        documentTypeField,
-        profileFilters.value.documentType,
-        formatDocumentTypeLabel(profileFilters.value.documentType),
-      )
-    ) {
-      return false;
-    }
-
-    if (
-      profileFilters.value.gender &&
-      !protectedAssetTextMatches(
-        genderField,
-        profileFilters.value.gender,
-        formatGenderLabel(profileFilters.value.gender),
-      )
-    ) {
-      return false;
-    }
-
-    if (
-      profileFilters.value.nationality &&
-      !protectedAssetTextMatches(
-        nationalityField,
-        profileFilters.value.nationality,
-      )
-    ) {
-      return false;
-    }
-
-    return true;
-  }),
-);
+const filteredProtectedProfiles = computed(() => protectedProfiles.value);
 const filteredProtectedWatchlist = computed(() => protectedWatchlist.value);
-const filteredProtectedUsers = computed(() =>
-  protectedUsers.value.filter((item) => {
-    const roleField = findProtectedChip(item, 'role');
-    const statusField = findProtectedChip(item, 'status');
-
-    if (
-      userFilters.value.role &&
-      !protectedAssetTextMatches(
-        roleField,
-        userFilters.value.role,
-        formatUserRoleLabel(userFilters.value.role),
-      )
-    ) {
-      return false;
-    }
-
-    if (
-      userFilters.value.status &&
-      !protectedAssetTextMatches(
-        statusField,
-        userFilters.value.status,
-        formatUserStatusLabel(userFilters.value.status),
-      )
-    ) {
-      return false;
-    }
-
-    return true;
-  }),
-);
+const filteredProtectedUsers = computed(() => protectedUsers.value);
 const filteredArchives = computed(() => archives.value);
 const pagedProtectedProfiles = computed(() =>
   sliceCurrentPage(filteredProtectedProfiles.value, profilePage.value),
@@ -319,6 +275,7 @@ const selectedProfileDocumentTypeLabel = computed(() =>
     '证件类型',
     profileDocumentTypeOptions.value,
     profileFilters.value.documentType,
+    formatDocumentTypeLabel(profileFilters.value.documentType),
   ),
 );
 const selectedProfileNationalityLabel = computed(() =>
@@ -326,30 +283,48 @@ const selectedProfileNationalityLabel = computed(() =>
     '国籍',
     profileNationalityOptions.value,
     profileFilters.value.nationality,
-  ),
+    profileFilters.value.nationality || '全部',
+  )
 );
 const selectedProfileGenderLabel = computed(() =>
   describeFilterLabel(
     '性别',
     profileGenderOptions.value,
     profileFilters.value.gender,
+    formatGenderLabel(profileFilters.value.gender),
   ),
 );
 const selectedUserRoleLabel = computed(() =>
-  describeFilterLabel('角色', userRoleOptions, userFilters.value.role),
+  describeFilterLabel(
+    '角色',
+    userRoleOptions.value,
+    userFilters.value.role,
+    formatUserRoleLabel(userFilters.value.role),
+  ),
 );
 const selectedUserStatusLabel = computed(() =>
-  describeFilterLabel('状态', userStatusOptions, userFilters.value.status),
+  describeFilterLabel(
+    '状态',
+    userStatusOptions.value,
+    userFilters.value.status,
+    formatUserStatusLabel(userFilters.value.status),
+  ),
 );
 const selectedArchiveJudgementLabel = computed(() =>
   describeFilterLabel(
     '判定',
-    archiveJudgementOptions,
+    archiveJudgementOptions.value,
     archiveFilters.value.judgement,
+    formatArchiveJudgementLabel(archiveFilters.value.judgement),
   ),
 );
 const selectedAuditResultLabel = computed(() =>
-  describeFilterLabel('结果', auditResultOptions, auditFilters.value.result),
+  describeFilterLabel(
+    '结果',
+    auditResultOptions.value,
+    auditFilters.value.result,
+    formatAuditResultLabel(auditFilters.value.result),
+  ),
 );
 const archiveVideoWatermarkText = computed(() =>
   session.value
@@ -381,7 +356,7 @@ function stopVideoWatermarkTimer() {
 }
 
 onMounted(() => {
-  void refreshAll();
+  void initializeManagementView();
   startVideoWatermarkTimer();
   if (typeof document !== 'undefined') {
     document.addEventListener('click', handleDocumentClick);
@@ -446,6 +421,7 @@ watch(
   ],
   () => {
     profilePage.value = 1;
+    scheduleProfilesReload(true);
   },
 );
 
@@ -453,6 +429,7 @@ watch(
   () => [userFilters.value.role, userFilters.value.status],
   () => {
     userPage.value = 1;
+    scheduleUsersReload(true);
   },
 );
 
@@ -490,15 +467,47 @@ watch(auditPageCount, (count) => {
   auditPage.value = clampPage(auditPage.value, count);
 });
 
-async function refreshAll() {
+async function initializeManagementView() {
   await Promise.all([
-    loadProfiles(),
-    loadWatchlist(),
-    loadUsers(),
-    loadArchives(),
-    loadAuditLogs(),
-    loadInquirySettings(),
+    ensureTabLoaded('profiles'),
+    ensureTabLoaded('settings'),
   ]);
+}
+
+async function ensureTabLoaded(tabKey: TabKey) {
+  if (loadedTabs.value[tabKey]) {
+    return;
+  }
+
+  const loaded = await refreshTab(tabKey);
+  if (loaded) {
+    loadedTabs.value[tabKey] = true;
+  }
+}
+
+async function refreshTab(tabKey: TabKey) {
+  let loaded = false;
+  switch (tabKey) {
+    case 'profiles':
+      loaded = await loadProfiles();
+      break;
+    case 'watchlist':
+      loaded = await loadWatchlist();
+      break;
+    case 'users':
+      loaded = await loadUsers();
+      break;
+    case 'archives':
+      loaded = await loadArchives();
+      break;
+    case 'audit':
+      loaded = await loadAuditLogs();
+      break;
+    case 'settings':
+      loaded = await loadInquirySettings();
+      break;
+  }
+  return loaded;
 }
 
 function clearScheduledReload(timerId: number | null) {
@@ -575,19 +584,29 @@ function scheduleAuditLogsReload(immediate = false) {
 async function loadProfiles() {
   const requestId = ++profileLoadRequestId;
   try {
-    const protectedResult = await listAdminProfilesProtected(profileQuery.value);
+    const query: AdminProfileProtectedQuery = {
+      query: profileQuery.value,
+      documentType: profileFilters.value.documentType,
+      nationality: profileFilters.value.nationality,
+      gender: profileFilters.value.gender,
+    };
+    const protectedResult = await listAdminProfilesProtected(query);
     if (requestId !== profileLoadRequestId) {
-      return;
+      return false;
     }
     protectedProfiles.value = protectedResult.items;
+    profileFilterGroups.value = protectedResult.filters ?? [];
     statusMessages.value.profiles = `已加载基础画像 ${protectedResult.total} 条。`;
+    return true;
   } catch (error) {
     if (requestId !== profileLoadRequestId) {
-      return;
+      return false;
     }
     protectedProfiles.value = [];
+    profileFilterGroups.value = [];
     statusMessages.value.profiles =
       error instanceof Error ? error.message : '查询基础画像失败。';
+    return false;
   }
 }
 
@@ -598,36 +617,46 @@ async function loadWatchlist() {
       watchlistQuery.value,
     );
     if (requestId !== watchlistLoadRequestId) {
-      return;
+      return false;
     }
     protectedWatchlist.value = protectedResult.items;
     statusMessages.value.watchlist = `已加载高风险名单 ${protectedResult.total} 条。`;
+    return true;
   } catch (error) {
     if (requestId !== watchlistLoadRequestId) {
-      return;
+      return false;
     }
     protectedWatchlist.value = [];
     statusMessages.value.watchlist =
       error instanceof Error ? error.message : '查询高风险名单失败。';
+    return false;
   }
 }
 
 async function loadUsers() {
   const requestId = ++userLoadRequestId;
   try {
-    const protectedResult = await listAdminUsersProtected(userQuery.value);
+    const protectedResult = await listAdminUsersProtected({
+      query: userQuery.value,
+      role: userFilters.value.role,
+      status: userFilters.value.status,
+    });
     if (requestId !== userLoadRequestId) {
-      return;
+      return false;
     }
     protectedUsers.value = protectedResult.items;
+    userFilterGroups.value = protectedResult.filters ?? [];
     statusMessages.value.users = `已加载用户 ${protectedResult.total} 条。`;
+    return true;
   } catch (error) {
     if (requestId !== userLoadRequestId) {
-      return;
+      return false;
     }
     protectedUsers.value = [];
+    userFilterGroups.value = [];
     statusMessages.value.users =
       error instanceof Error ? error.message : '查询用户失败。';
+    return false;
   }
 }
 
@@ -642,17 +671,21 @@ async function loadArchives() {
       limit: 500,
     });
     if (requestId !== archiveLoadRequestId) {
-      return;
+      return false;
     }
     archives.value = result.items;
+    archiveFilterGroups.value = result.filters;
     statusMessages.value.archives = `已加载问询归档 ${result.total} 条。`;
+    return true;
   } catch (error) {
     if (requestId !== archiveLoadRequestId) {
-      return;
+      return false;
     }
     archives.value = [];
+    archiveFilterGroups.value = [];
     statusMessages.value.archives =
       error instanceof Error ? error.message : '查询问询归档失败。';
+    return false;
   }
 }
 
@@ -666,25 +699,37 @@ async function loadAuditLogs() {
       limit: 500,
     });
     if (requestId !== auditLoadRequestId) {
-      return;
+      return false;
     }
     protectedAuditLogs.value = result.items;
+    auditFilterGroups.value = result.filters ?? [];
     statusMessages.value.audit = `已加载审计日志 ${result.total} 条。`;
+    return true;
   } catch (error) {
     if (requestId !== auditLoadRequestId) {
-      return;
+      return false;
     }
     protectedAuditLogs.value = [];
+    auditFilterGroups.value = [];
     statusMessages.value.audit =
       error instanceof Error ? error.message : '查询审计日志失败。';
+    return false;
   }
 }
 
 async function loadInquirySettings() {
-  const result = await getAdminInquirySettings();
-  inquirySettings.value = result;
-  inquiryMaxRoundsInput.value = result.maxRounds;
-  statusMessages.value.settings = `当前总交互轮次上限为 ${result.maxRounds} 轮。`;
+  try {
+    const result = await getAdminInquirySettings();
+    inquirySettings.value = result;
+    inquiryMaxRoundsInput.value = result.maxRounds;
+    statusMessages.value.settings = `当前总交互轮次上限为 ${result.maxRounds} 轮。`;
+    return true;
+  } catch (error) {
+    inquirySettings.value = null;
+    statusMessages.value.settings =
+      error instanceof Error ? error.message : '读取系统设置失败。';
+    return false;
+  }
 }
 
 async function syncCurrentSession() {
@@ -851,6 +896,11 @@ function handleDocumentKeydown(event: KeyboardEvent) {
 function selectTab(tabKey: TabKey) {
   activeTab.value = tabKey;
   openFilterPicker.value = null;
+  if (loadedTabs.value[tabKey]) {
+    void refreshTab(tabKey);
+    return;
+  }
+  void ensureTabLoaded(tabKey);
 }
 
 function toggleFilterPicker(key: Exclude<FilterPickerKey, null>) {
@@ -1120,9 +1170,20 @@ function describeFilterLabel(
   prefix: string,
   options: FilterOption[],
   value: string,
+  fallbackLabel?: string,
 ) {
-  const label = options.find((item) => item.value === value)?.label ?? '全部';
+  const label =
+    options.find((item) => item.value === value)?.label ??
+    (value ? fallbackLabel ?? value : '全部');
   return `${prefix}：${label}`;
+}
+
+function withAllOption(label: string, options: FilterOption[]) {
+  return [{ value: '', label }, ...options];
+}
+
+function filterGroupOptions(groups: ProtectedFilterGroup[], key: string) {
+  return groups.find((group) => group.key === key)?.options ?? [];
 }
 
 function formatDocumentTypeLabel(value: string) {
@@ -1261,30 +1322,6 @@ function protectedChipToneClass(tone?: string) {
     default:
       return '';
   }
-}
-
-function protectedAssetTextMatches(
-  field: ProtectedFieldRef | null | undefined,
-  ...keywords: string[]
-) {
-  if (!field?.asset) {
-    return false;
-  }
-
-  const haystack = [
-    field.key,
-    field.asset.context,
-    field.asset.id,
-    field.asset.url,
-  ]
-    .map((value) => String(value ?? '').trim().toLowerCase())
-    .filter(Boolean)
-    .join(' ');
-
-  return keywords
-    .map((keyword) => keyword.trim().toLowerCase())
-    .filter(Boolean)
-    .some((keyword) => haystack.includes(keyword));
 }
 
 function asArray(value: unknown) {

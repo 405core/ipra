@@ -1,6 +1,10 @@
 package sensitive
 
-import "time"
+import (
+	"sort"
+	"strings"
+	"time"
+)
 
 type RenderPreset string
 
@@ -99,6 +103,17 @@ type AssetRef struct {
 	Context string `json:"context"`
 }
 
+type FilterOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
+
+type FilterGroup struct {
+	Key     string         `json:"key"`
+	Label   string         `json:"label"`
+	Options []FilterOption `json:"options"`
+}
+
 type FieldRef struct {
 	Key   string   `json:"key"`
 	Asset AssetRef `json:"asset"`
@@ -126,13 +141,46 @@ type ListItem struct {
 }
 
 type ListResponse struct {
-	Items    []ListItem `json:"items"`
-	Total    int64      `json:"total"`
-	Page     int        `json:"page"`
-	PageSize int        `json:"pageSize"`
+	Items    []ListItem     `json:"items"`
+	Total    int64          `json:"total"`
+	Page     int            `json:"page"`
+	PageSize int            `json:"pageSize"`
+	Filters  []FilterGroup  `json:"filters,omitempty"`
 }
 
 type DetailResponse struct {
 	ID    string   `json:"id"`
 	Asset AssetRef `json:"asset"`
+}
+
+func NormalizeFilterOptions(options []FilterOption) []FilterOption {
+	seen := make(map[string]FilterOption, len(options))
+	for _, option := range options {
+		value := strings.TrimSpace(option.Value)
+		label := strings.TrimSpace(option.Label)
+		if value == "" || label == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = FilterOption{
+			Value: value,
+			Label: label,
+		}
+	}
+
+	result := make([]FilterOption, 0, len(seen))
+	for _, option := range seen {
+		result = append(result, option)
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Label == result[j].Label {
+			return result[i].Value < result[j].Value
+		}
+		return result[i].Label < result[j].Label
+	})
+
+	return result
 }

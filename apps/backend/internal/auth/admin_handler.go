@@ -26,6 +26,12 @@ type adminUserListResult struct {
 	Total int64          `json:"total"`
 }
 
+type adminUserFilter struct {
+	Query  string
+	Role   string
+	Status string
+}
+
 func (h *Handler) RegisterAdminRoutes(r gin.IRouter) {
 	adminGroup := r.Group("/api/admin/users")
 	adminGroup.Use(h.requireAuth(), requireAdminRoleForAuth())
@@ -39,28 +45,13 @@ func (h *Handler) RegisterAdminRoutes(r gin.IRouter) {
 }
 
 func (h *Handler) handleAdminListUsers(c *gin.Context) {
-	limit := 20
-	if rawLimit := strings.TrimSpace(c.Query("limit")); rawLimit != "" {
-		if parsed, err := strconv.Atoi(rawLimit); err == nil && parsed > 0 {
-			if parsed > 500 {
-				parsed = 500
-			}
-			limit = parsed
-		}
+	limit := parseAdminUserListLimit(c.Query("limit"))
+	filter := adminUserFilter{
+		Query:  strings.TrimSpace(c.Query("query")),
+		Role:   NormalizeRole(c.Query("role")),
+		Status: parseAdminUserStatusFilter(c.Query("status")),
 	}
-
-	query := strings.TrimSpace(c.Query("query"))
-	dbQuery := h.db.Model(&dbschema.SystemUser{})
-	if query != "" {
-		pattern := "%" + query + "%"
-		dbQuery = dbQuery.Where(
-			`work_id ILIKE ? OR name ILIKE ? OR role ILIKE ? OR status ILIKE ?`,
-			pattern,
-			pattern,
-			pattern,
-			pattern,
-		)
-	}
+	dbQuery := buildAdminUserQuery(h.db, filter)
 
 	var total int64
 	if err := dbQuery.Count(&total).Error; err != nil {
@@ -97,28 +88,13 @@ func (h *Handler) handleAdminProtectedUsers(c *gin.Context) {
 		return
 	}
 
-	limit := 20
-	if rawLimit := strings.TrimSpace(c.Query("limit")); rawLimit != "" {
-		if parsed, err := strconv.Atoi(rawLimit); err == nil && parsed > 0 {
-			if parsed > 500 {
-				parsed = 500
-			}
-			limit = parsed
-		}
+	limit := parseAdminUserListLimit(c.Query("limit"))
+	filter := adminUserFilter{
+		Query:  strings.TrimSpace(c.Query("query")),
+		Role:   NormalizeRole(c.Query("role")),
+		Status: parseAdminUserStatusFilter(c.Query("status")),
 	}
-
-	query := strings.TrimSpace(c.Query("query"))
-	dbQuery := h.db.Model(&dbschema.SystemUser{})
-	if query != "" {
-		pattern := "%" + query + "%"
-		dbQuery = dbQuery.Where(
-			`work_id ILIKE ? OR name ILIKE ? OR role ILIKE ? OR status ILIKE ?`,
-			pattern,
-			pattern,
-			pattern,
-			pattern,
-		)
-	}
+	dbQuery := buildAdminUserQuery(h.db, filter)
 
 	var total int64
 	if err := dbQuery.Count(&total).Error; err != nil {
@@ -137,11 +113,65 @@ func (h *Handler) handleAdminProtectedUsers(c *gin.Context) {
 		items = append(items, h.buildProtectedUserItem(c, claims, user, "admin:users"))
 	}
 
+	roleOptions, err := listAdminUserFilterOptions(
+		h.db,
+		adminUserFilterWithoutRole(filter),
+		"role",
+		func(value string) (sensitive.FilterOption, bool) {
+			value = NormalizeRole(value)
+			if value == "" {
+				return sensitive.FilterOption{}, false
+			}
+			return sensitive.FilterOption{
+				Value: value,
+				Label: displayUserRole(value),
+			}, true
+		},
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "查询用户失败"})
+		return
+	}
+
+	statusOptions, err := listAdminUserFilterOptions(
+		h.db,
+		adminUserFilterWithoutStatus(filter),
+		"status",
+		func(value string) (sensitive.FilterOption, bool) {
+			value = NormalizeStatus(value)
+			if value == "" {
+				return sensitive.FilterOption{}, false
+			}
+			return sensitive.FilterOption{
+				Value: value,
+				Label: displayUserStatus(value),
+			}, true
+		},
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "查询用户失败"})
+		return
+	}
+
+	filters := []sensitive.FilterGroup{
+		{
+			Key:     "role",
+			Label:   "角色",
+			Options: roleOptions,
+		},
+		{
+			Key:     "status",
+			Label:   "状态",
+			Options: statusOptions,
+		},
+	}
+
 	c.JSON(http.StatusOK, sensitive.ListResponse{
 		Items:    items,
 		Total:    total,
 		Page:     1,
 		PageSize: len(items),
+		Filters:  filters,
 	})
 }
 
@@ -463,4 +493,76 @@ func compactUserStrings(values []string) []string {
 		}
 	}
 	return result
+}
+
+func parseAdminUserListLimit(raw string) int {
+	limit := 20
+	if parsed, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil && parsed > 0 {
+		limit = parsed
+	}
+	if limit > 500 {
+		return 500
+	}
+	return limit
+}
+
+func parseAdminUserStatusFilter(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	return NormalizeStatus(trimmed)
+}
+
+func buildAdminUserQuery(db *gorm.DB, filter adminUserFilter) *gorm.DB {
+	dbQuery := db.Model(&dbschema.SystemUser{})
+	if filter.Query != "" {
+		pattern := "%" + filter.Query + "%"
+		dbQuery = dbQuery.Where(
+			`work_id ILIKE ? OR name ILIKE ? OR role ILIKE ? OR status ILIKE ?`,
+			pattern,
+			pattern,
+			pattern,
+			pattern,
+		)
+	}
+	if filter.Role != "" {
+		dbQuery = dbQuery.Where("role = ?", filter.Role)
+	}
+	if filter.Status != "" {
+		dbQuery = dbQuery.Where("status = ?", filter.Status)
+	}
+	return dbQuery
+}
+
+func listAdminUserFilterOptions(
+	db *gorm.DB,
+	filter adminUserFilter,
+	column string,
+	resolver func(value string) (sensitive.FilterOption, bool),
+) ([]sensitive.FilterOption, error) {
+	var values []string
+	if err := buildAdminUserQuery(db, filter).Distinct(column).Pluck(column, &values).Error; err != nil {
+		return nil, err
+	}
+
+	options := make([]sensitive.FilterOption, 0, len(values))
+	for _, value := range values {
+		option, ok := resolver(value)
+		if !ok {
+			continue
+		}
+		options = append(options, option)
+	}
+	return sensitive.NormalizeFilterOptions(options), nil
+}
+
+func adminUserFilterWithoutRole(filter adminUserFilter) adminUserFilter {
+	filter.Role = ""
+	return filter
+}
+
+func adminUserFilterWithoutStatus(filter adminUserFilter) adminUserFilter {
+	filter.Status = ""
+	return filter
 }
