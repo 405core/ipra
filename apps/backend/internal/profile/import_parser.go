@@ -309,7 +309,10 @@ func detectImportType(headers []string) (string, error) {
 		return "", errors.New("导入模板缺少证件号码列，请使用系统模板")
 	}
 
-	if containsHeaderAlias(headerSet, "risk_reason", "高风险原因", "名单说明") {
+	if containsHeaderAlias(headerSet,
+		"risk_reason", "高风险原因", "名单说明",
+		"risk_category", "风险类别", "类别", "风险类型",
+	) {
 		return importTypeHighRisk, nil
 	}
 
@@ -472,6 +475,11 @@ func buildProfileRecord(row map[string]string, importType string) (profileRecord
 	}
 
 	if importType == importTypeHighRisk {
+		riskCategory := normalizeRiskCategory(readAlias(
+			row,
+			usedKeys,
+			"risk_category", "风险类别", "类别", "风险类型",
+		))
 		riskReason := firstNonEmpty(
 			strings.TrimSpace(readAlias(row, usedKeys, "risk_reason", "高风险原因", "名单说明")),
 			strings.TrimSpace(readAlias(row, usedKeys, "case_type", "涉案类型", "违法犯罪类型")),
@@ -485,6 +493,7 @@ func buildProfileRecord(row map[string]string, importType string) (profileRecord
 		return profileRecord{
 			DocumentNum: documentNum,
 			FullName:    fullName,
+			RiskCategory: riskCategory,
 			RiskReason:  riskReason,
 		}, nil
 	}
@@ -584,6 +593,16 @@ func defaultString(value string, fallback string) string {
 		return fallback
 	}
 	return trimmed
+}
+
+func normalizeRiskCategory(value string) string {
+	trimmed := strings.TrimSpace(value)
+	switch trimmed {
+	case "跨境赌博", "跨境电诈", "非法务工", "出境目的存疑":
+		return trimmed
+	default:
+		return ""
+	}
 }
 
 func readAlias(row map[string]string, usedKeys map[string]struct{}, aliases ...string) string {

@@ -112,6 +112,29 @@ func TestBuildProfileRecord(t *testing.T) {
 	}
 }
 
+func TestBuildHighRiskProfileRecordWithRiskCategory(t *testing.T) {
+	row := map[string]string{
+		normalizeHeaderKey("document_num"):  "E92834102",
+		normalizeHeaderKey("风险类别"):          "跨境电诈",
+		normalizeHeaderKey("高风险原因"):         "多次命中涉诈重点关注名单",
+	}
+
+	record, err := buildProfileRecord(row, importTypeHighRisk)
+	if err != nil {
+		t.Fatalf("buildProfileRecord returned error: %v", err)
+	}
+
+	if got, want := record.DocumentNum, "E92834102"; got != want {
+		t.Fatalf("DocumentNum = %q, want %q", got, want)
+	}
+	if got, want := record.RiskCategory, "跨境电诈"; got != want {
+		t.Fatalf("RiskCategory = %q, want %q", got, want)
+	}
+	if got, want := record.RiskReason, "多次命中涉诈重点关注名单"; got != want {
+		t.Fatalf("RiskReason = %q, want %q", got, want)
+	}
+}
+
 func TestDetectImportType(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -127,6 +150,11 @@ func TestDetectImportType(t *testing.T) {
 		{
 			name:    "high risk template",
 			headers: []string{"证件号码", "高风险原因"},
+			want:    importTypeHighRisk,
+		},
+		{
+			name:    "high risk template by risk category",
+			headers: []string{"证件号码", "风险类别"},
 			want:    importTypeHighRisk,
 		},
 		{
@@ -202,15 +230,18 @@ func TestDetectImportTypeFromSpreadsheet(t *testing.T) {
 func TestSplitSpreadsheetRowsSkipsTemplateTitle(t *testing.T) {
 	headers, dataRows := splitSpreadsheetRows([][]string{
 		{highRiskTemplateTitle},
-		{"证件号码", "高风险原因"},
-		{"E92834102", "跨境赌博关联"},
+		{"证件号码", "风险类别", "高风险原因"},
+		{"E92834102", "跨境赌博", "跨境赌博关联"},
 	})
 
-	if got, want := len(headers), 2; got != want {
+	if got, want := len(headers), 3; got != want {
 		t.Fatalf("len(headers) = %d, want %d", got, want)
 	}
-	if got, want := headers[1], "高风险原因"; got != want {
+	if got, want := headers[1], "风险类别"; got != want {
 		t.Fatalf("headers[1] = %q, want %q", got, want)
+	}
+	if got, want := dataRows[0][1], "跨境赌博"; got != want {
+		t.Fatalf("dataRows[0][1] = %q, want %q", got, want)
 	}
 	if got, want := dataRows[0][0], "E92834102"; got != want {
 		t.Fatalf("dataRows[0][0] = %q, want %q", got, want)

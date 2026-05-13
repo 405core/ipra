@@ -33,6 +33,7 @@ type SearchProfileResponse struct {
 	FullName    string         `json:"fullName"`
 	DocumentNum string         `json:"documentNum"`
 	IsHighRisk  bool           `json:"isHighRisk"`
+	RiskCategory string        `json:"riskCategory,omitempty"`
 	RiskReason  string         `json:"riskReason,omitempty"`
 	ProfileData map[string]any `json:"profileData"`
 	UpdatedAt   time.Time      `json:"updatedAt"`
@@ -59,6 +60,7 @@ type profileRecord struct {
 	DocumentNum string
 	FullName    string
 	ProfileData map[string]any
+	RiskCategory string
 	RiskReason  string
 }
 
@@ -78,6 +80,33 @@ type ImportBatchDetail struct {
 
 func NewService(db *gorm.DB) *Service {
 	return &Service{db: db}
+}
+
+func (s *Service) EnsureSchema(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS high_risk_watchlist (
+			id BIGSERIAL PRIMARY KEY,
+			document_num VARCHAR(64) NOT NULL,
+			risk_category VARCHAR(64) NOT NULL DEFAULT '',
+			risk_reason TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_uniq_watchlist_doc ON high_risk_watchlist(document_num)`,
+		`ALTER TABLE high_risk_watchlist ADD COLUMN IF NOT EXISTS risk_category VARCHAR(64) NOT NULL DEFAULT ''`,
+	}
+
+	for _, statement := range statements {
+		if err := s.db.WithContext(ctx).Exec(statement).Error; err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (s *Service) SearchProfilesByDocumentExact(
@@ -112,7 +141,8 @@ func (s *Service) SearchProfilesByDocumentExact(
 				FullName:    profile.FullName,
 				DocumentNum: profile.DocumentNum,
 				IsHighRisk:  inWatchlist,
-				RiskReason:  watchItem,
+				RiskCategory: watchItem.RiskCategory,
+				RiskReason:  watchItem.RiskReason,
 				ProfileData: decodeJSONMap(profile.ProfileData),
 				UpdatedAt:   profile.UpdatedAt,
 			},
@@ -136,6 +166,7 @@ func (s *Service) SearchProfilesByDocumentExact(
 			FullName:    "未导入基础画像",
 			DocumentNum: watchItem.DocumentNum,
 			IsHighRisk:  true,
+			RiskCategory: watchItem.RiskCategory,
 			RiskReason:  watchItem.RiskReason,
 			ProfileData: map[string]any{},
 			UpdatedAt:   watchItem.UpdatedAt,
@@ -163,7 +194,8 @@ func (s *Service) GetProfileByID(
 		FullName:    profile.FullName,
 		DocumentNum: profile.DocumentNum,
 		IsHighRisk:  inWatchlist,
-		RiskReason:  watchItem,
+		RiskCategory: watchItem.RiskCategory,
+		RiskReason:  watchItem.RiskReason,
 		ProfileData: decodeJSONMap(profile.ProfileData),
 		UpdatedAt:   profile.UpdatedAt,
 	}, nil
@@ -203,7 +235,8 @@ func (s *Service) SearchProfiles(ctx context.Context, query string, limit int) (
 			FullName:    profile.FullName,
 			DocumentNum: profile.DocumentNum,
 			IsHighRisk:  inWatchlist,
-			RiskReason:  watchItem,
+			RiskCategory: watchItem.RiskCategory,
+			RiskReason:  watchItem.RiskReason,
 			ProfileData: decodeJSONMap(profile.ProfileData),
 			UpdatedAt:   profile.UpdatedAt,
 		})
@@ -369,6 +402,7 @@ type ProfileListResult struct {
 type WatchlistItem struct {
 	ID          uint64    `json:"id"`
 	DocumentNum string    `json:"documentNum"`
+	RiskCategory string   `json:"riskCategory,omitempty"`
 	RiskReason  string    `json:"riskReason"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
@@ -376,6 +410,11 @@ type WatchlistItem struct {
 type WatchlistListResult struct {
 	Items []WatchlistItem `json:"items"`
 	Total int64           `json:"total"`
+}
+
+type watchlistMatch struct {
+	RiskCategory string
+	RiskReason   string
 }
 
 type ProfileListFilter struct {
@@ -424,7 +463,8 @@ func (s *Service) searchProfiles(
 			FullName:    profile.FullName,
 			DocumentNum: profile.DocumentNum,
 			IsHighRisk:  inWatchlist,
-			RiskReason:  watchItem,
+			RiskCategory: watchItem.RiskCategory,
+			RiskReason:  watchItem.RiskReason,
 			ProfileData: decodeJSONMap(profile.ProfileData),
 			UpdatedAt:   profile.UpdatedAt,
 		})
@@ -679,6 +719,7 @@ func (s *Service) ListWatchlist(ctx context.Context, query string, limit int) (W
 		result = append(result, WatchlistItem{
 			ID:          item.ID,
 			DocumentNum: item.DocumentNum,
+			RiskCategory: item.RiskCategory,
 			RiskReason:  item.RiskReason,
 			UpdatedAt:   item.UpdatedAt,
 		})
@@ -737,6 +778,7 @@ func (s *Service) DeleteProfile(ctx context.Context, id uint64) error {
 func (s *Service) CreateWatchlist(ctx context.Context, payload WatchlistItem) error {
 	return s.upsertWatchlist(ctx, profileRecord{
 		DocumentNum: payload.DocumentNum,
+		RiskCategory: payload.RiskCategory,
 		RiskReason:  payload.RiskReason,
 	})
 }
@@ -746,6 +788,7 @@ func (s *Service) UpdateWatchlist(ctx context.Context, id uint64, payload Watchl
 		Where("id = ?", id).
 		Updates(map[string]any{
 			"document_num": payload.DocumentNum,
+			"risk_category": strings.TrimSpace(payload.RiskCategory),
 			"risk_reason":  payload.RiskReason,
 			"updated_at":   gorm.Expr("CURRENT_TIMESTAMP"),
 		}).Error
@@ -784,12 +827,14 @@ func (s *Service) upsertWatchlist(ctx context.Context, record profileRecord) err
 
 	item := dbschema.HighRiskWatchlist{
 		DocumentNum: record.DocumentNum,
+		RiskCategory: strings.TrimSpace(record.RiskCategory),
 		RiskReason:  record.RiskReason,
 	}
 
 	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "document_num"}},
 		DoUpdates: clause.Assignments(map[string]any{
+			"risk_category": strings.TrimSpace(record.RiskCategory),
 			"risk_reason": record.RiskReason,
 			"updated_at":  gorm.Expr("CURRENT_TIMESTAMP"),
 		}),
@@ -867,7 +912,7 @@ func decodeJSONMap(raw json.RawMessage) map[string]any {
 func (s *Service) loadWatchlistMap(
 	ctx context.Context,
 	profiles []dbschema.PassengerProfile,
-) (map[string]string, error) {
+) (map[string]watchlistMatch, error) {
 	documentNums := make([]string, 0, len(profiles))
 	for _, profile := range profiles {
 		if strings.TrimSpace(profile.DocumentNum) != "" {
@@ -875,7 +920,7 @@ func (s *Service) loadWatchlistMap(
 		}
 	}
 	if len(documentNums) == 0 {
-		return map[string]string{}, nil
+		return map[string]watchlistMatch{}, nil
 	}
 
 	var items []dbschema.HighRiskWatchlist
@@ -885,9 +930,12 @@ func (s *Service) loadWatchlistMap(
 		return nil, err
 	}
 
-	result := make(map[string]string, len(items))
+	result := make(map[string]watchlistMatch, len(items))
 	for _, item := range items {
-		result[item.DocumentNum] = item.RiskReason
+		result[item.DocumentNum] = watchlistMatch{
+			RiskCategory: strings.TrimSpace(item.RiskCategory),
+			RiskReason:   item.RiskReason,
+		}
 	}
 
 	return result, nil
@@ -924,6 +972,7 @@ func (s *Service) searchWatchlistOnly(
 			FullName:    "未导入基础画像",
 			DocumentNum: item.DocumentNum,
 			IsHighRisk:  true,
+			RiskCategory: item.RiskCategory,
 			RiskReason:  item.RiskReason,
 			ProfileData: map[string]any{},
 			UpdatedAt:   item.UpdatedAt,
