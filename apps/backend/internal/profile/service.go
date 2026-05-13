@@ -3,6 +3,7 @@ package profile
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	dbschema "ipra/backend/internal/database"
+	"ipra/backend/internal/sensitive"
 )
 
 var ErrImportValidation = errors.New("import validation failed")
@@ -376,15 +378,165 @@ type WatchlistListResult struct {
 	Total int64           `json:"total"`
 }
 
-func (s *Service) ListProfiles(ctx context.Context, query string, limit int) (ProfileListResult, error) {
-	items, err := s.SearchProfiles(ctx, query, limit)
+type ProfileListFilter struct {
+	Query        string
+	DocumentType string
+	Nationality  string
+	Gender       string
+}
+
+func (s *Service) ListProfiles(
+	ctx context.Context,
+	filter ProfileListFilter,
+	limit int,
+) (ProfileListResult, error) {
+	items, err := s.searchProfiles(ctx, filter, limit)
 	if err != nil {
 		return ProfileListResult{}, err
 	}
 
-	var total int64
+	return ProfileListResult{
+		Items: items,
+		Total: int64(len(items)),
+	}, nil
+}
+
+func (s *Service) searchProfiles(
+	ctx context.Context,
+	filter ProfileListFilter,
+	limit int,
+) ([]SearchProfileResponse, error) {
+	profiles, err := s.loadProfileRecords(ctx, filter, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	watchlistMap, err := s.loadWatchlistMap(ctx, profiles)
+	if err != nil {
+		return nil, err
+	}
+
+	response := make([]SearchProfileResponse, 0, len(profiles))
+	for _, profile := range profiles {
+		watchItem, inWatchlist := watchlistMap[profile.DocumentNum]
+		response = append(response, SearchProfileResponse{
+			ID:          profile.ID,
+			FullName:    profile.FullName,
+			DocumentNum: profile.DocumentNum,
+			IsHighRisk:  inWatchlist,
+			RiskReason:  watchItem,
+			ProfileData: decodeJSONMap(profile.ProfileData),
+			UpdatedAt:   profile.UpdatedAt,
+		})
+	}
+
+	return response, nil
+}
+
+func (s *Service) ListProfileFilterGroups(
+	ctx context.Context,
+	filter ProfileListFilter,
+) ([]sensitive.FilterGroup, error) {
+	documentTypeOptions, err := s.listProfileFilterOptions(
+		ctx,
+		profileFilterWithoutDocumentType(filter),
+		"UPPER(profile_data->'basicInfo'->>'documentType')",
+		func(value string) (sensitive.FilterOption, bool) {
+			value = strings.ToUpper(strings.TrimSpace(value))
+			if value == "" {
+				return sensitive.FilterOption{}, false
+			}
+			return sensitive.FilterOption{
+				Value: value,
+				Label: formatDocumentTypeLabel(value),
+			}, true
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	nationalityOptions, err := s.listProfileFilterOptions(
+		ctx,
+		profileFilterWithoutNationality(filter),
+		"profile_data->'basicInfo'->>'nationality'",
+		func(value string) (sensitive.FilterOption, bool) {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				return sensitive.FilterOption{}, false
+			}
+			return sensitive.FilterOption{
+				Value: value,
+				Label: value,
+			}, true
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	genderOptions, err := s.listProfileFilterOptions(
+		ctx,
+		profileFilterWithoutGender(filter),
+		"LOWER(profile_data->'basicInfo'->>'gender')",
+		func(value string) (sensitive.FilterOption, bool) {
+			value = normalizeProfileGenderFilter(value)
+			if value == "" {
+				return sensitive.FilterOption{}, false
+			}
+			return sensitive.FilterOption{
+				Value: value,
+				Label: formatGenderLabel(value),
+			}, true
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return []sensitive.FilterGroup{
+		{
+			Key:     "documentType",
+			Label:   "证件类型",
+			Options: documentTypeOptions,
+		},
+		{
+			Key:     "nationality",
+			Label:   "国籍",
+			Options: nationalityOptions,
+		},
+		{
+			Key:     "gender",
+			Label:   "性别",
+			Options: genderOptions,
+		},
+	}, nil
+}
+
+func (s *Service) loadProfileRecords(
+	ctx context.Context,
+	filter ProfileListFilter,
+	limit int,
+) ([]dbschema.PassengerProfile, error) {
+	dbQuery := s.buildProfileListQuery(ctx, filter).Order("updated_at DESC")
+	if limit > 0 {
+		dbQuery = dbQuery.Limit(limit)
+	}
+
+	var profiles []dbschema.PassengerProfile
+	if err := dbQuery.Find(&profiles).Error; err != nil {
+		return nil, err
+	}
+	return profiles, nil
+}
+
+func (s *Service) buildProfileListQuery(
+	ctx context.Context,
+	filter ProfileListFilter,
+) *gorm.DB {
 	dbQuery := s.db.WithContext(ctx).Model(&dbschema.PassengerProfile{})
-	trimmedQuery := strings.TrimSpace(query)
+
+	trimmedQuery := strings.TrimSpace(filter.Query)
 	if trimmedQuery != "" {
 		pattern := "%" + trimmedQuery + "%"
 		dbQuery = dbQuery.Where(
@@ -394,14 +546,110 @@ func (s *Service) ListProfiles(ctx context.Context, query string, limit int) (Pr
 			pattern,
 		)
 	}
-	if err := dbQuery.Count(&total).Error; err != nil {
-		return ProfileListResult{}, err
+
+	if documentType := strings.TrimSpace(filter.DocumentType); documentType != "" {
+		dbQuery = dbQuery.Where(
+			"profile_data->'basicInfo'->>'documentType' = ?",
+			strings.ToUpper(documentType),
+		)
 	}
 
-	return ProfileListResult{
-		Items: items,
-		Total: total,
-	}, nil
+	if nationality := strings.TrimSpace(filter.Nationality); nationality != "" {
+		dbQuery = dbQuery.Where(
+			"profile_data->'basicInfo'->>'nationality' ILIKE ?",
+			"%"+nationality+"%",
+		)
+	}
+
+	if gender := normalizeProfileGenderFilter(filter.Gender); gender != "" {
+		dbQuery = dbQuery.Where(
+			"LOWER(profile_data->'basicInfo'->>'gender') = ?",
+			gender,
+		)
+	}
+
+	return dbQuery
+}
+
+func (s *Service) listProfileFilterOptions(
+	ctx context.Context,
+	filter ProfileListFilter,
+	expression string,
+	resolver func(value string) (sensitive.FilterOption, bool),
+) ([]sensitive.FilterOption, error) {
+	values, err := s.listDistinctProfileValues(ctx, filter, expression)
+	if err != nil {
+		return nil, err
+	}
+
+	options := make([]sensitive.FilterOption, 0, len(values))
+	for _, value := range values {
+		option, ok := resolver(value)
+		if !ok {
+			continue
+		}
+		options = append(options, option)
+	}
+
+	return sensitive.NormalizeFilterOptions(options), nil
+}
+
+func (s *Service) listDistinctProfileValues(
+	ctx context.Context,
+	filter ProfileListFilter,
+	expression string,
+) ([]string, error) {
+	rows, err := s.buildProfileListQuery(ctx, filter).
+		Select("DISTINCT " + expression).
+		Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	values := make([]string, 0)
+	for rows.Next() {
+		var value sql.NullString
+		if err := rows.Scan(&value); err != nil {
+			return nil, err
+		}
+		if !value.Valid {
+			continue
+		}
+		values = append(values, value.String)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return values, nil
+}
+
+func profileFilterWithoutDocumentType(filter ProfileListFilter) ProfileListFilter {
+	filter.DocumentType = ""
+	return filter
+}
+
+func profileFilterWithoutNationality(filter ProfileListFilter) ProfileListFilter {
+	filter.Nationality = ""
+	return filter
+}
+
+func profileFilterWithoutGender(filter ProfileListFilter) ProfileListFilter {
+	filter.Gender = ""
+	return filter
+}
+
+func normalizeProfileGenderFilter(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "male", "m", "1", "男":
+		return "male"
+	case "female", "f", "2", "女":
+		return "female"
+	case "unknown", "0", "未知":
+		return "unknown"
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
 }
 
 func (s *Service) ListWatchlist(ctx context.Context, query string, limit int) (WatchlistListResult, error) {

@@ -65,10 +65,34 @@ async function parsePayload<T>(response: Response, fallbackMessage: string): Pro
   return payload as T;
 }
 
-export async function listAdminProfilesProtected(query: string) {
+export interface AdminProfileProtectedQuery {
+  query?: string;
+  documentType?: string;
+  nationality?: string;
+  gender?: string;
+}
+
+export interface AdminUserProtectedQuery {
+  query?: string;
+  role?: string;
+  status?: string;
+}
+
+export async function listAdminProfilesProtected(
+  query: AdminProfileProtectedQuery = {},
+) {
   const params = new URLSearchParams();
-  if (query.trim()) {
-    params.set('query', query.trim());
+  if (query.query?.trim()) {
+    params.set('query', query.query.trim());
+  }
+  if (query.documentType?.trim()) {
+    params.set('documentType', query.documentType.trim());
+  }
+  if (query.nationality?.trim()) {
+    params.set('nationality', query.nationality.trim());
+  }
+  if (query.gender?.trim()) {
+    params.set('gender', query.gender.trim());
   }
   params.set('limit', '500');
   return protectedJson<ProtectedListResponse>(
@@ -94,10 +118,18 @@ export async function getAdminUser(id: number) {
   return parsePayload<AdminUserItem>(response, '查询用户失败。');
 }
 
-export async function listAdminUsersProtected(query: string) {
+export async function listAdminUsersProtected(
+  query: AdminUserProtectedQuery = {},
+) {
   const params = new URLSearchParams();
-  if (query.trim()) {
-    params.set('query', query.trim());
+  if (query.query?.trim()) {
+    params.set('query', query.query.trim());
+  }
+  if (query.role?.trim()) {
+    params.set('role', query.role.trim());
+  }
+  if (query.status?.trim()) {
+    params.set('status', query.status.trim());
   }
   params.set('limit', '500');
   return protectedJson<ProtectedListResponse>(

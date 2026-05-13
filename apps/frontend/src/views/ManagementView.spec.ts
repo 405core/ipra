@@ -95,14 +95,6 @@ function createProtectedListItem(id: string) {
           context: `admin-${id}-documentNum`,
         },
       },
-      {
-        key: 'nationality',
-        asset: {
-          id: `field-${id}-nationality`,
-          url: `/api/sensitive-assets/${id}-nationality`,
-          context: `admin-${id}-nationality`,
-        },
-      },
     ],
     chips: [
       {
@@ -110,7 +102,7 @@ function createProtectedListItem(id: string) {
         asset: {
           id: `chip-${id}-documentType`,
           url: `/api/sensitive-assets/${id}-documentType`,
-          context: `admin-${id}-documentType`,
+          context: 'inline',
         },
       },
       {
@@ -118,7 +110,7 @@ function createProtectedListItem(id: string) {
         asset: {
           id: `chip-${id}-gender`,
           url: `/api/sensitive-assets/${id}-gender`,
-          context: `admin-${id}-gender`,
+          context: 'inline',
         },
       },
       {
@@ -126,7 +118,7 @@ function createProtectedListItem(id: string) {
         asset: {
           id: `chip-${id}-role`,
           url: `/api/sensitive-assets/${id}-role`,
-          context: `admin-${id}-role`,
+          context: 'inline',
         },
       },
       {
@@ -134,11 +126,21 @@ function createProtectedListItem(id: string) {
         asset: {
           id: `chip-${id}-status`,
           url: `/api/sensitive-assets/${id}-status`,
-          context: `admin-${id}-status`,
+          context: 'inline',
         },
       },
     ],
-    facts: [],
+    facts: [
+      {
+        key: 'nationality',
+        label: '国籍',
+        asset: {
+          id: `fact-${id}-nationality`,
+          url: `/api/sensitive-assets/${id}-fact-nationality`,
+          context: 'inline',
+        },
+      },
+    ],
     meta: [],
     notes: [],
     flags: {},
@@ -155,26 +157,67 @@ describe('ManagementView settings tab', () => {
       total: 1,
       page: 1,
       pageSize: 500,
+      filters: [
+        {
+          key: 'documentType',
+          label: '证件类型',
+          options: [{ value: 'PASSPORT', label: '护照' }],
+        },
+        {
+          key: 'nationality',
+          label: '国籍',
+          options: [{ value: '中国', label: '中国' }],
+        },
+        {
+          key: 'gender',
+          label: '性别',
+          options: [{ value: 'male', label: '男' }],
+        },
+      ],
     });
     adminServiceMocks.listAdminWatchlistProtected.mockResolvedValue({
       items: [createProtectedListItem('watchlist-1')],
       total: 1,
       page: 1,
       pageSize: 500,
+      filters: [],
     });
     adminServiceMocks.listAdminUsersProtected.mockResolvedValue({
       items: [createProtectedListItem('user-1')],
       total: 1,
       page: 1,
       pageSize: 500,
+      filters: [
+        {
+          key: 'role',
+          label: '角色',
+          options: [{ value: 'admin', label: '管理员' }],
+        },
+        {
+          key: 'status',
+          label: '状态',
+          options: [{ value: 'active', label: '启用' }],
+        },
+      ],
     });
     adminServiceMocks.listAdminAuditLogsProtected.mockResolvedValue({
       items: [createProtectedListItem('audit-1')],
       total: 1,
       page: 1,
       pageSize: 500,
+      filters: [
+        {
+          key: 'result',
+          label: '结果',
+          options: [{ value: 'success', label: '成功' }],
+        },
+      ],
     });
-    archiveServiceMocks.listInquiryArchives.mockResolvedValue({ items: [], total: 0 });
+    archiveServiceMocks.listInquiryArchives.mockResolvedValue({
+      items: [],
+      total: 0,
+      filters: [],
+    });
     archiveServiceMocks.getInquiryArchive.mockResolvedValue(null);
     archiveServiceMocks.fetchArchiveVideoBlob.mockResolvedValue(new Blob(['video']));
     Object.defineProperty(URL, 'createObjectURL', {
@@ -262,6 +305,13 @@ describe('ManagementView settings tab', () => {
         },
       ],
       total: 1,
+      filters: [
+        {
+          key: 'judgement',
+          label: '判定',
+          options: [{ value: 'clear', label: '无异常' }],
+        },
+      ],
     });
     archiveServiceMocks.getInquiryArchive.mockResolvedValue({
       id: 1,
@@ -349,9 +399,10 @@ describe('ManagementView settings tab', () => {
     await nextTick();
 
     await findButton(wrapper, '问询归档').trigger('click');
+    await flushPromises();
     await nextTick();
 
-    expect(wrapper.text()).toContain('当前筛选后 1 条问询归档');
+    expect(wrapper.text()).toContain('第 1 / 1 页，显示 1-1 条，共 1 条');
     await findButton(wrapper, '查看详情').trigger('click');
     await flushPromises();
     await nextTick();
@@ -362,5 +413,83 @@ describe('ManagementView settings tab', () => {
     expect(document.body.querySelector('video')?.getAttribute('src')).toBe(
       'blob:archive-video',
     );
+  });
+
+  it('passes profile filters to the backend query', async () => {
+    wrapper = mount(ManagementView);
+    await flushPromises();
+    await nextTick();
+
+    expect(adminServiceMocks.listAdminProfilesProtected).toHaveBeenLastCalledWith({
+      query: '',
+      documentType: '',
+      nationality: '',
+      gender: '',
+    });
+
+    await findButton(wrapper, '证件类型：全部证件类型').trigger('click');
+    await nextTick();
+    await findButton(wrapper, '护照').trigger('click');
+    await flushPromises();
+
+    expect(adminServiceMocks.listAdminProfilesProtected).toHaveBeenLastCalledWith({
+      query: '',
+      documentType: 'PASSPORT',
+      nationality: '',
+      gender: '',
+    });
+  });
+
+  it('shows nationality filter options from backend filters', async () => {
+    adminServiceMocks.listAdminProfilesProtected.mockResolvedValue({
+      items: [createProtectedListItem('profile-1')],
+      total: 1,
+      page: 1,
+      pageSize: 500,
+      filters: [
+        {
+          key: 'nationality',
+          label: '国籍',
+          options: [{ value: '中国', label: '中国' }],
+        },
+      ],
+    });
+
+    wrapper = mount(ManagementView);
+    await flushPromises();
+    await nextTick();
+
+    await findButton(wrapper, '国籍：全部国籍').trigger('click');
+    await nextTick();
+
+    expect(wrapper.text()).toContain('中国');
+    expect(wrapper.text()).not.toContain('美国');
+  });
+
+  it('passes user filters to the backend query', async () => {
+    wrapper = mount(ManagementView);
+    await flushPromises();
+    await nextTick();
+
+    await findButton(wrapper, '管理用户').trigger('click');
+    await flushPromises();
+    await nextTick();
+
+    expect(adminServiceMocks.listAdminUsersProtected).toHaveBeenLastCalledWith({
+      query: '',
+      role: '',
+      status: '',
+    });
+
+    await findButton(wrapper, '角色：全部角色').trigger('click');
+    await nextTick();
+    await findButton(wrapper, '管理员').trigger('click');
+    await flushPromises();
+
+    expect(adminServiceMocks.listAdminUsersProtected).toHaveBeenLastCalledWith({
+      query: '',
+      role: 'admin',
+      status: '',
+    });
   });
 });

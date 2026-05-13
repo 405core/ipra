@@ -1,6 +1,7 @@
 import { loadAuthSession } from '../auth';
 import type {
   ProtectedAssetRef,
+  ProtectedFilterGroup,
   ProtectedListItem,
 } from './protected-service';
 import { protectedJson } from './protected-service';
@@ -55,6 +56,7 @@ export interface InquiryArchiveListItem extends ProtectedListItem {
 export interface InquiryArchiveListResult {
   items: InquiryArchiveListItem[];
   total: number;
+  filters: ProtectedFilterGroup[];
 }
 
 interface ProtectedArchiveListResponse {
@@ -62,6 +64,7 @@ interface ProtectedArchiveListResponse {
   total: number;
   page: number;
   pageSize: number;
+  filters?: ProtectedFilterGroup[];
 }
 
 export interface CreateInquiryArchiveVideoPayload {
@@ -204,6 +207,7 @@ export async function listInquiryArchives(query: InquiryArchiveQuery = {}) {
   return {
     items: response.items,
     total: response.total,
+    filters: response.filters ?? [],
   } satisfies InquiryArchiveListResult;
 }
 

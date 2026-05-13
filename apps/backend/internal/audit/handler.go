@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 	dbschema "ipra/backend/internal/database"
 	"ipra/backend/internal/displaytime"
 	"ipra/backend/internal/sensitive"
@@ -149,11 +150,24 @@ func (h *Handler) handleProtectedList(c *gin.Context) {
 		listItems = append(listItems, h.buildProtectedAuditItem(c, identity, item, "audit:list"))
 	}
 
+	resultOptions, err := h.listAuditFilterOptions(identity, auditListFilterWithoutResult(auditListFilterFromRequest(c)))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "查询审计日志失败"})
+		return
+	}
+
 	c.JSON(http.StatusOK, sensitive.ListResponse{
 		Items:    listItems,
 		Total:    total,
 		Page:     1,
 		PageSize: len(listItems),
+		Filters: []sensitive.FilterGroup{
+			{
+				Key:     "result",
+				Label:   "结果",
+				Options: sensitive.NormalizeFilterOptions(resultOptions),
+			},
+		},
 	})
 }
 
@@ -255,6 +269,17 @@ func (i Identity) IsAdmin() bool {
 }
 
 func (h *Handler) queryLogs(c *gin.Context, identity Identity) ([]dbschema.AuditLog, int64, error) {
+	return h.queryLogsWithFilter(c, identity, auditListFilterFromRequest(c))
+}
+
+type auditListFilter struct {
+	Query       string
+	Result      string
+	ActorWorkID string
+	Limit       int
+}
+
+func auditListFilterFromRequest(c *gin.Context) auditListFilter {
 	limit := 100
 	if rawLimit := strings.TrimSpace(c.Query("limit")); rawLimit != "" {
 		if parsed, err := strconv.Atoi(rawLimit); err == nil && parsed > 0 {
@@ -264,20 +289,49 @@ func (h *Handler) queryLogs(c *gin.Context, identity Identity) ([]dbschema.Audit
 			limit = parsed
 		}
 	}
+	return auditListFilter{
+		Query:       strings.TrimSpace(c.Query("query")),
+		Result:      strings.TrimSpace(c.Query("result")),
+		ActorWorkID: strings.TrimSpace(c.Query("actorWorkId")),
+		Limit:       limit,
+	}
+}
 
-	query := strings.TrimSpace(c.Query("query"))
-	result := strings.TrimSpace(c.Query("result"))
-	actorWorkID := strings.TrimSpace(c.Query("actorWorkId"))
+func (h *Handler) queryLogsWithFilter(
+	c *gin.Context,
+	identity Identity,
+	filter auditListFilter,
+) ([]dbschema.AuditLog, int64, error) {
+	dbQuery := h.buildAuditListQuery(identity, filter)
+	var total int64
+	if err := dbQuery.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
 
+	var items []dbschema.AuditLog
+	query := dbQuery.Order("created_at DESC")
+	if filter.Limit > 0 {
+		query = query.Limit(filter.Limit)
+	}
+	if err := query.Find(&items).Error; err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
+}
+
+func (h *Handler) buildAuditListQuery(
+	identity Identity,
+	filter auditListFilter,
+) *gorm.DB {
 	dbQuery := h.recorder.db.Model(&dbschema.AuditLog{})
 	if !identity.IsAdmin() {
 		dbQuery = dbQuery.Where("actor_user_id = ?", identity.UserID)
-	} else if actorWorkID != "" {
-		dbQuery = dbQuery.Where("LOWER(actor_work_id) = ?", strings.ToLower(actorWorkID))
+	} else if filter.ActorWorkID != "" {
+		dbQuery = dbQuery.Where("LOWER(actor_work_id) = ?", strings.ToLower(filter.ActorWorkID))
 	}
 
-	if query != "" {
-		pattern := "%" + query + "%"
+	if filter.Query != "" {
+		pattern := "%" + filter.Query + "%"
 		dbQuery = dbQuery.Where(
 			`actor_work_id ILIKE ? OR actor_name ILIKE ? OR action ILIKE ? OR resource ILIKE ? OR path ILIKE ? OR result ILIKE ?`,
 			pattern,
@@ -288,20 +342,39 @@ func (h *Handler) queryLogs(c *gin.Context, identity Identity) ([]dbschema.Audit
 			pattern,
 		)
 	}
-	if result != "" {
-		dbQuery = dbQuery.Where("result = ?", result)
+	if filter.Result != "" {
+		dbQuery = dbQuery.Where("result = ?", filter.Result)
+	}
+	return dbQuery
+}
+
+func (h *Handler) listAuditFilterOptions(
+	identity Identity,
+	filter auditListFilter,
+) ([]sensitive.FilterOption, error) {
+	var values []string
+	if err := h.buildAuditListQuery(identity, filter).Distinct("result").Pluck("result", &values).Error; err != nil {
+		return nil, err
 	}
 
-	var total int64
-	if err := dbQuery.Count(&total).Error; err != nil {
-		return nil, 0, err
+	options := make([]sensitive.FilterOption, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		options = append(options, sensitive.FilterOption{
+			Value: value,
+			Label: formatAuditResult(value),
+		})
 	}
+	return sensitive.NormalizeFilterOptions(options), nil
+}
 
-	var items []dbschema.AuditLog
-	if err := dbQuery.Order("created_at DESC").Limit(limit).Find(&items).Error; err != nil {
-		return nil, 0, err
-	}
-	return items, total, nil
+func auditListFilterWithoutResult(filter auditListFilter) auditListFilter {
+	filter.Result = ""
+	filter.Limit = 0
+	return filter
 }
 
 func (h *Handler) putAuditAsset(
