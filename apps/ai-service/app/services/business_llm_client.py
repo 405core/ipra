@@ -27,20 +27,6 @@ DEFAULT_LOCAL_MODEL_PATH = REPO_ROOT / "models" / "business-llm" / "modelscope" 
 DEFAULT_LOCAL_CACHE_DIR = REPO_ROOT / "models" / "business-llm" / "huggingface"
 DEFAULT_LOCAL_MODEL_NAME = "Qwen2.5-3B-Instruct"
 DEFAULT_OPENAI_COMPATIBLE_MODEL_NAME = "deepseek-ai/DeepSeek-V3.2"
-DEFAULT_RISK_CASE_CATEGORY = "suspicious_purpose"
-SUPPORTED_RISK_CASE_CATEGORIES = {
-    "cross_border_gambling",
-    "cross_border_fraud",
-    "illegal_work",
-    "suspicious_purpose",
-}
-RISK_CASE_PROMPT_FILES = {
-    category: {
-        "first_round": f"risk_cases/{category}.first_round.zh.md",
-        "followup": f"risk_cases/{category}.followup.zh.md",
-    }
-    for category in SUPPORTED_RISK_CASE_CATEGORIES
-}
 _LOCAL_RUNNERS: dict[tuple[str, str, str], "_TransformersLocalRunner"] = {}
 
 
@@ -517,24 +503,13 @@ def _system_prompt() -> str:
 
 
 def _first_round_user_prompt(prompt: str, request: FirstRoundStrategyRequest) -> str:
-    risk_context = request.risk_case_context
-    risk_label = _risk_context_label(risk_context)
-    raw_category = _raw_risk_case_category(risk_context)
-    effective_category = _normalize_risk_case_category(risk_context)
-    prompt = _prompt_with_risk_case(prompt, effective_category, "first_round")
-    fallback_note = _risk_case_fallback_note(raw_category, effective_category)
     return (
         f"{prompt}\n\n"
         "请根据输入生成首轮问询策略。只返回 JSON 对象。\n"
-        f"本轮 riskCaseContext 解析结果：来源={risk_context.source}，原始分类={raw_category}，生效分类={effective_category}，显示标签={risk_label}。{fallback_note}\n"
-        "已按生效分类拼接对应风险类型专门 prompt；必须围绕该专门 prompt 生成首轮策略。\n"
-        "riskCaseContext 只代表名单线索或工作人员人工判断触发的辅助问询方向，不得写成已确认违法或风险结论。\n"
         "首轮必须先体现预评估与逻辑研判，再输出能试探真实出境目的、暴露前后不一致或隐瞒意图的中性问题。\n"
         "问题应采用情境化提问、时间线回溯、细节补全、对照确认或开放式复述，不得虚构证据或诱导特定答案。\n"
-        "不得直接问“你是否跨境赌博/诈骗/非法务工”，必须改为事实核验、材料核验、时间线核验或开放式复述。\n"
         "memoryContext 中的记忆只能作为追问上下文和事实核验线索，不得单独构成风险结论。\n"
         "不要输出 llm、memoryReferences 或 memoryUpdates，这些字段由服务端补齐。\n"
-        "不要输出 riskCaseContext 或任何未约定的顶层字段；JSON 结构必须严格保持如下格式。\n"
         "JSON 结构必须为：\n"
         "{\n"
         '  "sessionId": "...",\n'
@@ -549,26 +524,15 @@ def _first_round_user_prompt(prompt: str, request: FirstRoundStrategyRequest) ->
 
 def _followup_user_prompt(prompt: str, request: FollowupGuidanceRequest) -> str:
     question_count = request.constraints.question_count
-    risk_context = request.risk_case_context
-    risk_label = _risk_context_label(risk_context)
-    raw_category = _raw_risk_case_category(risk_context)
-    effective_category = _normalize_risk_case_category(risk_context)
-    prompt = _prompt_with_risk_case(prompt, effective_category, "followup")
-    fallback_note = _risk_case_fallback_note(raw_category, effective_category)
     return (
         f"{prompt}\n\n"
         "请根据输入生成后续追问指引。只返回 JSON 对象。\n"
-        f"本轮 riskCaseContext 解析结果：来源={risk_context.source}，原始分类={raw_category}，生效分类={effective_category}，显示标签={risk_label}。{fallback_note}\n"
-        "已按生效分类拼接对应风险类型专门 prompt；必须优先围绕该专门 prompt 的关键缺口追问。\n"
-        "riskCaseContext 只代表名单线索或工作人员人工判断触发的辅助问询方向，不得写成已确认违法或风险结论。\n"
-        "不得直接问“你是否跨境赌博/诈骗/非法务工”，必须改为事实核验、材料核验、时间线核验或开放式复述。\n"
         "必须融合基础画像、问答历史、HumanOmni 音视频摘要、动作采样 JSON 与可选 ASR 文本，给出语义线索和视频/动作线索共同支持的异常提示。\n"
         "如果 ASR 缺失或视频窗口不足，必须在 limitations 或 warnings 中说明证据限制。\n"
         "生成追问前先判断 qaHistory 中每个主题是否已明确回答；已明确回答且没有矛盾的主题不得原样重复提问，只能围绕具体矛盾、证据缺口或语义不清进行更窄澄清。\n"
         f"followupGuidance 必须恰好包含 {question_count} 条追问建议，priority 从 1 到 {question_count}，不要少于或多于该数量。\n"
         "memoryContext 中的记忆只能作为追问上下文和事实核验线索，不得单独构成风险结论。\n"
         "不要输出 llm、memoryReferences 或 memoryUpdates，这些字段由服务端补齐。\n"
-        "不要输出 riskCaseContext 或任何未约定的顶层字段；JSON 结构必须严格保持如下格式。\n"
         "JSON 结构必须为：\n"
         "{\n"
         '  "sessionId": "...",\n'
@@ -580,50 +544,6 @@ def _followup_user_prompt(prompt: str, request: FollowupGuidanceRequest) -> str:
         "}\n\n"
         f"输入 JSON：\n{_to_json(request.model_dump(by_alias=True))}"
     )
-
-
-def _prompt_with_risk_case(base_prompt: str, category: str, prompt_type: str) -> str:
-    risk_case_prompt = load_prompt(_risk_case_prompt_file(category, prompt_type))
-    return f"{base_prompt.rstrip()}\n\n{risk_case_prompt.strip()}"
-
-
-def _risk_case_prompt_file(category: str, prompt_type: str) -> str:
-    effective_category = category if category in SUPPORTED_RISK_CASE_CATEGORIES else DEFAULT_RISK_CASE_CATEGORY
-    prompt_files = RISK_CASE_PROMPT_FILES[effective_category]
-    if prompt_type not in prompt_files:
-        raise BusinessLlmError(f"Unsupported risk case prompt type: {prompt_type}")
-    return prompt_files[prompt_type]
-
-
-def _normalize_risk_case_category(risk_context: Any) -> str:
-    category = _raw_risk_case_category(risk_context).lower()
-    if category in SUPPORTED_RISK_CASE_CATEGORIES:
-        return category
-    return DEFAULT_RISK_CASE_CATEGORY
-
-
-def _raw_risk_case_category(risk_context: Any) -> str:
-    return str(getattr(risk_context, "category", "") or "").strip() or "unknown"
-
-
-def _risk_case_fallback_note(raw_category: str, effective_category: str) -> str:
-    if raw_category.lower() == effective_category:
-        return ""
-    return f"原始分类缺失、unknown 或不受支持，已回退到 {effective_category}。"
-
-
-def _risk_context_label(risk_context: Any) -> str:
-    label = str(getattr(risk_context, "label", "") or "").strip()
-    if label:
-        return label
-    category = _normalize_risk_case_category(risk_context)
-    labels = {
-        "cross_border_gambling": "跨境赌博",
-        "cross_border_fraud": "跨境电诈",
-        "illegal_work": "非法务工",
-        "suspicious_purpose": "出境目的存疑",
-    }
-    return labels.get(category, "出境目的存疑")
 
 
 def _normalize_followup_guidance_count(value: Any, question_count: int) -> list[dict[str, Any]]:
@@ -781,7 +701,7 @@ def _next_unique_followup(
 
 def _followup_replacement_bank(answered_topics: set[str]) -> list[dict[str, str]]:
     bank: list[dict[str, str]] = []
-    topic_order = ["purpose", "companions", "itinerary", "accommodation", "funding", "return", "work", "contact", "device"]
+    topic_order = ["purpose", "companions", "itinerary", "accommodation", "funding", "return"]
     for topic in topic_order:
         if topic in answered_topics:
             bank.append(_replacement_followup(topic, "", {f"{topic}-seed"}))
@@ -829,12 +749,6 @@ def _answered_topics(answer_text: str) -> set[str]:
         topics.add("funding")
     if any(token in normalized for token in ["返程", "回来", "回国", "机票", "回程"]):
         topics.add("return")
-    if any(token in normalized for token in ["工作", "务工", "岗位", "薪资", "薪酬", "雇主", "中介", "招聘", "合同", "邀请函"]):
-        topics.add("work")
-    if any(token in normalized for token in ["联系人", "接待", "邀请", "谁联系", "微信", "电话", "对方", "朋友"]):
-        topics.add("contact")
-    if any(token in normalized for token in ["手机", "银行卡", "电脑", "设备", "账号", "通讯软件", "微信号", "支付宝"]):
-        topics.add("device")
     return topics
 
 
@@ -866,18 +780,6 @@ def _repeated_topic(item: dict[str, Any], answered_topics: set[str]) -> str | No
     if "return" in answered_topics and any(token in combined for token in ["返程", "回程", "回国"]):
         if any(token in question for token in ["是否", "有没有", "是否已经", "什么时候"]):
             return "return"
-
-    if "work" in answered_topics and any(token in combined for token in ["工作", "务工", "岗位", "薪资", "薪酬", "雇主", "中介", "招聘", "合同", "邀请函"]):
-        if any(token in question for token in ["是否", "有没有", "具体", "提供更多", "说明一下", "是什么"]):
-            return "work"
-
-    if "contact" in answered_topics and any(token in combined for token in ["联系人", "接待", "邀请", "联系", "对方", "安排人"]):
-        if any(token in question for token in ["是否", "有没有", "具体", "提供更多", "是谁", "联系方式"]):
-            return "contact"
-
-    if "device" in answered_topics and any(token in combined for token in ["手机", "银行卡", "电脑", "设备", "账号", "通讯软件"]):
-        if any(token in question for token in ["是否", "有没有", "携带", "用途", "具体"]):
-            return "device"
 
     return None
 
@@ -923,24 +825,6 @@ def _replacement_followup(
             "reason": "旅客已回答返程主题，不再重复询问是否返程，改为核验返程边界和未确定原因。",
             "operatorTip": "区分已订票、计划订票和暂未确定三种状态。",
             "focusArea": "返程边界核验",
-        },
-        "work": {
-            "question": "您刚才提到境外工作或固定安排，请补充安排方身份、材料来源、是否涉及报酬或食宿承诺。",
-            "reason": "旅客已回答工作或安排主题，不再泛问是否工作，改为核验安排方、材料链和费用链。",
-            "operatorTip": "保持中性，不直接定性非法务工；重点记录材料来源和承诺内容。",
-            "focusArea": "工作安排核验",
-        },
-        "contact": {
-            "question": "您刚才提到境外联系人或接待安排，请补充对方身份、认识渠道、负责事项以及可核验联系方式来源。",
-            "reason": "旅客已回答联系人主题，不再泛问是否有人接待，改为核验联系人边界和证明来源。",
-            "operatorTip": "围绕身份、关系、负责事项和联系方式来源核验。",
-            "focusArea": "境外联系人核验",
-        },
-        "device": {
-            "question": "您刚才提到携带设备或银行卡，请补充每件物品的用途、归属人以及是否与本次行程安排相对应。",
-            "reason": "旅客已回答设备或银行卡主题，不再泛问是否携带，改为核验用途和行程对应关系。",
-            "operatorTip": "避免直接推定异常用途，逐项记录用途、归属和对应场景。",
-            "focusArea": "设备用途核验",
         },
     }
     replacement = dict(replacements[topic])
