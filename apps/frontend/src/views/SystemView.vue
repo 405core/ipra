@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { clearAuthSession, loadAuthSession } from '../auth';
+import { loadAuthSession, logoutAuthSession } from '../auth';
 
 const router = useRouter();
 const session = loadAuthSession();
@@ -11,7 +11,7 @@ const username = computed(() => session?.user.workId || 'user');
 const badgeNumber = computed(() => session?.user.workId || '-');
 
 async function logout() {
-  clearAuthSession();
+  await logoutAuthSession();
   await router.push('/login');
 }
 </script>

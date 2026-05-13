@@ -72,51 +72,8 @@ func (h *Handler) handleList(c *gin.Context) {
 		return
 	}
 
-	limit := 100
-	if rawLimit := strings.TrimSpace(c.Query("limit")); rawLimit != "" {
-		if parsed, err := strconv.Atoi(rawLimit); err == nil && parsed > 0 {
-			if parsed > 500 {
-				parsed = 500
-			}
-			limit = parsed
-		}
-	}
-
-	query := strings.TrimSpace(c.Query("query"))
-	result := strings.TrimSpace(c.Query("result"))
-	actorWorkID := strings.TrimSpace(c.Query("actorWorkId"))
-
-	dbQuery := h.recorder.db.Model(&dbschema.AuditLog{})
-	if !identity.IsAdmin() {
-		dbQuery = dbQuery.Where("actor_user_id = ?", identity.UserID)
-	} else if actorWorkID != "" {
-		dbQuery = dbQuery.Where("LOWER(actor_work_id) = ?", strings.ToLower(actorWorkID))
-	}
-
-	if query != "" {
-		pattern := "%" + query + "%"
-		dbQuery = dbQuery.Where(
-			`actor_work_id ILIKE ? OR actor_name ILIKE ? OR action ILIKE ? OR resource ILIKE ? OR path ILIKE ? OR result ILIKE ?`,
-			pattern,
-			pattern,
-			pattern,
-			pattern,
-			pattern,
-			pattern,
-		)
-	}
-	if result != "" {
-		dbQuery = dbQuery.Where("result = ?", result)
-	}
-
-	var total int64
-	if err := dbQuery.Count(&total).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"message": "查询审计日志失败"})
-		return
-	}
-
-	var items []dbschema.AuditLog
-	if err := dbQuery.Order("created_at DESC").Limit(limit).Find(&items).Error; err != nil {
+	items, total, err := h.queryLogs(c, identity)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "查询审计日志失败"})
 		return
 	}
@@ -323,7 +280,8 @@ func (h *Handler) buildAuditListQuery(
 	identity Identity,
 	filter auditListFilter,
 ) *gorm.DB {
-	dbQuery := h.recorder.db.Model(&dbschema.AuditLog{})
+	dbQuery := h.recorder.db.Model(&dbschema.AuditLog{}).
+		Where("path <> ?", "/api/sensitive-assets/:assetId")
 	if !identity.IsAdmin() {
 		dbQuery = dbQuery.Where("actor_user_id = ?", identity.UserID)
 	} else if filter.ActorWorkID != "" {

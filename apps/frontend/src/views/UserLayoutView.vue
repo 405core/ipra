@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
-import { clearAuthSession, loadAuthSession } from '../auth';
-import { recordAuditEvent } from '../app/audit-service';
+import { loadAuthSession, logoutAuthSession } from '../auth';
 import { ElMessage } from '../app/el-message';
 import SensitiveAssetImage from '../app/SensitiveAssetImage.vue';
 import {
@@ -240,17 +239,7 @@ async function handleImportDrop(event: DragEvent) {
 }
 
 async function logout() {
-  try {
-    await recordAuditEvent({
-      action: 'logout',
-      resource: '退出登录',
-      result: 'success',
-      path: route.fullPath,
-    });
-  } catch {
-    // noop
-  }
-  clearAuthSession();
+  await logoutAuthSession();
   await router.push('/login');
 }
 

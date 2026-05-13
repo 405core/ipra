@@ -3,8 +3,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { formatChinaDateTime } from '../app/display-time';
 import {
-  clearAuthSession,
   loadAuthSession,
+  logoutAuthSession,
   resolveRoleHome,
   validateAuthSession,
 } from '../auth';
@@ -17,7 +17,6 @@ import SensitiveAssetImage from '../app/SensitiveAssetImage.vue';
 import { ElMessage } from '../app/el-message';
 import {
   getProtectedAuditLogDetail,
-  recordAuditEvent,
 } from '../app/audit-service';
 import { openTouchInput } from '../app/touch-input';
 import { useProtectedPage } from '../app/use-protected-page';
@@ -863,17 +862,7 @@ async function saveInquirySettings() {
 }
 
 async function logout() {
-  try {
-    await recordAuditEvent({
-      action: 'logout',
-      resource: '退出登录',
-      result: 'success',
-      path: '/admin/home',
-    });
-  } catch {
-    // noop
-  }
-  clearAuthSession();
+  await logoutAuthSession();
   await router.push('/login');
 }
 

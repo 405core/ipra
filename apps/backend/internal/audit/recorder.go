@@ -143,7 +143,14 @@ func (r *Recorder) RequestMiddleware(resolveIdentity IdentityResolver) gin.Handl
 
 func shouldSkipRequestAudit(routePath string) bool {
 	switch routePath {
-	case "", "/health", "/api/ping", "/api/login", "/api/auth/me", "/api/audit-logs/events":
+	case "",
+		"/health",
+		"/api/ping",
+		"/api/login",
+		"/api/auth/me",
+		"/api/auth/logout",
+		"/api/audit-logs/events",
+		"/api/sensitive-assets/:assetId":
 		return true
 	default:
 		return false

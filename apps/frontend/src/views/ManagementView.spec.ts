@@ -47,6 +47,7 @@ vi.mock('../auth', () => ({
       status: 'active',
     },
   })),
+  logoutAuthSession: vi.fn(),
   resolveRoleHome: vi.fn(() => '/home'),
   validateAuthSession: vi.fn(),
 }));

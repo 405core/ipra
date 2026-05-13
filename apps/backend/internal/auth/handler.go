@@ -55,6 +55,7 @@ func (h *Handler) Register(r gin.IRouter) {
 	authGroup := r.Group("/api/auth")
 	authGroup.Use(h.requireAuth())
 	authGroup.GET("/me", h.handleCurrentUser)
+	authGroup.POST("/logout", h.handleLogout)
 }
 
 func (h *Handler) AuthMiddleware() gin.HandlerFunc {
@@ -223,6 +224,33 @@ func (h *Handler) handleCurrentUser(c *gin.Context) {
 	})
 }
 
+func (h *Handler) handleLogout(c *gin.Context) {
+	claims, ok := claimsFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "未授权"})
+		return
+	}
+
+	actorUserID := claims.UserID
+	entry := dbschema.AuditLog{
+		ActorUserID: &actorUserID,
+		ActorWorkID: trimToLimit(claims.WorkID, 64),
+		ActorName:   trimToLimit(claims.Name, 64),
+		ActorRole:   trimToLimit(NormalizeRole(claims.Role), 32),
+		Action:      "logout",
+		Resource:    "退出登录",
+		Result:      "success",
+		StatusCode:  http.StatusOK,
+		Method:      c.Request.Method,
+		Path:        c.FullPath(),
+		ClientIP:    trimToLimit(strings.TrimSpace(c.ClientIP()), 64),
+		UserAgent:   trimToLimit(strings.TrimSpace(c.Request.UserAgent()), 255),
+	}
+	h.logLoginAttempt(c, entry)
+
+	c.JSON(http.StatusOK, gin.H{"message": "ok"})
+}
+
 func (h *Handler) requireAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token, ok := parseBearerToken(c.GetHeader("Authorization"))
@@ -305,6 +333,14 @@ func parseBearerToken(header string) (string, bool) {
 	}
 
 	return token, true
+}
+
+func trimToLimit(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	return value[:limit]
 }
 
 func toUserResponse(user dbschema.SystemUser) userResponse {
