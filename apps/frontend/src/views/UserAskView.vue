@@ -2050,6 +2050,7 @@ async function endSampling() {
   };
   round.uploadState = 'uploading';
   round.uploadErrorMessage = '';
+  let summaryUploaded = false;
 
   try {
     const windowId = createWindowId(round);
@@ -2063,13 +2064,6 @@ async function endSampling() {
       round.id,
     );
     const humanOmniWindow = uploadedRoundSnapshot?.humanOmniWindow ?? null;
-    const archiveVideo = await uploadInquiryArchiveVideo(
-      buildArchiveVideoUploadFormData(
-        round,
-        recordedFile,
-        humanOmniWindow?.windowId || windowId,
-      ),
-    );
     syncProtectedSessionState(response);
     const uploadedRound =
       rounds.value.find((item) => item.id === round.id) || round;
@@ -2079,12 +2073,21 @@ async function endSampling() {
         windowId: humanOmniWindow.windowId || windowId,
       };
     }
-    uploadedRound.recordedFileName = archiveVideo.uploadedFile.filename;
-    uploadedRound.uploadedFile = archiveVideo.uploadedFile;
     uploadedRound.completed = true;
     uploadedRound.uploadState = 'uploaded';
     uploadedRound.uploadErrorMessage = '';
     updateCurrentRoundSummary(uploadedRound);
+    summaryUploaded = true;
+    closeStageLoading('samplingUpload');
+    const archiveVideo = await uploadInquiryArchiveVideo(
+      buildArchiveVideoUploadFormData(
+        round,
+        recordedFile,
+        humanOmniWindow?.windowId || windowId,
+      ),
+    );
+    uploadedRound.recordedFileName = archiveVideo.uploadedFile.filename;
+    uploadedRound.uploadedFile = archiveVideo.uploadedFile;
     uploadedRound.transcripts = [];
     uploadedRound.asrText = '';
     uploadedRound.actionObservations = [];
@@ -2101,11 +2104,12 @@ async function endSampling() {
       },
     });
   } catch (error) {
+    const fallbackMessage = summaryUploaded
+      ? '采样摘要已生成，但问询视频归档上传失败，请检查后端和 MinIO 配置后重试。'
+      : 'HumanOmni 窗口摘要上传失败，请检查 AI-Service 后重试。';
+    const message = normalizeErrorMessage(error, fallbackMessage);
     round.uploadState = 'error';
-    round.uploadErrorMessage = normalizeErrorMessage(
-      error,
-      'HumanOmni 窗口摘要上传失败，请检查 AI-Service 后重试。',
-    );
+    round.uploadErrorMessage = message;
     roundServiceError.value = round.uploadErrorMessage;
   } finally {
     isEndingSampling.value = false;

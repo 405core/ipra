@@ -789,11 +789,13 @@ onBeforeUnmount(() => {
 .user-shell__content {
   box-sizing: border-box;
   min-width: 0;
-  min-height: 100dvh;
+  min-height: 0;
+  height: 100dvh;
   padding: calc(var(--header-height) + var(--page-pad-y))
     var(--page-pad-x) var(--page-pad-y);
   display: grid;
   grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   transition: padding-left 0.24s ease;
   overflow: hidden;
 }
@@ -876,7 +878,8 @@ onBeforeUnmount(() => {
   }
 
   .user-shell__content {
-    min-height: calc(100dvh - var(--header-height));
+    min-height: 0;
+    height: auto;
     overflow: visible;
   }
 
