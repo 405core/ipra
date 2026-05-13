@@ -55,12 +55,12 @@ func (PassengerProfile) TableName() string {
 }
 
 type HighRiskWatchlist struct {
-	ID          uint64    `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键"`
-	DocumentNum string    `gorm:"column:document_num;type:varchar(64);uniqueIndex:idx_uniq_watchlist_doc;not null;comment:证件号码"`
-	RiskCategory string   `gorm:"column:risk_category;type:varchar(64);not null;default:'';comment:风险类别（跨境赌博、跨境电诈、非法务工、出境目的存疑）"`
-	RiskReason  string    `gorm:"column:risk_reason;type:text;not null;default:'';comment:高风险原因或名单说明"`
-	CreatedAt   time.Time `gorm:"column:created_at;type:timestamptz;not null;default:CURRENT_TIMESTAMP;autoCreateTime;comment:记录创建时间"`
-	UpdatedAt   time.Time `gorm:"column:updated_at;type:timestamptz;not null;default:CURRENT_TIMESTAMP;autoUpdateTime;comment:记录更新时间"`
+	ID           uint64    `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键"`
+	DocumentNum  string    `gorm:"column:document_num;type:varchar(64);uniqueIndex:idx_uniq_watchlist_doc;not null;comment:证件号码"`
+	RiskCategory string    `gorm:"column:risk_category;type:varchar(64);not null;default:'';comment:风险类别代码（cross_border_gambling、cross_border_fraud、illegal_work、suspicious_purpose）"`
+	RiskReason   string    `gorm:"column:risk_reason;type:text;not null;default:'';comment:高风险原因或名单说明"`
+	CreatedAt    time.Time `gorm:"column:created_at;type:timestamptz;not null;default:CURRENT_TIMESTAMP;autoCreateTime;comment:记录创建时间"`
+	UpdatedAt    time.Time `gorm:"column:updated_at;type:timestamptz;not null;default:CURRENT_TIMESTAMP;autoUpdateTime;comment:记录更新时间"`
 }
 
 func (HighRiskWatchlist) TableName() string {

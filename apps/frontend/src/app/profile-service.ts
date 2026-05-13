@@ -14,9 +14,15 @@ export interface PassengerProfileRecord {
   fullName: string;
   documentNum: string;
   isHighRisk: boolean;
+  riskCategory?: string;
   riskReason?: string;
   profileData: Record<string, unknown>;
   updatedAt: string;
+}
+
+export interface ProfileRiskCategoryResponse {
+  profileId: string;
+  riskCategory: string;
 }
 
 export interface ImportBatchResult {
@@ -73,6 +79,13 @@ export async function getProtectedProfileById(id: string) {
   return protectedJson<ProtectedListItem>(
     `/api/passenger-profiles/${id}/protected`,
     '查询旅客画像失败。'
+  );
+}
+
+export async function getProfileRiskCategory(id: string) {
+  return protectedJson<ProfileRiskCategoryResponse>(
+    `/api/passenger-profiles/${id}/risk-category`,
+    '查询风险类别失败。'
   );
 }
 

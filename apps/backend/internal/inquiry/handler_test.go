@@ -284,6 +284,38 @@ func TestAsInquiryStringSliceAlwaysReturnsArray(t *testing.T) {
 	}
 }
 
+func TestBuildProtectedRiskCaseContext(t *testing.T) {
+	fromRequest := buildProtectedRiskCaseContext(
+		map[string]any{
+			"source":   "officer",
+			"category": "illegal_work",
+		},
+		"cross_border_fraud",
+	)
+	if fromRequest["category"] != "illegal_work" {
+		t.Fatalf("category = %v, want illegal_work", fromRequest["category"])
+	}
+	if fromRequest["source"] != "officer" {
+		t.Fatalf("source = %v, want officer", fromRequest["source"])
+	}
+
+	fromDatabase := buildProtectedRiskCaseContext(nil, "跨境电诈")
+	if fromDatabase["category"] != "cross_border_fraud" {
+		t.Fatalf("database category = %v, want cross_border_fraud", fromDatabase["category"])
+	}
+	if fromDatabase["source"] != "watchlist" {
+		t.Fatalf("database source = %v, want watchlist", fromDatabase["source"])
+	}
+
+	fallback := buildProtectedRiskCaseContext(nil, "")
+	if fallback["category"] != "suspicious_purpose" {
+		t.Fatalf("fallback category = %v, want suspicious_purpose", fallback["category"])
+	}
+	if fallback["source"] != "none" {
+		t.Fatalf("fallback source = %v, want none", fallback["source"])
+	}
+}
+
 func newTestRouter() *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()

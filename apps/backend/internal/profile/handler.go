@@ -61,6 +61,7 @@ func (h *Handler) Register(r gin.IRouter, authMiddleware gin.HandlerFunc) {
 
 	group.GET("", h.handleSearch)
 	group.GET("/protected", h.handleProtectedSearch)
+	group.GET("/:id/risk-category", h.handleProfileRiskCategoryByID)
 	group.GET("/:id/protected", h.handleProtectedProfileByID)
 	group.POST("/imports", h.handleImport)
 	group.GET("/imports/:id/protected", h.handleProtectedImportDetail)
@@ -187,6 +188,28 @@ func (h *Handler) handleProtectedProfileByID(c *gin.Context) {
 
 	item := h.buildProtectedProfileListItem(c, claims, profileRecord, "home:ask:profile")
 	c.JSON(http.StatusOK, item)
+}
+
+func (h *Handler) handleProfileRiskCategoryByID(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+
+	profileRecord, err := h.service.GetProfileByID(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"message": "旅客画像不存在"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "查询风险类别失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"profileId":    strconv.FormatUint(profileRecord.ID, 10),
+		"riskCategory": NormalizeRiskCategoryCode(profileRecord.RiskCategory),
+	})
 }
 
 func (h *Handler) handleImport(c *gin.Context) {

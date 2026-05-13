@@ -114,9 +114,9 @@ func TestBuildProfileRecord(t *testing.T) {
 
 func TestBuildHighRiskProfileRecordWithRiskCategory(t *testing.T) {
 	row := map[string]string{
-		normalizeHeaderKey("document_num"):  "E92834102",
-		normalizeHeaderKey("风险类别"):          "跨境电诈",
-		normalizeHeaderKey("高风险原因"):         "多次命中涉诈重点关注名单",
+		normalizeHeaderKey("document_num"): "E92834102",
+		normalizeHeaderKey("风险类别"):         "跨境电诈",
+		normalizeHeaderKey("高风险原因"):        "多次命中涉诈重点关注名单",
 	}
 
 	record, err := buildProfileRecord(row, importTypeHighRisk)
@@ -127,11 +127,34 @@ func TestBuildHighRiskProfileRecordWithRiskCategory(t *testing.T) {
 	if got, want := record.DocumentNum, "E92834102"; got != want {
 		t.Fatalf("DocumentNum = %q, want %q", got, want)
 	}
-	if got, want := record.RiskCategory, "跨境电诈"; got != want {
+	if got, want := record.RiskCategory, "cross_border_fraud"; got != want {
 		t.Fatalf("RiskCategory = %q, want %q", got, want)
 	}
 	if got, want := record.RiskReason, "多次命中涉诈重点关注名单"; got != want {
 		t.Fatalf("RiskReason = %q, want %q", got, want)
+	}
+}
+
+func TestNormalizeRiskCategory(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "empty stays empty", value: "", want: ""},
+		{name: "gambling maps to code", value: "跨境赌博", want: "cross_border_gambling"},
+		{name: "fraud maps to code", value: "跨境电诈", want: "cross_border_fraud"},
+		{name: "illegal work maps to code", value: "非法务工", want: "illegal_work"},
+		{name: "code stays code", value: "cross_border_fraud", want: "cross_border_fraud"},
+		{name: "other non-empty falls back", value: "出境目的存疑", want: "suspicious_purpose"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeRiskCategory(tt.value); got != tt.want {
+				t.Fatalf("normalizeRiskCategory(%q) = %q, want %q", tt.value, got, tt.want)
+			}
+		})
 	}
 }
 

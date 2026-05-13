@@ -23,6 +23,10 @@ var defaultFontCandidates = []string{
 	"/usr/share/fonts/truetype/wqy/wqy-zenhei.ttf",
 	"/usr/share/fonts/opentype/unifont/unifont.otf",
 	"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+	"/Library/Fonts/Arial Unicode.ttf",
+	"/System/Library/Fonts/Hiragino Sans GB.ttc",
+	"/System/Library/Fonts/STHeiti Medium.ttc",
+	"/System/Library/Fonts/STHeiti Light.ttc",
 }
 
 type Renderer struct {

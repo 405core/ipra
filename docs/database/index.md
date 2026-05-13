@@ -76,6 +76,7 @@
 | --- | --- | --- |
 | `id` | `BIGINT` | 主键。 |
 | `document_num` | `VARCHAR(64)` | 证件号码，唯一。 |
+| `risk_category` | `VARCHAR(64)` | 风险类别代码。导入未提供时为空；导入提供但不属于明确映射时为 `suspicious_purpose`。 |
 | `risk_reason` | `TEXT` | 高风险原因或名单说明。 |
 | `created_at` | `TIMESTAMPTZ` | 创建时间。 |
 | `updated_at` | `TIMESTAMPTZ` | 更新时间。 |
@@ -84,6 +85,7 @@
 
 - 高风险名单独立一张表。
 - 即使某证件号还没有基础画像，也允许先导入高风险名单。
+- 风险类别导入映射：`跨境赌博` -> `cross_border_gambling`，`跨境电诈` -> `cross_border_fraud`，`非法务工` -> `illegal_work`，其他非空值 -> `suspicious_purpose`。
 - 员工检索时如果只命中高风险名单，也会给出高风险预警。
 
 ## 导入模板

@@ -82,6 +82,7 @@ COMMENT ON COLUMN passenger_profile.updated_at IS '记录更新时间';
 CREATE TABLE IF NOT EXISTS high_risk_watchlist (
     id BIGSERIAL PRIMARY KEY,
     document_num VARCHAR(64) NOT NULL,
+    risk_category VARCHAR(64) NOT NULL DEFAULT '',
     risk_reason TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -93,6 +94,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_uniq_watchlist_doc
 COMMENT ON TABLE high_risk_watchlist IS '高风险名单表';
 COMMENT ON COLUMN high_risk_watchlist.id IS '主键';
 COMMENT ON COLUMN high_risk_watchlist.document_num IS '证件号码，用于和基础画像做证件级关联';
+COMMENT ON COLUMN high_risk_watchlist.risk_category IS '风险类别代码（cross_border_gambling、cross_border_fraud、illegal_work、suspicious_purpose），空值表示导入未提供风险类别';
 COMMENT ON COLUMN high_risk_watchlist.risk_reason IS '高风险原因或名单说明';
 COMMENT ON COLUMN high_risk_watchlist.created_at IS '记录创建时间';
 COMMENT ON COLUMN high_risk_watchlist.updated_at IS '记录更新时间';
