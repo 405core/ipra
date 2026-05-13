@@ -38,6 +38,21 @@ class OutputConstraints(ApiModel):
     language: str = "zh-CN"
 
 
+class RiskCaseContext(ApiModel):
+    source: Literal["watchlist", "officer", "none"] | str = "none"
+    category: Literal[
+        "cross_border_gambling",
+        "cross_border_fraud",
+        "illegal_work",
+        "suspicious_purpose",
+        "unknown",
+    ] | str = "unknown"
+    label: str | None = None
+    reason: str | None = None
+    risk_tags: list[str] = Field(default_factory=list, alias="riskTags")
+    officer_note: str | None = Field(default=None, alias="officerNote")
+
+
 class RiskAssessment(ApiModel):
     level: Literal["low", "medium", "high", "unknown"] = "unknown"
     summary: str
@@ -110,6 +125,7 @@ class FirstRoundStrategyRequest(ApiModel):
     passenger_profile: PassengerProfile = Field(alias="passengerProfile")
     trip_profile: TripProfile = Field(default_factory=TripProfile, alias="tripProfile")
     known_facts: list[str] = Field(default_factory=list, alias="knownFacts")
+    risk_case_context: RiskCaseContext = Field(default_factory=RiskCaseContext, alias="riskCaseContext")
     memory_context: MemoryContext | None = Field(default=None, alias="memoryContext")
     constraints: OutputConstraints = Field(default_factory=OutputConstraints)
 
@@ -187,6 +203,7 @@ class FollowupGuidanceRequest(ApiModel):
     round_no: int = Field(default=2, ge=2, alias="roundNo")
     passenger_profile: PassengerProfile = Field(alias="passengerProfile")
     trip_profile: TripProfile = Field(default_factory=TripProfile, alias="tripProfile")
+    risk_case_context: RiskCaseContext = Field(default_factory=RiskCaseContext, alias="riskCaseContext")
     qa_history: list[QuestionAnswer] = Field(default_factory=list, alias="qaHistory")
     humanomni_windows: list[HumanOmniWindowSummary] = Field(default_factory=list, alias="humanOmniWindows")
     action_observations: list[ActionObservation] = Field(default_factory=list, alias="actionObservations")

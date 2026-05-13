@@ -14,3 +14,4 @@ order: 4
 - [AI-Service 接口对接文档](./api-integration-guide.md)：面向前端和后端联调，说明视频上传、首轮策略、后续追问、动作 JSON 和 ASR 预留字段。
 - [智能体记忆实现说明](./agent-memory.md)：归档智能体记忆层的定位、数据结构、接口流程、数据库落点、前端展示和验证方式。
 - [DeepSeek V3.2 服务器部署适配](./deepseek-v32-deployment.md)：说明服务器部署时如何通过 OpenAI-compatible provider 调用 DeepSeek V3.2 全精度模型服务。
+- [四类出境风险 LLM 问询规则](./llm-risk-case-inquiry-rules.md)：说明跨境赌博、跨境电诈、非法务工、出境目的存疑四类风险方向的 prompt 规则和 `riskCaseContext` 对接方式。
