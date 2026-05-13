@@ -65,6 +65,8 @@ type FilterPickerKey =
   | 'profiles-gender'
   | 'users-role'
   | 'users-status'
+  | 'user-form-role'
+  | 'user-form-status'
   | 'archives-judgement'
   | 'audit-result'
   | null;
@@ -178,6 +180,14 @@ const userForm = ref<{
   status: 'active',
   password: '',
 });
+const userFormRoleOptions: FilterOption[] = [
+  { value: 'user', label: '员工' },
+  { value: 'admin', label: '管理员' },
+];
+const userFormStatusOptions: FilterOption[] = [
+  { value: 'active', label: '启用' },
+  { value: 'disabled', label: '停用' },
+];
 
 const currentUserId = computed(() => session.value?.user.id ?? null);
 const isAnyFormVisible = computed(
@@ -994,6 +1004,19 @@ function applyUserRoleFilter(value: string) {
 
 function applyUserStatusFilter(value: string) {
   userFilters.value.status = value;
+  openFilterPicker.value = null;
+}
+
+function applyUserFormRole(value: 'admin' | 'user') {
+  userForm.value.role = value;
+  openFilterPicker.value = null;
+}
+
+function applyUserFormStatus(value: string) {
+  if (value === 'disabled' && isEditingCurrentUser.value) {
+    return;
+  }
+  userForm.value.status = value;
   openFilterPicker.value = null;
 }
 
@@ -2367,79 +2390,152 @@ function stringifyDetail(value: unknown) {
       <div
         class="admin-form-card admin-form-card--dialog admin-form-card--user"
       >
-        <div class="admin-form-card__header">
-          <div>
-            <h3>{{ userForm.id ? '编辑用户' : '新增用户' }}</h3>
-            <p>在弹窗内维护工号、角色、状态和密码。</p>
-          </div>
-          <button type="button" class="ghost" @click="closeUserForm">
-            关闭窗口
-          </button>
-        </div>
+        <div class="admin-dialog-shell admin-dialog-shell--user-form">
+          <section class="admin-dialog-console admin-dialog-console--user-form">
+            <div class="admin-user-console">
+              <div class="admin-form-grid admin-form-grid--dialog">
+                <label class="admin-field-card">
+                  <span class="admin-field-card__label">工号</span>
+                  <div class="admin-field-card__input-wrap">
+                    <span class="admin-field-card__icon">ID</span>
+                    <input
+                      v-model="userForm.workId"
+                      :title="touchInputHint"
+                      type="text"
+                      placeholder="输入工号"
+                      @dblclick.stop.prevent="
+                        openFormFieldInput({
+                          title: '输入工号',
+                          placeholder: '输入工号',
+                          value: userForm.workId,
+                          assign: (value) => (userForm.workId = value),
+                        })
+                      "
+                    />
+                  </div>
+                </label>
+                <label class="admin-field-card">
+                  <span class="admin-field-card__label">姓名</span>
+                  <div class="admin-field-card__input-wrap">
+                    <span class="admin-field-card__icon">NM</span>
+                    <input
+                      v-model="userForm.name"
+                      :title="touchInputHint"
+                      type="text"
+                      placeholder="输入姓名"
+                      @dblclick.stop.prevent="
+                        openFormFieldInput({
+                          title: '输入姓名',
+                          placeholder: '输入姓名',
+                          value: userForm.name,
+                          assign: (value) => (userForm.name = value),
+                        })
+                      "
+                    />
+                  </div>
+                </label>
+                <div class="admin-field-card">
+                  <span class="admin-field-card__label">角色</span>
+                  <div class="filter-picker admin-field-card__picker">
+                    <button
+                      type="button"
+                      class="admin-field-card__input-wrap admin-field-card__picker-trigger"
+                      :class="{ 'is-active': openFilterPicker === 'user-form-role' }"
+                      @click.stop="toggleFilterPicker('user-form-role')"
+                    >
+                      <span class="admin-field-card__icon">RL</span>
+                      <span class="admin-field-card__picker-value">
+                        {{ formatUserRoleLabel(userForm.role) }}
+                      </span>
+                      <span class="admin-field-card__picker-caret" aria-hidden="true"></span>
+                    </button>
+                    <div
+                      v-if="openFilterPicker === 'user-form-role'"
+                      class="filter-picker__menu filter-picker__menu--dialog"
+                      @click.stop
+                    >
+                      <button
+                        v-for="option in userFormRoleOptions"
+                        :key="option.value"
+                        type="button"
+                        :class="{ 'is-active': userForm.role === option.value }"
+                        @click="applyUserFormRole(option.value as 'admin' | 'user')"
+                      >
+                        {{ option.label }}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div class="admin-field-card">
+                  <span class="admin-field-card__label">状态</span>
+                  <div class="filter-picker admin-field-card__picker">
+                    <button
+                      type="button"
+                      class="admin-field-card__input-wrap admin-field-card__picker-trigger"
+                      :class="{ 'is-active': openFilterPicker === 'user-form-status' }"
+                      @click.stop="toggleFilterPicker('user-form-status')"
+                    >
+                      <span class="admin-field-card__icon">ST</span>
+                      <span class="admin-field-card__picker-value">
+                        {{ formatUserStatusLabel(userForm.status) }}
+                      </span>
+                      <span class="admin-field-card__picker-caret" aria-hidden="true"></span>
+                    </button>
+                    <div
+                      v-if="openFilterPicker === 'user-form-status'"
+                      class="filter-picker__menu filter-picker__menu--dialog"
+                      @click.stop
+                    >
+                      <button
+                        v-for="option in userFormStatusOptions"
+                        :key="option.value"
+                        type="button"
+                        :disabled="option.value === 'disabled' && isEditingCurrentUser"
+                        :class="{ 'is-active': userForm.status === option.value }"
+                        @click="applyUserFormStatus(option.value)"
+                      >
+                        {{ option.label }}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <label class="admin-field-card admin-field-card--wide">
+                  <span class="admin-field-card__label">密码</span>
+                  <div class="admin-field-card__input-wrap">
+                    <span class="admin-field-card__icon">PW</span>
+                    <input
+                      v-model="userForm.password"
+                      :title="touchInputHint"
+                      type="password"
+                      placeholder="密码（修改时可留空）"
+                      @dblclick.stop.prevent="
+                        openFormFieldInput({
+                          title: '输入密码',
+                          placeholder: '输入密码（修改时可留空）',
+                          value: userForm.password,
+                          masked: true,
+                          assign: (value) => (userForm.password = value),
+                        })
+                      "
+                    />
+                  </div>
+                </label>
+              </div>
+            </div>
 
-        <div class="admin-form-grid">
-          <input
-            v-model="userForm.workId"
-            :title="touchInputHint"
-            type="text"
-            placeholder="工号"
-            @dblclick.stop.prevent="
-              openFormFieldInput({
-                title: '输入工号',
-                placeholder: '输入工号',
-                value: userForm.workId,
-                assign: (value) => (userForm.workId = value),
-              })
-            "
-          />
-          <input
-            v-model="userForm.name"
-            :title="touchInputHint"
-            type="text"
-            placeholder="姓名"
-            @dblclick.stop.prevent="
-              openFormFieldInput({
-                title: '输入姓名',
-                placeholder: '输入姓名',
-                value: userForm.name,
-                assign: (value) => (userForm.name = value),
-              })
-            "
-          />
-          <select v-model="userForm.role">
-            <option value="user">员工</option>
-            <option value="admin">管理员</option>
-          </select>
-          <select v-model="userForm.status">
-            <option value="active">启用</option>
-            <option value="disabled" :disabled="isEditingCurrentUser">
-              停用
-            </option>
-          </select>
-          <input
-            v-model="userForm.password"
-            :title="touchInputHint"
-            type="password"
-            placeholder="密码（修改时可留空）"
-            @dblclick.stop.prevent="
-              openFormFieldInput({
-                title: '输入密码',
-                placeholder: '输入密码（修改时可留空）',
-                value: userForm.password,
-                masked: true,
-                assign: (value) => (userForm.password = value),
-              })
-            "
-          />
-        </div>
-
-        <div class="admin-form-actions">
-          <button type="button" @click="submitUser">
-            {{ userForm.id ? '更新用户' : '新增用户' }}
-          </button>
-          <button type="button" class="ghost" @click="closeUserForm">
-            取消
-          </button>
+            <div class="admin-form-actions admin-form-actions--dialog">
+              <button type="button" class="admin-user-form__action" @click="submitUser">
+                {{ userForm.id ? '更新用户' : '新增用户' }}
+              </button>
+              <button
+                type="button"
+                class="ghost admin-user-form__action admin-user-form__action--ghost"
+                @click="closeUserForm"
+              >
+                取消
+              </button>
+            </div>
+          </section>
         </div>
       </div>
     </section>
@@ -2454,174 +2550,157 @@ function stringifyDetail(value: unknown) {
       <div
         class="admin-form-card admin-form-card--dialog admin-form-card--archive"
       >
-        <div class="admin-form-card__header">
-          <div>
-            <h3>
-              {{
-                selectedArchive?.archiveCode ||
-                (isLoadingArchiveDetail ? '正在加载问询归档' : '问询归档详情')
-              }}
-            </h3>
-            <p>
-              {{
-                selectedArchive
-                  ? `会话 ${selectedArchive.sessionId}`
-                  : '正在读取归档主表、轮次与视频。'
-              }}
-            </p>
-          </div>
-          <button type="button" class="ghost" @click="closeArchiveDetail">
-            关闭窗口
-          </button>
-        </div>
-
-        <div v-if="selectedArchive" class="archive-detail">
-          <section class="archive-detail__summary">
-            <div>
-              <span class="meta-label">最终判定</span>
-              <strong>{{
-                formatArchiveJudgementLabel(selectedArchive.finalJudgement)
-              }}</strong>
-            </div>
-            <div>
-              <span class="meta-label">归档时间</span>
-              <strong>{{
-                formatArchiveTime(selectedArchive.archivedAt)
-              }}</strong>
-            </div>
-            <div>
-              <span class="meta-label">采样</span>
-              <strong>
-                {{ selectedArchive.roundCount }} 轮 ·
-                {{ formatDuration(selectedArchive.totalDurationSeconds) }}
-              </strong>
-            </div>
-            <div>
-              <span class="meta-label">归档人</span>
-              <strong>已受保护</strong>
-            </div>
-          </section>
-
-          <section
-            v-if="selectedArchive.overviewAsset"
-            class="archive-detail__block"
-          >
-            <span class="meta-label">归档概览</span>
-            <SensitiveAssetImage
-              :src="selectedArchive.overviewAsset.url"
-              alt="归档概览"
-            />
-          </section>
-
-          <section class="archive-detail__block">
-            <span class="meta-label">详细理由</span>
-            <SensitiveAssetImage
-              v-if="selectedArchive.judgementAsset"
-              :src="selectedArchive.judgementAsset.url"
-              alt="判定理由"
-            />
-            <p v-else>已通过受保护资产交付</p>
-          </section>
-
-          <section class="archive-detail__grid">
-            <div class="archive-detail__block">
-              <span class="meta-label">系统摘要</span>
-              <SensitiveAssetImage
-                v-if="selectedArchive.briefingAsset"
-                :src="selectedArchive.briefingAsset.url"
-                alt="系统摘要"
-              />
-              <pre v-else>已通过受保护资产交付</pre>
-            </div>
-            <div class="archive-detail__block">
-              <span class="meta-label">旅客快照</span>
-              <SensitiveAssetImage
-                v-if="selectedArchive.passengerAsset"
-                :src="selectedArchive.passengerAsset.url"
-                alt="旅客快照"
-              />
-              <pre v-else>已通过受保护资产交付</pre>
-            </div>
-          </section>
-
-          <section class="archive-round-list">
-            <article
-              v-for="round in selectedArchive.rounds"
-              :key="round.id"
-              class="archive-round"
-            >
-              <header>
-                <div>
-                  <span class="meta-label">第 {{ round.roundNo }} 轮</span>
-                  <h4>问询轮次</h4>
+        <div class="admin-dialog-shell admin-dialog-shell--archive-detail">
+          <section class="admin-dialog-console admin-dialog-console--archive-detail admin-dialog-console--content-only">
+            <div v-if="selectedArchive" class="archive-detail archive-detail--dialog">
+              <section class="archive-detail__summary">
+                <div class="archive-detail__summary-card">
+                  <span class="meta-label">最终判定</span>
+                  <strong>{{
+                    formatArchiveJudgementLabel(selectedArchive.finalJudgement)
+                  }}</strong>
                 </div>
-                <span class="admin-row__pill">{{
-                  formatDuration(round.durationSeconds)
-                }}</span>
-              </header>
+                <div class="archive-detail__summary-card">
+                  <span class="meta-label">归档时间</span>
+                  <strong>{{
+                    formatArchiveTime(selectedArchive.archivedAt)
+                  }}</strong>
+                </div>
+                <div class="archive-detail__summary-card">
+                  <span class="meta-label">采样</span>
+                  <strong>
+                    {{ selectedArchive.roundCount }} 轮 ·
+                    {{ formatDuration(selectedArchive.totalDurationSeconds) }}
+                  </strong>
+                </div>
+                <div class="archive-detail__summary-card">
+                  <span class="meta-label">归档人</span>
+                  <strong>已受保护</strong>
+                </div>
+              </section>
 
-              <div class="archive-detail__block">
-                <span class="meta-label">本轮摘要</span>
+              <section
+                v-if="selectedArchive.overviewAsset"
+                class="archive-detail__block archive-detail__block--media"
+              >
+                <span class="meta-label">归档概览</span>
                 <SensitiveAssetImage
-                  v-if="round.detailAsset"
-                  :src="round.detailAsset.url"
-                  alt="归档轮次详情"
+                  :src="selectedArchive.overviewAsset.url"
+                  alt="归档概览"
+                />
+              </section>
+
+              <section class="archive-detail__block archive-detail__block--media">
+                <span class="meta-label">详细理由</span>
+                <SensitiveAssetImage
+                  v-if="selectedArchive.judgementAsset"
+                  :src="selectedArchive.judgementAsset.url"
+                  alt="判定理由"
                 />
                 <p v-else>已通过受保护资产交付</p>
-              </div>
+              </section>
 
-              <div v-if="round.videos.length" class="archive-video-list">
+              <section class="archive-detail__grid">
+                <div class="archive-detail__block archive-detail__block--media">
+                  <span class="meta-label">系统摘要</span>
+                  <SensitiveAssetImage
+                    v-if="selectedArchive.briefingAsset"
+                    :src="selectedArchive.briefingAsset.url"
+                    alt="系统摘要"
+                  />
+                  <pre v-else>已通过受保护资产交付</pre>
+                </div>
+                <div class="archive-detail__block archive-detail__block--media">
+                  <span class="meta-label">旅客快照</span>
+                  <SensitiveAssetImage
+                    v-if="selectedArchive.passengerAsset"
+                    :src="selectedArchive.passengerAsset.url"
+                    alt="旅客快照"
+                  />
+                  <pre v-else>已通过受保护资产交付</pre>
+                </div>
+              </section>
+
+              <section class="archive-round-list">
                 <article
-                  v-for="video in round.videos"
-                  :key="video.id"
-                  class="archive-video"
+                  v-for="round in selectedArchive.rounds"
+                  :key="round.id"
+                  class="archive-round"
                 >
-                  <div class="archive-video__meta">
-                    <strong>{{ video.fileName || '归档视频' }}</strong>
-                    <span
-                      >{{ video.contentType || video.modal }} ·
-                      {{ video.sizeBytes }} bytes</span
-                    >
-                  </div>
-                  <div
-                    v-if="archiveVideoUrls[video.id]"
-                    class="archive-video__player"
-                  >
-                    <video
-                      :src="archiveVideoUrls[video.id]"
-                      controls
-                      preload="metadata"
-                    ></video>
-                    <div
-                      v-if="archiveVideoWatermarkText"
-                      class="archive-video__watermark"
-                      aria-hidden="true"
-                    >
-                      <span
-                        v-for="tile in VIDEO_ARCHIVE_WATERMARK_TILE_LAYOUTS"
-                        :key="tile.id"
-                        class="archive-video__watermark-tile"
-                        :style="{
-                          top: tile.top,
-                          left: tile.left,
-                          opacity: tile.opacity,
-                          transform: `translate(-50%, -50%) rotate(${tile.rotation}deg)`,
-                        }"
-                      >
-                        {{ archiveVideoWatermarkText }}
-                      </span>
+                  <header class="archive-round__header">
+                    <div class="archive-round__title">
+                      <span class="meta-label">第 {{ round.roundNo }} 轮</span>
+                      <h4>问询轮次</h4>
                     </div>
-                  </div>
-                  <p v-else>视频正在加载或暂不可用。</p>
-                </article>
-              </div>
-            </article>
-          </section>
-        </div>
+                    <span class="admin-dialog-pill admin-dialog-pill--console">{{
+                      formatDuration(round.durationSeconds)
+                    }}</span>
+                  </header>
 
-        <div v-else class="empty-panel empty-panel--compact">
-          <strong>正在加载归档详情</strong>
-          <span>请稍候。</span>
+                  <div class="archive-detail__block archive-detail__block--round">
+                    <span class="meta-label">本轮摘要</span>
+                    <SensitiveAssetImage
+                      v-if="round.detailAsset"
+                      :src="round.detailAsset.url"
+                      alt="归档轮次详情"
+                    />
+                    <p v-else>已通过受保护资产交付</p>
+                  </div>
+
+                  <div v-if="round.videos.length" class="archive-video-list">
+                    <article
+                      v-for="video in round.videos"
+                      :key="video.id"
+                      class="archive-video"
+                    >
+                      <div class="archive-video__meta">
+                        <strong>{{ video.fileName || '归档视频' }}</strong>
+                        <span
+                          >{{ video.contentType || video.modal }} ·
+                          {{ video.sizeBytes }} bytes</span
+                        >
+                      </div>
+                      <div
+                        v-if="archiveVideoUrls[video.id]"
+                        class="archive-video__player"
+                      >
+                        <video
+                          :src="archiveVideoUrls[video.id]"
+                          controls
+                          preload="metadata"
+                        ></video>
+                        <div
+                          v-if="archiveVideoWatermarkText"
+                          class="archive-video__watermark"
+                          aria-hidden="true"
+                        >
+                          <span
+                            v-for="tile in VIDEO_ARCHIVE_WATERMARK_TILE_LAYOUTS"
+                            :key="tile.id"
+                            class="archive-video__watermark-tile"
+                            :style="{
+                              top: tile.top,
+                              left: tile.left,
+                              opacity: tile.opacity,
+                              transform: `translate(-50%, -50%) rotate(${tile.rotation}deg)`,
+                            }"
+                          >
+                            {{ archiveVideoWatermarkText }}
+                          </span>
+                        </div>
+                      </div>
+                      <p v-else>视频正在加载或暂不可用。</p>
+                    </article>
+                  </div>
+                </article>
+              </section>
+            </div>
+
+            <div v-else class="empty-panel empty-panel--compact">
+              <strong>正在加载归档详情</strong>
+              <span>请稍候。</span>
+            </div>
+          </section>
         </div>
       </div>
     </section>
@@ -2633,29 +2712,26 @@ function stringifyDetail(value: unknown) {
       class="admin-dialog"
       @click.self="closeAuditDetail"
     >
-      <div class="admin-form-card admin-form-card--dialog admin-form-card--audit">
-        <div class="admin-form-card__header">
-          <div>
-            <h3>审计日志详情</h3>
-            <p>查看完整日志详情与上下文。</p>
-          </div>
-          <button type="button" class="ghost" @click="closeAuditDetail">
-            关闭窗口
-          </button>
-        </div>
+      <div class="admin-form-card admin-form-card--dialog admin-form-card--audit admin-form-card--content-fit">
+        <div class="admin-dialog-shell admin-dialog-shell--audit-detail">
+          <section class="admin-dialog-console admin-dialog-console--audit-detail admin-dialog-console--content-only">
+            <div v-if="selectedAuditLog" class="archive-detail archive-detail--dialog">
+              <section class="archive-detail__block archive-detail__block--media">
+                <span class="meta-label">日志快照</span>
+                <SensitiveAssetImage
+                  :src="selectedAuditLog.asset.url"
+                  alt="审计日志详情敏感图片"
+                />
+              </section>
+            </div>
 
-        <div v-if="selectedAuditLog" class="archive-detail">
-          <SensitiveAssetImage
-            :src="selectedAuditLog.asset.url"
-            alt="审计日志详情敏感图片"
-          />
-        </div>
-
-        <div v-else class="empty-panel empty-panel--compact">
-          <strong>{{
-            isLoadingAuditDetail ? '正在加载审计日志详情' : '暂时无法显示日志详情'
-          }}</strong>
-          <span>{{ auditDetailError || '请稍候。' }}</span>
+            <div v-else class="empty-panel empty-panel--compact">
+              <strong>{{
+                isLoadingAuditDetail ? '正在加载审计日志详情' : '暂时无法显示日志详情'
+              }}</strong>
+              <span>{{ auditDetailError || '请稍候。' }}</span>
+            </div>
+          </section>
         </div>
       </div>
     </section>
@@ -2663,6 +2739,8 @@ function stringifyDetail(value: unknown) {
 </template>
 
 <style scoped lang="scss">
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Manrope:wght@600;700;800&display=swap');
+
 .admin-page {
   --admin-scale: clamp(0.88rem, 0.54rem + 0.72vmin, 1.16rem);
   --admin-page-pad: calc(var(--admin-scale) * 1.2);
@@ -3089,36 +3167,339 @@ function stringifyDetail(value: unknown) {
 }
 
 .admin-dialog {
+  --dialog-panel: #ffffff;
+  --dialog-panel-muted: #f7eee8;
+  --dialog-panel-strong: #f1e3d9;
+  --dialog-primary: #b55339;
+  --dialog-primary-strong: #6b392c;
+  --dialog-primary-soft: #f8e1d4;
+  --dialog-text: #2f211c;
+  --dialog-text-muted: #7a5c50;
+  --dialog-border: rgba(215, 193, 180, 0.88);
   position: fixed;
   inset: 0;
   z-index: 90;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: calc(var(--admin-scale) * 1.05);
+  padding: 32px 20px;
   background: rgba(34, 22, 18, 0.42);
-  backdrop-filter: blur(6px);
+  backdrop-filter: blur(12px);
+  font-family: 'IBM Plex Sans', sans-serif;
 }
 
 .admin-form-card--dialog {
-  width: min(clamp(38rem, 68vw, 54rem), 100%);
-  max-height: calc(100dvh - clamp(1.8rem, 1.5rem + 1.2vw, 3rem));
+  width: min(1320px, 100%);
+  min-height: min(860px, 92vh);
+  max-height: min(860px, 92vh);
   margin-bottom: 0;
-  overflow: auto;
-  box-shadow: 0 28px 56px rgba(34, 22, 18, 0.22);
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--dialog-border);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow:
+    0 24px 64px rgba(181, 83, 57, 0.12),
+    0 2px 8px rgba(34, 22, 18, 0.05);
+  display: flex;
+  flex-direction: column;
 }
 
-.admin-form-card--profile {
-  width: min(clamp(48rem, 82vw, 65rem), 100%);
-}
-
-.admin-form-card--watchlist,
 .admin-form-card--user {
-  width: min(clamp(34rem, 58vw, 45rem), 100%);
+  width: min(980px, 100%);
+  min-height: 0;
+  max-height: min(720px, 88vh);
 }
 
-.admin-form-card--archive {
-  width: min(clamp(50rem, 86vw, 70rem), 100%);
+.admin-form-card--content-fit {
+  min-height: 0;
+  max-height: min(760px, 88vh);
+}
+
+.admin-dialog-shell {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.92fr) minmax(420px, 1.5fr);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.admin-dialog-shell--stacked {
+  grid-template-columns: 1fr;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.admin-dialog-shell--user-form {
+  grid-template-columns: 1fr;
+  height: auto;
+}
+
+.admin-dialog-shell--archive-detail {
+  grid-template-columns: 1fr;
+}
+
+.admin-dialog-shell--audit-detail {
+  grid-template-columns: 1fr;
+}
+
+.admin-dialog-hero {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(300px, 0.9fr);
+  gap: 24px;
+  padding: 32px 32px 22px;
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.78), rgba(248, 225, 212, 0.92)),
+    var(--dialog-panel-muted);
+  border-bottom: 1px solid var(--dialog-border);
+}
+
+.admin-dialog-hero::after {
+  content: '';
+  position: absolute;
+  inset: auto auto -90px -70px;
+  width: 240px;
+  height: 240px;
+  border-radius: 999px;
+  background: rgba(235, 141, 99, 0.18);
+  filter: blur(60px);
+  pointer-events: none;
+}
+
+.admin-dialog-hero__main,
+.admin-dialog-hero__aside {
+  position: relative;
+  z-index: 1;
+}
+
+.admin-dialog-hero__main {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.admin-dialog-hero__aside {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+}
+
+.admin-dialog-brand,
+.admin-dialog-pill-group,
+.admin-dialog-preview,
+.admin-dialog-copy,
+.admin-dialog-close,
+.admin-dialog-console {
+  position: relative;
+}
+
+.admin-dialog-brand {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.admin-dialog-brand__mark {
+  width: 64px;
+  height: 64px;
+  border-radius: 20px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(145deg, var(--dialog-primary), #eb8d63);
+  color: #fff;
+  font-family: 'Manrope', sans-serif;
+  font-size: 1.1rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  box-shadow: 0 14px 30px rgba(181, 83, 57, 0.24);
+}
+
+.admin-dialog-brand__name,
+.admin-dialog-copy h3 {
+  margin: 0;
+  font-family: 'Manrope', sans-serif;
+}
+
+.admin-dialog-brand__name {
+  font-size: 1.55rem;
+  font-weight: 800;
+  color: var(--dialog-primary-strong);
+  line-height: 1;
+}
+
+.admin-dialog-brand__subtitle,
+.admin-dialog-copy__eyebrow,
+.admin-dialog-console__title {
+  margin: 6px 0 0;
+  color: var(--dialog-text-muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.admin-dialog-copy {
+  display: grid;
+  gap: 16px;
+  max-width: 30rem;
+}
+
+.admin-dialog-copy h3 {
+  font-size: clamp(2rem, 2vw + 1.2rem, 2.8rem);
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -0.04em;
+  color: var(--dialog-text);
+}
+
+.admin-dialog-copy p {
+  margin: 0;
+  color: var(--dialog-text-muted);
+  font-size: 1rem;
+  line-height: 1.8;
+}
+
+.admin-dialog-pill-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.admin-dialog-pill {
+  padding: 10px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid var(--dialog-border);
+  color: var(--dialog-text-muted);
+  font-size: 0.83rem;
+  font-weight: 600;
+}
+
+.admin-dialog-pill--console {
+  background: rgba(248, 225, 212, 0.52);
+}
+
+.admin-dialog-preview {
+  display: grid;
+  gap: 6px;
+  padding: 18px 20px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid var(--dialog-border);
+}
+
+.admin-dialog-preview__label {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--dialog-text-muted);
+}
+
+.admin-dialog-preview strong {
+  color: var(--dialog-text);
+  line-height: 1.7;
+  word-break: break-word;
+}
+
+.admin-dialog-preview span {
+  color: var(--dialog-text-muted);
+}
+
+.admin-dialog-close {
+  min-height: 52px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--dialog-text-muted);
+  font-weight: 700;
+}
+
+.admin-dialog-console {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  align-content: start;
+  gap: 18px;
+  padding: 32px;
+  min-height: 0;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.admin-dialog-console--stacked {
+  padding-top: 24px;
+}
+
+.admin-dialog-console--user-form {
+  grid-template-rows: minmax(0, 1fr) auto;
+  padding: 28px 32px 32px;
+  height: auto;
+}
+
+.admin-dialog-console--archive-detail {
+  grid-template-rows: minmax(0, 1fr) auto;
+  padding: 28px 32px 32px;
+}
+
+.admin-dialog-console--audit-detail {
+  grid-template-rows: minmax(0, 1fr) auto;
+  padding: 28px 32px 32px;
+}
+
+.admin-dialog-console--content-only {
+  grid-template-rows: minmax(0, 1fr);
+  padding-bottom: 28px;
+}
+
+.admin-dialog-console__header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.admin-dialog-console__header--inline {
+  justify-content: flex-start;
+}
+
+.admin-dialog-console__line {
+  height: 1px;
+  flex: 1;
+  background: var(--dialog-border);
+}
+
+.admin-form-card--dialog .admin-form-card__header > button,
+.admin-form-card--dialog .admin-form-actions button {
+  min-height: calc(var(--admin-scale) * 4.3);
+  min-width: clamp(calc(var(--admin-scale) * 8.6), 22vw, calc(var(--admin-scale) * 10.8));
+  padding: 0 calc(var(--admin-scale) * 1.28);
+  font-size: var(--admin-font-md);
+  font-weight: 800;
+  border-radius: calc(var(--admin-card-radius) * 1.08);
+}
+
+.admin-form-card--dialog .admin-form-actions {
+  gap: calc(var(--admin-gap-md) * 1.1);
+}
+
+.admin-form-card.admin-form-card--user
+  .admin-form-actions.admin-form-actions--dialog {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px !important;
+  padding-top: 18px;
+}
+
+.admin-form-card.admin-form-card--user .admin-user-form__action {
+  height: 88px;
+  min-height: 88px;
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: calc(var(--admin-font-md) * 1.08);
+  border: 0;
+  border-radius: 24px !important;
+  appearance: none;
+  overflow: hidden;
+}
+
+.admin-form-card.admin-form-card--user .admin-user-form__action--ghost {
+  border-radius: 24px !important;
 }
 
 .admin-form-card__header {
@@ -3126,7 +3507,12 @@ function stringifyDetail(value: unknown) {
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--admin-gap-md);
-  margin-bottom: var(--admin-gap-md);
+  margin-bottom: 0;
+  padding: clamp(1.4rem, 1rem + 1vw, 2rem) clamp(1.4rem, 1rem + 1vw, 2rem)
+    clamp(1rem, 0.8rem + 0.6vw, 1.35rem);
+  border-bottom: 1px solid rgba(215, 193, 180, 0.5);
+  background:
+    linear-gradient(180deg, rgba(255, 252, 249, 0.96), rgba(247, 238, 231, 0.9));
 }
 
 .admin-form-card__header h3,
@@ -3138,6 +3524,163 @@ function stringifyDetail(value: unknown) {
   margin-top: var(--admin-gap-xs);
   color: #7a5c50;
   font-size: var(--admin-font-sm);
+}
+
+.admin-form-card--dialog .admin-form-grid,
+.admin-form-card--dialog .archive-detail,
+.admin-form-card--dialog .empty-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0;
+}
+
+.admin-form-card--dialog .admin-form-grid {
+  margin-bottom: 0;
+  align-content: start;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.admin-form-card--dialog .admin-form-actions {
+  flex: 0 0 auto;
+  padding: 14px 0 0;
+  border-top: 1px solid rgba(215, 193, 180, 0.6);
+  background: transparent;
+}
+
+.admin-form-actions--dialog {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  justify-content: stretch;
+}
+
+.admin-form-grid--dialog {
+  min-height: 0;
+}
+
+.admin-user-console {
+  display: grid;
+  grid-template-rows: auto;
+  min-height: 0;
+  overflow: visible;
+  padding-right: 0;
+}
+
+.admin-user-console .admin-form-grid {
+  overflow: visible;
+  flex: 0 0 auto;
+}
+
+.admin-field-card {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-field-card__label {
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--dialog-text);
+}
+
+.admin-field-card__input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 72px;
+  padding: 0 18px;
+  border-radius: 20px;
+  background: var(--dialog-panel-muted);
+  border: 1px solid var(--dialog-border);
+  box-shadow:
+    0 0 0 4px rgba(181, 83, 57, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.admin-field-card__input-wrap--select {
+  position: relative;
+  min-height: 88px;
+  padding: 0 22px;
+}
+
+.admin-field-card__icon {
+  flex: 0 0 auto;
+  min-width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: rgba(181, 83, 57, 0.12);
+  color: var(--dialog-primary-strong);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.admin-field-card--wide {
+  grid-column: 1 / -1;
+}
+
+.admin-field-card__picker {
+  display: flex;
+  width: 100%;
+}
+
+.admin-field-card__picker-trigger {
+  width: 100%;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.admin-field-card__picker-trigger.is-active {
+  box-shadow:
+    0 0 0 4px rgba(181, 83, 57, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.admin-field-card__picker-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--dialog-text);
+  font-size: 1.08rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.admin-field-card__picker-caret {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  margin-right: 4px;
+  border-right: 2px solid rgba(107, 57, 44, 0.88);
+  border-bottom: 2px solid rgba(107, 57, 44, 0.88);
+  transform: rotate(45deg) translateY(-2px);
+}
+
+.admin-form-grid .admin-field-card input,
+.admin-form-grid .admin-field-card select,
+.admin-form-grid .admin-field-card textarea {
+  width: 100%;
+  min-height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--dialog-text);
+  font: inherit;
+  font-size: 1rem;
+  line-height: 1.7;
+  outline: none;
+  resize: none;
+  box-shadow: none;
+}
+
+.admin-form-grid .admin-field-card input::placeholder,
+.admin-form-grid .admin-field-card textarea::placeholder {
+  color: rgba(122, 92, 80, 0.72);
 }
 
 .filter-picker {
@@ -3186,6 +3729,44 @@ function stringifyDetail(value: unknown) {
   background: #f7eee8;
   color: #6f493c;
   font-size: var(--admin-font-sm);
+}
+
+.filter-picker__menu--dialog {
+  top: calc(100% + 10px);
+  width: 100%;
+  min-width: 0;
+  padding: 12px;
+  gap: 10px;
+  z-index: 120;
+}
+
+.filter-picker__menu--dialog button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 68px;
+  padding: 0 18px;
+  border: 1px solid rgba(214, 193, 180, 0.76);
+  border-radius: 18px;
+  background: #f7eee8;
+  color: #6f493c;
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.filter-picker__menu--dialog button.is-active {
+  background: #ecd3c7;
+  color: #6c372b;
+  border-color: rgba(181, 83, 57, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.28);
+}
+
+.filter-picker__menu--dialog button:disabled {
+  background: #f4ede8;
+  color: #b29689;
+  border-color: rgba(214, 193, 180, 0.56);
+  cursor: not-allowed;
 }
 
 .admin-table {
@@ -3252,8 +3833,10 @@ function stringifyDetail(value: unknown) {
 }
 
 .admin-row--user {
-  align-items: center;
+  align-items: stretch;
   flex-wrap: wrap;
+  padding-top: calc(var(--admin-scale) * 1.16);
+  padding-bottom: calc(var(--admin-scale) * 1.16);
 }
 
 .admin-row--user .admin-row__profile-content {
@@ -3262,6 +3845,7 @@ function stringifyDetail(value: unknown) {
   align-items: center;
   flex-wrap: wrap;
   gap: var(--admin-gap-sm) var(--admin-gap-md);
+  min-height: calc(var(--admin-scale) * 4.9);
 }
 
 .admin-row--user .admin-row__headline {
@@ -3282,24 +3866,33 @@ function stringifyDetail(value: unknown) {
 }
 
 .admin-row--user .admin-row__actions {
-  flex: 0 0 auto;
-  width: auto;
-  max-width: 100%;
+  flex: 0 0 clamp(
+    calc(var(--admin-scale) * 8.9),
+    14vw,
+    calc(var(--admin-scale) * 11.2)
+  );
+  width: clamp(
+    calc(var(--admin-scale) * 8.9),
+    14vw,
+    calc(var(--admin-scale) * 11.2)
+  );
+  max-width: none;
   min-width: 0;
-  flex-direction: row;
-  justify-content: flex-end;
-  align-items: center;
-  flex-wrap: wrap;
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: stretch;
+  flex-wrap: nowrap;
   gap: var(--admin-gap-sm);
 }
 
 .admin-row--user .admin-row__actions button {
-  flex: 0 0 auto;
-  width: auto;
-  min-width: var(--admin-action-inline);
+  width: 100%;
+  flex: 1 1 0;
+  min-width: 0;
   min-height: var(--admin-control-h-lg);
-  padding: 0 calc(var(--admin-scale) * 1.02);
-  font-size: var(--admin-font-md);
+  padding: 0 calc(var(--admin-scale) * 1.15);
+  font-size: var(--admin-font-sm);
+  font-weight: 700;
   border-radius: var(--admin-card-radius);
 }
 
@@ -3525,20 +4118,38 @@ function stringifyDetail(value: unknown) {
   gap: var(--admin-gap-md);
 }
 
+.archive-detail--dialog {
+  min-height: 0;
+  align-content: start;
+  overflow: auto;
+  padding-right: 6px;
+  grid-auto-rows: max-content;
+}
+
 .archive-detail__summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--admin-gap-sm);
+  gap: 18px;
 }
 
-.archive-detail__summary > div,
+.archive-detail__summary-card,
 .archive-detail__block,
 .archive-round,
 .archive-video {
-  padding: calc(var(--admin-scale) * 0.9);
-  border-radius: var(--admin-card-radius);
-  border: 1px solid rgba(215, 193, 180, 0.52);
-  background: #fffdfa;
+  padding: 22px;
+  border-radius: 20px;
+  border: 1px solid var(--dialog-border);
+  background: linear-gradient(180deg, rgba(255, 252, 249, 0.96), rgba(247, 238, 231, 0.9));
+  box-shadow:
+    0 0 0 4px rgba(181, 83, 57, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.archive-detail__summary-card {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 136px;
 }
 
 .archive-detail__summary strong,
@@ -3547,64 +4158,90 @@ function stringifyDetail(value: unknown) {
   margin: 0;
 }
 
+.archive-detail__summary strong,
+.archive-round h4 {
+  font-family: 'Manrope', sans-serif;
+  font-size: 1.18rem;
+  color: var(--dialog-text);
+  line-height: 1.35;
+}
+
 .meta-label {
   display: block;
-  margin-bottom: var(--admin-gap-xs);
-  color: #8a6b5e;
-  font-size: var(--admin-font-xs);
-  font-weight: 800;
+  margin-bottom: 2px;
+  color: var(--dialog-text-muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
 }
 
 .archive-detail__grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--admin-gap-sm);
+  gap: 18px;
 }
 
 .archive-detail pre {
   max-height: clamp(12rem, 24vh, 16rem);
   margin: 0;
+  padding: 18px 20px;
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
   color: #44352f;
   font-size: var(--admin-font-sm);
   line-height: 1.6;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(215, 193, 180, 0.66);
 }
 
-.archive-round header {
+.archive-round__header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: var(--admin-gap-sm);
-  margin-bottom: var(--admin-gap-sm);
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.archive-round__title {
+  display: grid;
+  gap: 6px;
 }
 
 .archive-video-list {
   display: grid;
-  gap: var(--admin-gap-sm);
-  margin-top: var(--admin-gap-sm);
+  gap: 18px;
+  margin-top: 18px;
 }
 
 .archive-video {
   display: grid;
-  gap: var(--admin-gap-sm);
+  gap: 16px;
 }
 
 .archive-video__meta {
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
-  gap: var(--admin-gap-xs);
+  gap: 8px;
   color: #6b5349;
   font-size: var(--admin-font-sm);
+}
+
+.archive-video__meta strong {
+  font-family: 'Manrope', sans-serif;
+  font-size: 1rem;
+  color: var(--dialog-text);
 }
 
 .archive-video__player {
   position: relative;
   overflow: hidden;
-  border-radius: var(--admin-card-radius);
+  border-radius: 18px;
   background: #1f1a17;
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .archive-video video {
@@ -3633,6 +4270,47 @@ function stringifyDetail(value: unknown) {
   line-height: 1.45;
   text-shadow: 0 2px 12px rgba(0, 0, 0, 0.36);
   white-space: normal;
+}
+
+.archive-detail__block--media :deep(.sensitive-image),
+.archive-detail__block--round :deep(.sensitive-image) {
+  display: block;
+  overflow: hidden;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(215, 193, 180, 0.66);
+}
+
+.archive-detail__block--media :deep(.sensitive-image img),
+.archive-detail__block--round :deep(.sensitive-image img) {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.empty-panel--compact {
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  min-height: 220px;
+  padding: 24px;
+  text-align: center;
+  border-radius: 20px;
+  border: 1px solid var(--dialog-border);
+  background: linear-gradient(180deg, rgba(255, 252, 249, 0.96), rgba(247, 238, 231, 0.9));
+  box-shadow:
+    0 0 0 4px rgba(181, 83, 57, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.empty-panel--compact strong {
+  font-family: 'Manrope', sans-serif;
+  font-size: 1.22rem;
+  color: var(--dialog-text);
+}
+
+.empty-panel--compact span {
+  color: var(--dialog-text-muted);
 }
 
 .admin-user-table-wrap {
@@ -3881,16 +4559,48 @@ function stringifyDetail(value: unknown) {
 
   .admin-dialog {
     align-items: flex-end;
-    padding: var(--admin-gap-sm);
+    padding: 16px;
   }
 
   .admin-form-card--dialog {
     width: 100%;
-    max-height: calc(100dvh - (var(--admin-gap-sm) * 2));
+    min-height: calc(100dvh - 32px);
+    max-height: calc(100dvh - 32px);
   }
 
-  .admin-form-card__header {
-    flex-direction: column;
+  .admin-form-card--user {
+    min-height: 0;
+    max-height: calc(100dvh - 32px);
+  }
+
+  .admin-dialog-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-dialog-hero,
+  .admin-dialog-console {
+    padding: 22px;
+  }
+
+  .admin-dialog-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-form-card--dialog .admin-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-form-card--dialog .admin-form-actions {
+    padding-top: 16px;
+  }
+
+  .admin-form-card--dialog .admin-form-actions button,
+  .admin-dialog-close {
+    width: 100%;
+  }
+
+  .admin-form-actions--dialog {
+    grid-template-columns: 1fr;
   }
 }
 </style>
