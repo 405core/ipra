@@ -492,4 +492,81 @@ describe('ManagementView settings tab', () => {
       status: '',
     });
   });
+
+  it('shows both admin and user records in management users list', async () => {
+    adminServiceMocks.listAdminUsersProtected.mockResolvedValue({
+      items: [createProtectedListItem('user-admin'), createProtectedListItem('user-staff')],
+      total: 2,
+      page: 1,
+      pageSize: 500,
+      filters: [
+        {
+          key: 'role',
+          label: '角色',
+          options: [
+            { value: 'admin', label: '管理员' },
+            { value: 'user', label: '员工' },
+          ],
+        },
+        {
+          key: 'status',
+          label: '状态',
+          options: [{ value: 'active', label: '启用' }],
+        },
+      ],
+    });
+
+    wrapper = mount(ManagementView);
+    await flushPromises();
+    await nextTick();
+
+    await findButton(wrapper, '管理用户').trigger('click');
+    await flushPromises();
+    await nextTick();
+
+    expect(wrapper.text()).toContain('第 1 / 1 页，显示 1-2 条，共 2 条');
+    expect(adminServiceMocks.listAdminUsersProtected).toHaveBeenCalledWith({
+      query: '',
+      role: '',
+      status: '',
+    });
+  });
+
+  it('refreshes users list when re-entering the users tab', async () => {
+    adminServiceMocks.listAdminUsersProtected
+      .mockResolvedValueOnce({
+        items: [createProtectedListItem('user-admin')],
+        total: 1,
+        page: 1,
+        pageSize: 500,
+        filters: [],
+      })
+      .mockResolvedValueOnce({
+        items: [createProtectedListItem('user-admin'), createProtectedListItem('user-staff')],
+        total: 2,
+        page: 1,
+        pageSize: 500,
+        filters: [],
+      });
+
+    wrapper = mount(ManagementView);
+    await flushPromises();
+    await nextTick();
+
+    await findButton(wrapper, '管理用户').trigger('click');
+    await flushPromises();
+    await nextTick();
+    expect(wrapper.text()).toContain('共 1 条');
+
+    await findButton(wrapper, '基础画像').trigger('click');
+    await flushPromises();
+    await nextTick();
+
+    await findButton(wrapper, '管理用户').trigger('click');
+    await flushPromises();
+    await nextTick();
+
+    expect(wrapper.text()).toContain('共 2 条');
+    expect(adminServiceMocks.listAdminUsersProtected).toHaveBeenCalledTimes(2);
+  });
 });

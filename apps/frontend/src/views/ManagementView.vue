@@ -479,6 +479,13 @@ async function ensureTabLoaded(tabKey: TabKey) {
     return;
   }
 
+  const loaded = await refreshTab(tabKey);
+  if (loaded) {
+    loadedTabs.value[tabKey] = true;
+  }
+}
+
+async function refreshTab(tabKey: TabKey) {
   let loaded = false;
   switch (tabKey) {
     case 'profiles':
@@ -500,10 +507,7 @@ async function ensureTabLoaded(tabKey: TabKey) {
       loaded = await loadInquirySettings();
       break;
   }
-
-  if (loaded) {
-    loadedTabs.value[tabKey] = true;
-  }
+  return loaded;
 }
 
 function clearScheduledReload(timerId: number | null) {
@@ -892,6 +896,10 @@ function handleDocumentKeydown(event: KeyboardEvent) {
 function selectTab(tabKey: TabKey) {
   activeTab.value = tabKey;
   openFilterPicker.value = null;
+  if (loadedTabs.value[tabKey]) {
+    void refreshTab(tabKey);
+    return;
+  }
   void ensureTabLoaded(tabKey);
 }
 

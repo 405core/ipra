@@ -49,7 +49,7 @@ func (h *Handler) handleAdminListUsers(c *gin.Context) {
 	filter := adminUserFilter{
 		Query:  strings.TrimSpace(c.Query("query")),
 		Role:   NormalizeRole(c.Query("role")),
-		Status: NormalizeStatus(c.Query("status")),
+		Status: parseAdminUserStatusFilter(c.Query("status")),
 	}
 	dbQuery := buildAdminUserQuery(h.db, filter)
 
@@ -92,7 +92,7 @@ func (h *Handler) handleAdminProtectedUsers(c *gin.Context) {
 	filter := adminUserFilter{
 		Query:  strings.TrimSpace(c.Query("query")),
 		Role:   NormalizeRole(c.Query("role")),
-		Status: NormalizeStatus(c.Query("status")),
+		Status: parseAdminUserStatusFilter(c.Query("status")),
 	}
 	dbQuery := buildAdminUserQuery(h.db, filter)
 
@@ -504,6 +504,14 @@ func parseAdminUserListLimit(raw string) int {
 		return 500
 	}
 	return limit
+}
+
+func parseAdminUserStatusFilter(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	return NormalizeStatus(trimmed)
 }
 
 func buildAdminUserQuery(db *gorm.DB, filter adminUserFilter) *gorm.DB {
