@@ -72,7 +72,7 @@ async def humanomni_summarize_window(
 def first_round_strategy(request: FirstRoundStrategyRequest) -> FirstRoundStrategyResponse:
     try:
         client = BusinessLlmClient()
-        prompt = load_prompt("first_round_strategy.zh.md")
+        prompt = load_prompt("first_round_strategy.base.zh.md")
         return client.generate_first_round_strategy(request, prompt)
     except NotImplementedError as exc:
         raise HTTPException(status_code=501, detail=str(exc)) from exc
@@ -86,7 +86,7 @@ def first_round_strategy(request: FirstRoundStrategyRequest) -> FirstRoundStrate
 def followup_guidance(request: FollowupGuidanceRequest) -> FollowupGuidanceResponse:
     try:
         client = BusinessLlmClient()
-        prompt = load_prompt("followup_guidance.zh.md")
+        prompt = load_prompt("followup_guidance.base.zh.md")
         return client.generate_followup_guidance(request, prompt)
     except NotImplementedError as exc:
         raise HTTPException(status_code=501, detail=str(exc)) from exc
