@@ -68,9 +68,19 @@ interface ProtectedArchiveListResponse {
 }
 
 export interface CreateInquiryArchiveVideoPayload {
+  videoKind?: string | null;
+  windowId?: string | null;
+  questionId?: string | null;
   fileName: string;
   contentType?: string | null;
   sizeBytes: number;
+  minioBucket?: string | null;
+  minioObjectKey?: string | null;
+  modal?: string | null;
+  startSeconds?: number | null;
+  endSeconds?: number | null;
+  humanOmniModel?: string | null;
+  humanOmniRawSummary?: string | null;
 }
 
 export interface CreateInquiryArchiveRoundPayload {
@@ -90,6 +100,16 @@ export interface UploadedArchiveVideoFilePayload {
   filename: string;
   contentType?: string | null;
   sizeBytes: number;
+  minioBucket?: string | null;
+  minioObjectKey?: string | null;
+  videoKind?: string | null;
+  windowId?: string | null;
+  questionId?: string | null;
+  modal?: string | null;
+  startSeconds?: number | null;
+  endSeconds?: number | null;
+  humanOmniModel?: string | null;
+  humanOmniRawSummary?: string | null;
 }
 
 export interface InquiryArchiveVideoUploadResult {

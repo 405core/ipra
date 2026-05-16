@@ -96,7 +96,7 @@ async function parseProtectedPayload<T>(response: Response, fallbackMessage: str
 export async function generateProtectedInquiryStrategy(payload: {
   sessionId: string;
   passengerId: string;
-  riskCaseContext?: Record<string, unknown>;
+  riskCaseContext?: object;
   constraints: Record<string, unknown>;
 }) {
   const response = await authorizedFetch('/api/inquiry/protected/strategy', {
