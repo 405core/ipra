@@ -783,7 +783,7 @@ describe('UserAskView realtime speech sampling', () => {
     ).not.toHaveBeenCalled();
   });
 
-  it('passes realtime Iflytek ASR text into followup guidance', async () => {
+  it('passes realtime Qwen3-ASR text into followup guidance', async () => {
     const wrapper = mount(UserAskView);
     mountedWrappers.push(wrapper);
     await enterInterviewStage(wrapper);
@@ -796,19 +796,19 @@ describe('UserAskView realtime speech sampling', () => {
     FakeWebSocket.latest?.receive({
       type: 'status',
       status: 'connected',
-      provider: 'iflytek-rtasr-llm',
+      provider: 'qwen3-asr',
     });
     FakeWebSocket.latest?.receive({
       type: 'transcript',
-      provider: 'iflytek-rtasr-llm',
-      model: 'rtasr-llm',
+      provider: 'qwen3-asr',
+      model: 'qwen3-asr',
       segmentId: 160,
       text: '我在西区货架继续清点',
       isFinal: true,
     });
     await nextTick();
 
-    expect(wrapper.text()).toContain('讯飞实时转写中');
+    expect(wrapper.text()).toContain('实时语音转写中');
 
     await finishSampling(wrapper);
     await findButton(wrapper, '进入下一轮').trigger('click');
@@ -824,7 +824,7 @@ describe('UserAskView realtime speech sampling', () => {
     });
   });
 
-  it('updates an interim Iflytek ASR segment and keeps the newest text', async () => {
+  it('updates an interim Qwen3-ASR segment and keeps the newest text', async () => {
     const wrapper = mount(UserAskView);
     mountedWrappers.push(wrapper);
     await enterInterviewStage(wrapper);
@@ -848,10 +848,10 @@ describe('UserAskView realtime speech sampling', () => {
     });
     await nextTick();
 
-    expect(wrapper.text()).toContain('正在接收讯飞转写结果');
+    expect(wrapper.text()).toContain('正在接收实时语音转写结果');
   });
 
-  it('deduplicates cumulative Iflytek ASR updates with different segment ids', async () => {
+  it('deduplicates cumulative Qwen3-ASR updates with different segment ids', async () => {
     const wrapper = mount(UserAskView);
     mountedWrappers.push(wrapper);
     await enterInterviewStage(wrapper);
@@ -881,10 +881,10 @@ describe('UserAskView realtime speech sampling', () => {
     });
     await nextTick();
 
-    expect(wrapper.text()).toContain('正在接收讯飞转写结果');
+    expect(wrapper.text()).toContain('正在接收实时语音转写结果');
   });
 
-  it('replaces corrected Iflytek ASR text instead of appending it', async () => {
+  it('replaces corrected Qwen3-ASR text instead of appending it', async () => {
     const wrapper = mount(UserAskView);
     mountedWrappers.push(wrapper);
     await enterInterviewStage(wrapper);
@@ -914,10 +914,10 @@ describe('UserAskView realtime speech sampling', () => {
     });
     await nextTick();
 
-    expect(wrapper.text()).toContain('正在接收讯飞转写结果');
+    expect(wrapper.text()).toContain('正在接收实时语音转写结果');
   });
 
-  it('deduplicates overlapped final and interim Iflytek ASR windows', async () => {
+  it('deduplicates overlapped final and interim Qwen3-ASR windows', async () => {
     const wrapper = mount(UserAskView);
     mountedWrappers.push(wrapper);
     await enterInterviewStage(wrapper);
@@ -945,7 +945,7 @@ describe('UserAskView realtime speech sampling', () => {
     });
     await nextTick();
 
-    expect(wrapper.text()).toContain('正在接收讯飞转写结果');
+    expect(wrapper.text()).toContain('正在接收实时语音转写结果');
 
     await finishSampling(wrapper);
     await findButton(wrapper, '\u8fdb\u5165\u4e0b\u4e00\u8f6e').trigger(
@@ -986,7 +986,7 @@ describe('UserAskView realtime speech sampling', () => {
     });
     await nextTick();
 
-    expect(wrapper.text()).toContain('正在接收讯飞转写结果');
+    expect(wrapper.text()).toContain('正在接收实时语音转写结果');
   });
 
   it('sends 16k pcm frames to the AI-Service ASR websocket', async () => {
@@ -1012,12 +1012,12 @@ describe('UserAskView realtime speech sampling', () => {
     await nextTick();
 
     expect(FakeWebSocket.latest?.url).toBe(
-      'ws://ai-service.test/v1/asr/iflytek/realtime',
+      'ws://ai-service.test/v1/asr/qwen3/realtime',
     );
     expect(FakeWebSocket.latest?.sent[0]).toBeInstanceOf(ArrayBuffer);
   });
 
-  it('keeps listening when Iflytek ASR returns an empty result', async () => {
+  it('keeps listening when Qwen3-ASR returns an empty result', async () => {
     const wrapper = mount(UserAskView);
     mountedWrappers.push(wrapper);
     await enterInterviewStage(wrapper);
