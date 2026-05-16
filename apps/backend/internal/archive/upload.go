@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	dbschema "ipra/backend/internal/database"
 )
 
 const maxArchiveVideoUploadBytes = 200 << 20
@@ -38,9 +37,19 @@ type archiveVideoUploadResponse struct {
 }
 
 type uploadedArchiveVideoFile struct {
-	Filename    string `json:"filename"`
-	ContentType string `json:"contentType"`
-	SizeBytes   int64  `json:"sizeBytes"`
+	Filename            string   `json:"filename"`
+	ContentType         string   `json:"contentType"`
+	SizeBytes           int64    `json:"sizeBytes"`
+	MinIOBucket         string   `json:"minioBucket"`
+	MinIOObjectKey      string   `json:"minioObjectKey"`
+	VideoKind           string   `json:"videoKind,omitempty"`
+	WindowID            string   `json:"windowId,omitempty"`
+	QuestionID          string   `json:"questionId,omitempty"`
+	Modal               string   `json:"modal,omitempty"`
+	StartSeconds        *float64 `json:"startSeconds,omitempty"`
+	EndSeconds          *float64 `json:"endSeconds,omitempty"`
+	HumanOmniModel      string   `json:"humanOmniModel,omitempty"`
+	HumanOmniRawSummary string   `json:"humanOmniRawSummary,omitempty"`
 }
 
 func (h *Handler) handleUploadVideo(c *gin.Context) {
@@ -98,41 +107,25 @@ func (h *Handler) handleUploadVideo(c *gin.Context) {
 		return
 	}
 
-	now := time.Now().UTC()
 	recordedFileName := firstNonEmpty(strings.TrimSpace(c.PostForm("recordedFileName")), fileHeader.Filename)
-	video := dbschema.InquiryArchiveVideo{
-		ArchiveID:           0,
-		ArchiveRoundID:      nil,
-		VideoKind:           firstNonEmpty(strings.TrimSpace(c.PostForm("videoKind")), "round_clip"),
-		SessionID:           sessionID,
-		WindowID:            optionalString(c.PostForm("windowId")),
-		QuestionID:          optionalString(c.PostForm("questionId")),
-		VideoURL:            "",
-		MinIOBucket:         bucket,
-		MinIOObjectKey:      objectKey,
-		FileName:            trimToLimit(recordedFileName, 255),
-		ContentType:         trimToLimit(contentType, 128),
-		SizeBytes:           fileHeader.Size,
-		Modal:               firstNonEmpty(strings.TrimSpace(c.PostForm("modal")), "video_audio"),
-		StartSeconds:        parseArchiveOptionalFloat(c.PostForm("startSeconds")),
-		EndSeconds:          parseArchiveOptionalFloat(c.PostForm("endSeconds")),
-		HumanOmniModel:      trimToLimit(c.PostForm("humanOmniModel"), 128),
-		HumanOmniRawSummary: "",
-		UploadPayload:       jsonOrDefault(nil, "{}"),
-		CreatedAt:           now,
-	}
-	if h.db != nil {
-		if err := h.db.WithContext(c.Request.Context()).Create(&video).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"message": "登记归档视频失败"})
-			return
-		}
-	}
+	videoKind := firstNonEmpty(strings.TrimSpace(c.PostForm("videoKind")), "round_clip")
+	modal := firstNonEmpty(strings.TrimSpace(c.PostForm("modal")), "video_audio")
 
 	c.JSON(http.StatusCreated, archiveVideoUploadResponse{
 		UploadedFile: uploadedArchiveVideoFile{
-			Filename:    firstNonEmpty(recordedFileName, filepath.Base(objectKey)),
-			ContentType: contentType,
-			SizeBytes:   fileHeader.Size,
+			Filename:            firstNonEmpty(recordedFileName, filepath.Base(objectKey)),
+			ContentType:         contentType,
+			SizeBytes:           fileHeader.Size,
+			MinIOBucket:         bucket,
+			MinIOObjectKey:      objectKey,
+			VideoKind:           videoKind,
+			WindowID:            strings.TrimSpace(c.PostForm("windowId")),
+			QuestionID:          strings.TrimSpace(c.PostForm("questionId")),
+			Modal:               modal,
+			StartSeconds:        parseArchiveOptionalFloat(c.PostForm("startSeconds")),
+			EndSeconds:          parseArchiveOptionalFloat(c.PostForm("endSeconds")),
+			HumanOmniModel:      trimToLimit(c.PostForm("humanOmniModel"), 128),
+			HumanOmniRawSummary: strings.TrimSpace(c.PostForm("humanOmniRawSummary")),
 		},
 	})
 }

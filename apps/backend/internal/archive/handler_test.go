@@ -175,6 +175,12 @@ func TestUploadVideoStoresObjectInConfiguredBucket(t *testing.T) {
 	if got.UploadedFile.Filename != "round-1.mp4" {
 		t.Fatalf("filename = %q", got.UploadedFile.Filename)
 	}
+	if got.UploadedFile.MinIOBucket != "ipra-videos" {
+		t.Fatalf("minioBucket = %q", got.UploadedFile.MinIOBucket)
+	}
+	if got.UploadedFile.MinIOObjectKey != "humanomni-windows/2026/05/12/inq-20260512-abc123-window-1.mp4" {
+		t.Fatalf("minioObjectKey = %q", got.UploadedFile.MinIOObjectKey)
+	}
 }
 
 type recordingStorage struct {

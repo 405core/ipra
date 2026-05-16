@@ -316,6 +316,37 @@ func TestBuildProtectedRiskCaseContext(t *testing.T) {
 	}
 }
 
+func TestBuildHumanOmniWindowsRestoresRawSummaryForAIService(t *testing.T) {
+	handler := NewHandler()
+	session := &ProtectedSession{
+		Rounds: []*ProtectedRound{
+			{
+				HumanOmniSummary: "The person is speaking and appears slightly tense.",
+				HumanOmniWindow: map[string]any{
+					"windowId":     "window-1",
+					"questionId":   "round-1",
+					"startSeconds": 0,
+					"endSeconds":   21,
+					"modal":        "video_audio",
+					"modelName":    "HumanOmni0.5",
+				},
+			},
+		},
+	}
+
+	got := handler.buildHumanOmniWindows(session)
+
+	if len(got) != 1 {
+		t.Fatalf("expected one HumanOmni window, got %d", len(got))
+	}
+	if got[0]["rawSummary"] != "The person is speaking and appears slightly tense." {
+		t.Fatalf("rawSummary = %v, want restored summary", got[0]["rawSummary"])
+	}
+	if _, ok := session.Rounds[0].HumanOmniWindow["rawSummary"]; ok {
+		t.Fatal("buildHumanOmniWindows should not mutate the protected round window snapshot")
+	}
+}
+
 func newTestRouter() *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()

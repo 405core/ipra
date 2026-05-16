@@ -1101,8 +1101,37 @@ function createProtectedInterviewRound(
     actionObservations: existing?.actionObservations ?? [],
     recordedFileName:
       snapshot.recordedFileName ?? existing?.recordedFileName ?? '',
-    uploadedFile: snapshot.uploadedFile ?? existing?.uploadedFile ?? null,
+    uploadedFile: mergeUploadedFile(
+      snapshot.uploadedFile,
+      existing?.uploadedFile,
+    ),
     asrText: existing?.asrText ?? '',
+  };
+}
+
+function mergeUploadedFile(
+  snapshotFile: UploadedArchiveVideoFilePayload | null | undefined,
+  existingFile: UploadedArchiveVideoFilePayload | null | undefined,
+): UploadedArchiveVideoFilePayload | null {
+  if (!snapshotFile) {
+    return existingFile ?? null;
+  }
+  if (!existingFile) {
+    return snapshotFile;
+  }
+  return {
+    ...snapshotFile,
+    minioBucket: snapshotFile.minioBucket ?? existingFile.minioBucket,
+    minioObjectKey: snapshotFile.minioObjectKey ?? existingFile.minioObjectKey,
+    videoKind: snapshotFile.videoKind ?? existingFile.videoKind,
+    windowId: snapshotFile.windowId ?? existingFile.windowId,
+    questionId: snapshotFile.questionId ?? existingFile.questionId,
+    modal: snapshotFile.modal ?? existingFile.modal,
+    startSeconds: snapshotFile.startSeconds ?? existingFile.startSeconds,
+    endSeconds: snapshotFile.endSeconds ?? existingFile.endSeconds,
+    humanOmniModel: snapshotFile.humanOmniModel ?? existingFile.humanOmniModel,
+    humanOmniRawSummary:
+      snapshotFile.humanOmniRawSummary ?? existingFile.humanOmniRawSummary,
   };
 }
 
@@ -2378,9 +2407,19 @@ function buildArchiveVideos(
 
   return [
     {
+      videoKind: uploadedFile.videoKind || 'round_clip',
+      windowId: uploadedFile.windowId,
+      questionId: uploadedFile.questionId,
       fileName: uploadedFile.filename,
       contentType: uploadedFile.contentType || 'video/mp4',
       sizeBytes: uploadedFile.sizeBytes,
+      minioBucket: uploadedFile.minioBucket,
+      minioObjectKey: uploadedFile.minioObjectKey,
+      modal: uploadedFile.modal || 'video_audio',
+      startSeconds: uploadedFile.startSeconds,
+      endSeconds: uploadedFile.endSeconds,
+      humanOmniModel: uploadedFile.humanOmniModel,
+      humanOmniRawSummary: uploadedFile.humanOmniRawSummary,
     },
   ];
 }

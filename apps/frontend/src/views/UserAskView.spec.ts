@@ -607,6 +607,14 @@ describe('UserAskView realtime speech sampling', () => {
         filename: 'round-1.mp4',
         contentType: 'video/mp4',
         sizeBytes: 4,
+        minioBucket: 'ipra-videos',
+        minioObjectKey: 'humanomni-windows/2026/05/16/session-window-1.mp4',
+        videoKind: 'round_clip',
+        windowId: 'window-1',
+        questionId: 'q-1',
+        modal: 'video_audio',
+        startSeconds: 0,
+        endSeconds: 1,
       },
     });
 
@@ -1171,6 +1179,9 @@ describe('UserAskView realtime speech sampling', () => {
               fileName: 'round-1.mp4',
               contentType: 'video/mp4',
               sizeBytes: 4,
+              minioBucket: 'ipra-videos',
+              minioObjectKey:
+                'humanomni-windows/2026/05/16/session-window-1.mp4',
             },
           ],
         },

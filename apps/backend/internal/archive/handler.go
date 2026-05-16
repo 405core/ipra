@@ -76,6 +76,8 @@ type archiveVideoRequest struct {
 	FileName            string   `json:"fileName"`
 	ContentType         string   `json:"contentType"`
 	SizeBytes           int64    `json:"sizeBytes"`
+	MinIOBucket         string   `json:"minioBucket"`
+	MinIOObjectKey      string   `json:"minioObjectKey"`
 	Modal               string   `json:"modal"`
 	StartSeconds        *float64 `json:"startSeconds"`
 	EndSeconds          *float64 `json:"endSeconds"`
@@ -616,18 +618,13 @@ func (h *Handler) buildProtectedArchiveDetail(
 func (h *Handler) statAllVideos(ctx context.Context, payload createArchiveRequest) error {
 	for _, round := range payload.Rounds {
 		for _, video := range round.Videos {
-			resolvedVideo, err := h.findVideoBySessionAndFileName(ctx, payload.SessionID, video.FileName)
+			resolvedVideo, err := h.resolveArchiveVideoObject(ctx, payload.SessionID, video)
 			if err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					return fmt.Errorf("归档视频不存在：%s", strings.TrimSpace(video.FileName))
-				}
-				return fmt.Errorf("查询归档视频失败：%w", err)
+				return err
 			}
-			bucket := strings.TrimSpace(resolvedVideo.MinIOBucket)
-			objectKey := strings.TrimSpace(resolvedVideo.MinIOObjectKey)
-			if err := h.storage.StatObject(ctx, bucket, objectKey); err != nil {
+			if err := h.storage.StatObject(ctx, resolvedVideo.bucket, resolvedVideo.objectKey); err != nil {
 				if errors.Is(err, errObjectNotFound) {
-					return fmt.Errorf("MinIO 视频对象不存在：%s/%s", bucket, objectKey)
+					return fmt.Errorf("MinIO 视频对象不存在：%s/%s: %w", resolvedVideo.bucket, resolvedVideo.objectKey, err)
 				}
 				return fmt.Errorf("校验 MinIO 视频对象失败：%w", err)
 			}
@@ -717,7 +714,7 @@ func (h *Handler) createArchive(ctx context.Context, claims auth.Claims, payload
 			}
 
 			for _, videoPayload := range roundPayload.Videos {
-				videoFile, err := h.findVideoBySessionAndFileName(ctx, payload.SessionID, videoPayload.FileName)
+				resolvedVideo, err := h.resolveArchiveVideoObject(ctx, payload.SessionID, videoPayload)
 				if err != nil {
 					return err
 				}
@@ -730,8 +727,8 @@ func (h *Handler) createArchive(ctx context.Context, claims auth.Claims, payload
 					WindowID:            optionalString(videoPayload.WindowID),
 					QuestionID:          optionalString(videoPayload.QuestionID),
 					VideoURL:            "",
-					MinIOBucket:         videoFile.MinIOBucket,
-					MinIOObjectKey:      videoFile.MinIOObjectKey,
+					MinIOBucket:         resolvedVideo.bucket,
+					MinIOObjectKey:      resolvedVideo.objectKey,
 					FileName:            trimToLimit(videoPayload.FileName, 255),
 					ContentType:         trimToLimit(videoPayload.ContentType, 128),
 					SizeBytes:           maxInt64(videoPayload.SizeBytes, 0),
@@ -863,6 +860,47 @@ func (h *Handler) findVideoBySessionAndFileName(ctx context.Context, sessionID s
 		return dbschema.InquiryArchiveVideo{}, err
 	}
 	return video, nil
+}
+
+type resolvedArchiveVideoObject struct {
+	bucket    string
+	objectKey string
+}
+
+func (h *Handler) resolveArchiveVideoObject(
+	ctx context.Context,
+	sessionID string,
+	video archiveVideoRequest,
+) (resolvedArchiveVideoObject, error) {
+	objectKey := strings.TrimSpace(video.MinIOObjectKey)
+	if objectKey != "" {
+		safeSessionID := archiveSafeObjectName(sessionID)
+		if safeSessionID != "" && !strings.Contains(objectKey, "/"+safeSessionID+"-") {
+			return resolvedArchiveVideoObject{}, fmt.Errorf("视频 minioObjectKey 与 sessionId 不匹配：%s", objectKey)
+		}
+		bucket := firstNonEmpty(strings.TrimSpace(video.MinIOBucket), strings.TrimSpace(h.videoBucket))
+		if bucket == "" {
+			return resolvedArchiveVideoObject{}, errors.New("视频 minioBucket 不能为空")
+		}
+		return resolvedArchiveVideoObject{bucket: bucket, objectKey: objectKey}, nil
+	}
+
+	if h.db == nil {
+		return resolvedArchiveVideoObject{}, fmt.Errorf("视频 minioObjectKey 不能为空：%s", strings.TrimSpace(video.FileName))
+	}
+	resolvedVideo, err := h.findVideoBySessionAndFileName(ctx, sessionID, video.FileName)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return resolvedArchiveVideoObject{}, fmt.Errorf("归档视频不存在：%s", strings.TrimSpace(video.FileName))
+		}
+		return resolvedArchiveVideoObject{}, fmt.Errorf("查询归档视频失败：%w", err)
+	}
+	bucket := strings.TrimSpace(resolvedVideo.MinIOBucket)
+	objectKey = strings.TrimSpace(resolvedVideo.MinIOObjectKey)
+	if bucket == "" || objectKey == "" {
+		return resolvedArchiveVideoObject{}, fmt.Errorf("归档视频对象信息不完整：%s", strings.TrimSpace(video.FileName))
+	}
+	return resolvedArchiveVideoObject{bucket: bucket, objectKey: objectKey}, nil
 }
 
 func validateCreateArchiveRequest(payload createArchiveRequest) error {

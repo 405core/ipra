@@ -593,7 +593,7 @@ func (h *Handler) handleProtectedFollowup(c *gin.Context) {
 	memoryContext := h.loadMemoryContext(session.SessionID, session.PassengerID)
 	aiPayload := map[string]any{
 		"sessionId":          session.SessionID,
-		"roundNo":            currentRound.RoundNumber,
+		"roundNo":            currentRound.RoundNumber + 1,
 		"passengerProfile":   session.PassengerProfile,
 		"tripProfile":        session.TripProfile,
 		"qaHistory":          h.buildQaHistory(session),
@@ -1789,9 +1789,16 @@ func (h *Handler) buildQaHistory(session *ProtectedSession) []map[string]any {
 func (h *Handler) buildHumanOmniWindows(session *ProtectedSession) []map[string]any {
 	result := make([]map[string]any, 0, len(session.Rounds))
 	for _, round := range session.Rounds {
-		if len(round.HumanOmniWindow) > 0 {
-			result = append(result, cloneMap(round.HumanOmniWindow))
+		if len(round.HumanOmniWindow) == 0 {
+			continue
 		}
+		window := cloneMap(round.HumanOmniWindow)
+		if strings.TrimSpace(extractString(window["rawSummary"])) == "" {
+			if summary := strings.TrimSpace(round.HumanOmniSummary); summary != "" {
+				window["rawSummary"] = summary
+			}
+		}
+		result = append(result, window)
 	}
 	return result
 }
