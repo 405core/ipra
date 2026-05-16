@@ -121,8 +121,10 @@ type ProtectedRound struct {
 	QuestionCount      int
 	PromptBlock        *sensitive.ListItem
 	SummaryBlock       *sensitive.ListItem
+	TranscriptBlock    *sensitive.ListItem
 	PromptAsset        *sensitive.AssetRef
 	SummaryAsset       *sensitive.AssetRef
+	TranscriptAsset    *sensitive.AssetRef
 	Status             string
 	DurationSeconds    int
 	RecordedFileName   string
@@ -152,8 +154,10 @@ type ProtectedRoundSnapshot struct {
 	Status           string                  `json:"status"`
 	PromptBlock      *ProtectedBlockSnapshot `json:"promptBlock,omitempty"`
 	SummaryBlock     *ProtectedBlockSnapshot `json:"summaryBlock,omitempty"`
+	TranscriptBlock  *ProtectedBlockSnapshot `json:"transcriptBlock,omitempty"`
 	PromptAsset      *sensitive.AssetRef     `json:"promptAsset,omitempty"`
 	SummaryAsset     *sensitive.AssetRef     `json:"summaryAsset,omitempty"`
+	TranscriptAsset  *sensitive.AssetRef     `json:"transcriptAsset,omitempty"`
 	RecordedFileName string                  `json:"recordedFileName,omitempty"`
 	UploadedFile     map[string]any          `json:"uploadedFile,omitempty"`
 	HumanOmniWindow  map[string]any          `json:"humanOmniWindow,omitempty"`
@@ -555,6 +559,9 @@ func (h *Handler) handleProtectedWindowSummary(c *gin.Context) {
 		extractStringMap(aiResponse, "humanOmniWindow", "rawSummary"),
 		extractStringMap(aiResponse, "humanOmni", "rawSummary"),
 	)
+	transcriptAsset := h.renderRoundTranscriptAsset(c, claims, round)
+	round.TranscriptAsset = &transcriptAsset
+	round.TranscriptBlock = h.buildRoundTranscriptBlock(c, claims, round, transcriptAsset)
 	round.Status = "uploaded"
 	summaryAsset := h.renderRoundSummaryAsset(c, claims, round)
 	round.SummaryAsset = &summaryAsset
@@ -1182,8 +1189,10 @@ func (h *Handler) snapshotProtectedSession(sessionID string) ProtectedSessionSna
 			Status:           round.Status,
 			PromptBlock:      toProtectedBlockSnapshot(round.PromptBlock),
 			SummaryBlock:     toProtectedBlockSnapshot(round.SummaryBlock),
+			TranscriptBlock:  toProtectedBlockSnapshot(round.TranscriptBlock),
 			PromptAsset:      round.PromptAsset,
 			SummaryAsset:     round.SummaryAsset,
+			TranscriptAsset:  round.TranscriptAsset,
 			RecordedFileName: round.RecordedFileName,
 			UploadedFile:     sanitizeUploadedFile(cloneMap(round.UploadedFile)),
 			HumanOmniWindow:  sanitizeHumanOmniWindow(cloneMap(round.HumanOmniWindow)),
@@ -1453,6 +1462,24 @@ func (h *Handler) renderRoundSummaryAsset(c *gin.Context, claims auth.Claims, ro
 	return h.sensitive.Put(claims.UserID, document, sensitive.PresetDialog, sensitive.FormatPNG, buildInquiryWatermark(c, claims, "home:ask:summary"))
 }
 
+func (h *Handler) renderRoundTranscriptAsset(c *gin.Context, claims auth.Claims, round *ProtectedRound) sensitive.AssetRef {
+	transcript := roundTranscriptText(round)
+	document := sensitive.Document{
+		Eyebrow:  "辅助问询",
+		Title:    round.Title + " 语音转写",
+		Subtitle: "本轮旅客回答语音转文字内容",
+		Sections: []sensitive.Section{
+			{
+				Heading: "语音转写内容",
+				Lines: compactInquiryStrings([]string{
+					firstNonEmptyInquiry(transcript, "未识别到有效语音转写内容。"),
+				}),
+			},
+		},
+	}
+	return h.sensitive.Put(claims.UserID, document, sensitive.PresetDialog, sensitive.FormatPNG, buildInquiryWatermark(c, claims, "home:ask:transcript"))
+}
+
 func (h *Handler) renderJudgementAsset(c *gin.Context, claims auth.Claims, response map[string]any, session *ProtectedSession) sensitive.AssetRef {
 	document := sensitive.Document{
 		Eyebrow:  "辅助问询",
@@ -1501,6 +1528,44 @@ func (h *Handler) buildStrategyBlock(
 			extractString(response["operatorNote"]),
 		}), sensitive.TagToneMuted, "home:ask:strategy:note"),
 	}
+}
+
+func (h *Handler) buildRoundTranscriptBlock(
+	c *gin.Context,
+	claims auth.Claims,
+	round *ProtectedRound,
+	asset sensitive.AssetRef,
+) *sensitive.ListItem {
+	transcript := roundTranscriptText(round)
+	return &sensitive.ListItem{
+		ID:    round.ID + "-transcript",
+		Asset: asset,
+		Facts: []sensitive.FactRef{
+			h.buildInlineFact(c, claims, "转写状态", firstNonEmptyInquiry(extractString(round.ASR["status"]), "not_connected"), "home:ask:transcript"),
+			h.buildInlineFact(c, claims, "服务", firstNonEmptyInquiry(extractString(round.ASR["provider"]), "-"), "home:ask:transcript"),
+		},
+		Notes: h.buildInlineTags(c, claims, compactInquiryStrings([]string{
+			truncateInquiryText(transcript, 80),
+		}), sensitive.TagToneMuted, "home:ask:transcript:note"),
+	}
+}
+
+func roundTranscriptText(round *ProtectedRound) string {
+	if round == nil {
+		return ""
+	}
+	if text := strings.TrimSpace(extractString(round.ASR["text"])); text != "" {
+		return text
+	}
+	return strings.TrimSpace(round.AnswerText)
+}
+
+func truncateInquiryText(value string, limit int) string {
+	runes := []rune(strings.TrimSpace(value))
+	if limit <= 0 || len(runes) <= limit {
+		return string(runes)
+	}
+	return string(runes[:limit]) + "..."
 }
 
 func (h *Handler) buildMemoryBlock(

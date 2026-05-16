@@ -27,8 +27,10 @@ export interface ProtectedInquiryRoundSnapshot {
   status: string;
   promptBlock?: ProtectedInquiryBlock;
   summaryBlock?: ProtectedInquiryBlock;
+  transcriptBlock?: ProtectedInquiryBlock;
   promptAsset?: ProtectedAssetRef;
   summaryAsset?: ProtectedAssetRef;
+  transcriptAsset?: ProtectedAssetRef;
   recordedFileName?: string;
   uploadedFile?: UploadedWindowFilePayload;
   humanOmniWindow?: HumanOmniWindowSummaryPayload;
