@@ -140,8 +140,10 @@ interface InterviewRound {
   questionCount: number;
   promptBlock: ProtectedInquiryBlock | null;
   summaryBlock: ProtectedInquiryBlock | null;
+  transcriptBlock: ProtectedInquiryBlock | null;
   promptAsset: ProtectedAssetRef | null;
   summaryAsset: ProtectedAssetRef | null;
+  transcriptAsset: ProtectedAssetRef | null;
   focus: string;
   strategyNote: string;
   signal: string;
@@ -1083,8 +1085,12 @@ function createProtectedInterviewRound(
     questionCount: snapshot.questionCount,
     promptBlock: snapshot.promptBlock ?? existing?.promptBlock ?? null,
     summaryBlock: snapshot.summaryBlock ?? existing?.summaryBlock ?? null,
+    transcriptBlock:
+      snapshot.transcriptBlock ?? existing?.transcriptBlock ?? null,
     promptAsset: snapshot.promptAsset ?? existing?.promptAsset ?? null,
     summaryAsset: snapshot.summaryAsset ?? existing?.summaryAsset ?? null,
+    transcriptAsset:
+      snapshot.transcriptAsset ?? existing?.transcriptAsset ?? null,
     focus: existing?.focus || snapshot.title,
     strategyNote:
       existing?.strategyNote || '服务端返回的问题与提示已转为带水印图片展示',
@@ -1270,8 +1276,10 @@ function buildOpeningRound() {
     questionCount: 0,
     promptBlock: null,
     summaryBlock: null,
+    transcriptBlock: null,
     promptAsset: null,
     summaryAsset: null,
+    transcriptAsset: null,
     focus: '首轮关注：出境目的与行程一致性',
     strategyNote: '系统已基于旅客画像启动首轮事实核验。',
     signal: '对象需先对出境目的、行程安排和资金来源给出稳定说明。',
@@ -1337,8 +1345,10 @@ function buildFollowUpRoundFromResponse(
     questionCount: questions.length,
     promptBlock: null,
     summaryBlock: null,
+    transcriptBlock: null,
     promptAsset: null,
     summaryAsset: null,
+    transcriptAsset: null,
     focus,
     strategyNote:
       response.operatorNote ||
@@ -3817,6 +3827,33 @@ onBeforeUnmount(() => {
                   "
                   alt="当前轮问题包敏感图片"
                 />
+
+                <div class="panel-subhead">
+                  <strong>语音转写内容</strong>
+                  <span>{{
+                    currentRound.transcriptBlock?.asset ||
+                    currentRound.transcriptAsset
+                      ? '已生成'
+                      : '待生成'
+                  }}</span>
+                </div>
+
+                <SensitiveAssetImage
+                  v-if="
+                    currentRound.transcriptBlock?.asset ||
+                    currentRound.transcriptAsset
+                  "
+                  :src="
+                    currentRound.transcriptBlock?.asset?.url ||
+                    currentRound.transcriptAsset!.url
+                  "
+                  alt="当前轮语音转写敏感图片"
+                />
+                <div v-else class="empty-panel empty-panel--compact">
+                  <strong>尚未生成语音转写内容</strong>
+                  <span>完成采样并上传后，这里会展示带水印的语音转写内容。</span>
+                </div>
+
                 <div class="panel-subhead">
                   <strong>受保护摘要</strong>
                   <span>{{

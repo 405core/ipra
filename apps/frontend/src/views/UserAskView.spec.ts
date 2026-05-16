@@ -3,6 +3,7 @@
 import { mount, type VueWrapper } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
+import SensitiveAssetImage from '../app/SensitiveAssetImage.vue';
 import UserAskView from './UserAskView.vue';
 
 const aiServiceMocks = vi.hoisted(() => ({
@@ -482,6 +483,7 @@ describe('UserAskView realtime speech sampling', () => {
               status: 'uploaded',
               promptAsset: createProtectedAsset('prompt-2'),
               summaryAsset: createProtectedAsset('summary-2'),
+              transcriptAsset: createProtectedAsset('transcript-2'),
               recordedFileName: 'round-2.mp4',
               uploadedFile: {
                 filename: 'round-2.mp4',
@@ -506,6 +508,7 @@ describe('UserAskView realtime speech sampling', () => {
                 status: 'uploaded',
                 promptAsset: createProtectedAsset('prompt-1'),
                 summaryAsset: createProtectedAsset('summary-1'),
+                transcriptAsset: createProtectedAsset('transcript-1'),
                 recordedFileName: 'round-1.mp4',
                 uploadedFile: {
                   filename: 'round-1.mp4',
@@ -539,6 +542,7 @@ describe('UserAskView realtime speech sampling', () => {
             status: 'uploaded',
             promptAsset: createProtectedAsset('prompt-1'),
             summaryAsset: createProtectedAsset('summary-1'),
+            transcriptAsset: createProtectedAsset('transcript-1'),
             recordedFileName: 'round-1.mp4',
             uploadedFile: {
               filename: 'round-1.mp4',
@@ -582,6 +586,7 @@ describe('UserAskView realtime speech sampling', () => {
           status: 'uploaded',
           promptAsset: createProtectedAsset('prompt-1'),
           summaryAsset: createProtectedAsset('summary-1'),
+          transcriptAsset: createProtectedAsset('transcript-1'),
           recordedFileName: 'round-1.mp4',
           uploadedFile: {
             filename: 'round-1.mp4',
@@ -652,6 +657,7 @@ describe('UserAskView realtime speech sampling', () => {
         status: 'uploaded',
         promptAsset: createProtectedAsset('prompt-2'),
         summaryAsset: createProtectedAsset('summary-2'),
+        transcriptAsset: createProtectedAsset('transcript-2'),
       },
       historicalRounds: [
         {
@@ -662,6 +668,7 @@ describe('UserAskView realtime speech sampling', () => {
           status: 'uploaded',
           promptAsset: createProtectedAsset('prompt-1'),
           summaryAsset: createProtectedAsset('summary-1'),
+          transcriptAsset: createProtectedAsset('transcript-1'),
         },
       ],
       completedRounds: 2,
@@ -795,6 +802,7 @@ describe('UserAskView realtime speech sampling', () => {
     const wrapper = mount(UserAskView);
     mountedWrappers.push(wrapper);
     await enterInterviewStage(wrapper);
+    expect(wrapper.text()).toContain('尚未生成语音转写内容');
 
     await findButton(wrapper, '开始采样').trigger('click');
     await flushPromises();
@@ -819,6 +827,14 @@ describe('UserAskView realtime speech sampling', () => {
     expect(wrapper.text()).toContain('实时语音转写中');
 
     await finishSampling(wrapper);
+    expect(wrapper.text()).toContain('语音转写内容');
+    expect(
+      wrapper
+        .findAllComponents(SensitiveAssetImage)
+        .some(
+          (image) => image.props('src') === '/api/sensitive-assets/transcript-1',
+        ),
+    ).toBe(true);
     await findButton(wrapper, '进入下一轮').trigger('click');
     await flushPromises();
 

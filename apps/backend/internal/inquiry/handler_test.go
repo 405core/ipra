@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"ipra/backend/internal/profile"
+	"ipra/backend/internal/sensitive"
 )
 
 func TestASRTranscribeUsesFallbackTranscript(t *testing.T) {
@@ -344,6 +345,65 @@ func TestBuildHumanOmniWindowsRestoresRawSummaryForAIService(t *testing.T) {
 	}
 	if _, ok := session.Rounds[0].HumanOmniWindow["rawSummary"]; ok {
 		t.Fatal("buildHumanOmniWindows should not mutate the protected round window snapshot")
+	}
+}
+
+func TestRoundTranscriptTextPrefersASRText(t *testing.T) {
+	round := &ProtectedRound{
+		AnswerText: "fallback answer",
+		ASR: map[string]any{
+			"text": "  qwen3 transcript  ",
+		},
+	}
+
+	if got := roundTranscriptText(round); got != "qwen3 transcript" {
+		t.Fatalf("roundTranscriptText() = %q, want ASR text", got)
+	}
+}
+
+func TestRoundTranscriptTextFallsBackToAnswerText(t *testing.T) {
+	round := &ProtectedRound{
+		AnswerText: "fallback answer",
+		ASR: map[string]any{
+			"text": " ",
+		},
+	}
+
+	if got := roundTranscriptText(round); got != "fallback answer" {
+		t.Fatalf("roundTranscriptText() = %q, want answer text", got)
+	}
+}
+
+func TestProtectedSessionSnapshotIncludesTranscriptAsset(t *testing.T) {
+	handler := NewHandler()
+	handler.protectedSessions["session-1"] = &ProtectedSession{
+		SessionID:      "session-1",
+		OwnerUserID:    7,
+		CurrentRoundID: "round-1",
+		Rounds: []*ProtectedRound{
+			{
+				ID:          "round-1",
+				RoundNumber: 1,
+				Title:       "round 1",
+				Status:      "uploaded",
+				TranscriptAsset: &sensitive.AssetRef{
+					ID:      "transcript-asset",
+					URL:     "/api/sensitive-assets/transcript-asset",
+					Context: "dialog",
+				},
+			},
+		},
+	}
+
+	got := handler.snapshotProtectedSession("session-1")
+	if got.CurrentRound == nil {
+		t.Fatal("expected current round")
+	}
+	if got.CurrentRound.TranscriptAsset == nil {
+		t.Fatal("expected transcript asset")
+	}
+	if got.CurrentRound.TranscriptAsset.ID != "transcript-asset" {
+		t.Fatalf("transcript asset id = %q", got.CurrentRound.TranscriptAsset.ID)
 	}
 }
 
