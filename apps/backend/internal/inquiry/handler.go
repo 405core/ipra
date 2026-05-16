@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"strconv"
@@ -608,6 +609,7 @@ func (h *Handler) handleProtectedFollowup(c *gin.Context) {
 		},
 		"riskCaseContext": cloneMap(session.RiskCaseContext),
 	}
+	logFollowupAsrPayload(session.SessionID, currentRound.RoundNumber+1, currentRound.ASR, aiPayload["qaHistory"])
 	aiResponse, err := h.postAIJSON("/v1/inquiry/followup-guidance", aiPayload)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"message": err.Error()})
@@ -1784,6 +1786,35 @@ func (h *Handler) buildQaHistory(session *ProtectedSession) []map[string]any {
 		})
 	}
 	return result
+}
+
+func logFollowupAsrPayload(sessionID string, roundNo int, asr map[string]any, qaHistory any) {
+	provider := extractString(asr["provider"])
+	status := extractString(asr["status"])
+	text := strings.TrimSpace(extractString(asr["text"]))
+	qaCount := 0
+	if items, ok := qaHistory.([]map[string]any); ok {
+		qaCount = len(items)
+	}
+
+	log.Printf(
+		"inquiry followup-guidance asr sessionId=%s roundNo=%d status=%q provider=%q textLen=%d text=%q qaHistoryCount=%d",
+		sessionID,
+		roundNo,
+		status,
+		provider,
+		len([]rune(text)),
+		truncateLogText(text, 180),
+		qaCount,
+	)
+}
+
+func truncateLogText(value string, limit int) string {
+	runes := []rune(strings.TrimSpace(value))
+	if limit <= 0 || len(runes) <= limit {
+		return string(runes)
+	}
+	return string(runes[:limit]) + "..."
 }
 
 func (h *Handler) buildHumanOmniWindows(session *ProtectedSession) []map[string]any {

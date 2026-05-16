@@ -443,6 +443,9 @@ let interviewPanelResizeObserver: ResizeObserver | null = null;
 const ASR_TARGET_SAMPLE_RATE = 16000;
 const ASR_FRAME_BYTES = 1280;
 const ASR_STOP_GRACE_MS = 2500;
+const REALTIME_ASR_PROVIDER = 'qwen3-asr';
+const REALTIME_ASR_MODEL = 'qwen3-asr';
+const REALTIME_ASR_WS_PATH = '/v1/asr/qwen3/realtime';
 let stageLoadingTimerId: number | null = null;
 let videoWatermarkTimerId: number | null = null;
 const MP4_H264_MIME_TYPES = [
@@ -651,9 +654,9 @@ const memoryStatusLabel = computed(() => {
 const speechRecognitionLabel = computed(() => {
   switch (speechRecognitionPhase.value) {
     case 'connecting':
-      return '讯飞 ASR 连接中';
+      return 'Qwen3-ASR 连接中';
     case 'listening':
-      return '讯飞实时转写中';
+      return '实时语音转写中';
     case 'stopping':
       return '正在停止转写';
     case 'ended':
@@ -1434,8 +1437,8 @@ function buildRoundAsrPayload(round: InterviewRound): AsrPayload {
         : 'not_connected';
     return {
       status,
-      provider: 'iflytek-rtasr-llm',
-      model: 'rtasr-llm',
+      provider: REALTIME_ASR_PROVIDER,
+      model: REALTIME_ASR_MODEL,
       language: 'zh-CN',
       text: '',
       segments: [],
@@ -1445,8 +1448,8 @@ function buildRoundAsrPayload(round: InterviewRound): AsrPayload {
 
   return {
     status: 'provided',
-    provider: 'iflytek-rtasr-llm',
-    model: 'rtasr-llm',
+    provider: REALTIME_ASR_PROVIDER,
+    model: REALTIME_ASR_MODEL,
     language: 'zh-CN',
     text,
     segments: [
@@ -1979,7 +1982,7 @@ async function generateStrategy() {
     const response = await generateProtectedInquiryStrategy({
       sessionId: sessionId.value,
       passengerId: selectedPassengerId.value,
-      riskCaseContext: buildRiskCaseContext(),
+      riskCaseContext: { ...buildRiskCaseContext() },
       constraints: buildOutputConstraints(6),
     });
     syncProtectedSessionState(response);
@@ -2798,15 +2801,15 @@ function handleStreamingAsrEvent(
   if (event.type === 'status') {
     speechRecognitionMessage.value =
       event.status === 'connected'
-        ? '讯飞实时转写已连接。'
-        : event.message || '讯飞实时转写状态已更新。';
+        ? 'Qwen3-ASR 实时转写已连接。'
+        : event.message || '实时语音转写状态已更新。';
     return;
   }
 
   if (event.type === 'error') {
     speechRecognitionHadError = true;
     speechRecognitionPhase.value = 'error';
-    speechRecognitionMessage.value = event.message || '讯飞实时转写异常。';
+    speechRecognitionMessage.value = event.message || '实时语音转写异常。';
     return;
   }
 
@@ -2825,8 +2828,8 @@ function handleStreamingAsrEvent(
     asrInterimSegments.set(segmentId, text);
   }
   speechRecognitionMessage.value = event.isFinal
-    ? '讯飞转写已更新。'
-    : '正在接收讯飞转写结果。';
+    ? '实时语音转写已更新。'
+    : '正在接收实时语音转写结果。';
   rebuildStreamingAsrTranscript(round);
 }
 
@@ -2942,18 +2945,18 @@ function startSpeechRecognition(round: InterviewRound) {
   asrInterimSegments = new Map<number, string>();
 
   const socket = new WebSocket(
-    resolveAiServiceWebSocketUrl('/v1/asr/iflytek/realtime'),
+    resolveAiServiceWebSocketUrl(REALTIME_ASR_WS_PATH),
   );
   asrWebSocket = socket;
   speechRecognitionPhase.value = 'connecting';
-  speechRecognitionMessage.value = '正在连接讯飞实时转写。';
+  speechRecognitionMessage.value = '正在连接 Qwen3-ASR 实时转写。';
 
   socket.onopen = () => {
     if (asrWebSocket !== socket) {
       return;
     }
     speechRecognitionPhase.value = 'listening';
-    speechRecognitionMessage.value = '讯飞实时转写已启动。';
+    speechRecognitionMessage.value = 'Qwen3-ASR 实时转写已启动。';
     startAsrAudioProcessing();
   };
   socket.onmessage = (event) => {
@@ -2977,7 +2980,7 @@ function startSpeechRecognition(round: InterviewRound) {
   socket.onerror = () => {
     speechRecognitionHadError = true;
     speechRecognitionPhase.value = 'error';
-    speechRecognitionMessage.value = '讯飞实时转写连接异常。';
+    speechRecognitionMessage.value = 'Qwen3-ASR 实时转写连接异常。';
   };
   socket.onclose = (event) => {
     clearSpeechRecognitionStopTimer();
@@ -2989,8 +2992,8 @@ function startSpeechRecognition(round: InterviewRound) {
     if (isStoppingSpeechRecognition) {
       speechRecognitionPhase.value = 'ended';
       speechRecognitionMessage.value = speechFinalTranscript.trim()
-        ? '讯飞实时转写已完成。'
-        : '讯飞实时转写已结束，未返回有效文本。';
+        ? '实时语音转写已完成。'
+        : '实时语音转写已结束，未返回有效文本。';
       isStoppingSpeechRecognition = false;
       return;
     }
@@ -3001,7 +3004,7 @@ function startSpeechRecognition(round: InterviewRound) {
       const closeDetail = event.code
         ? `（${event.code}${event.reason ? `：${event.reason}` : ''}）`
         : '';
-      speechRecognitionMessage.value = `讯飞实时转写连接已断开${closeDetail}。`;
+      speechRecognitionMessage.value = `Qwen3-ASR 实时转写连接已断开${closeDetail}。`;
     }
   };
 }
@@ -3017,7 +3020,7 @@ function stopSpeechRecognition(options: { reset?: boolean } = {}) {
   if (socket) {
     isStoppingSpeechRecognition = true;
     speechRecognitionPhase.value = 'stopping';
-    speechRecognitionMessage.value = '正在等待讯飞返回最终转写。';
+    speechRecognitionMessage.value = '正在等待实时语音转写返回最终结果。';
     if (socket.readyState === WebSocket.OPEN) {
       socket.send(JSON.stringify({ type: 'end' }));
       clearSpeechRecognitionStopTimer();
